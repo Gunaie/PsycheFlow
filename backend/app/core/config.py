@@ -13,9 +13,11 @@ class Settings(BaseSettings):
     dashscope_api_key: str = ""
     dashscope_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
-    # 4 个百炼模型（各司其职）
-    model_intake: str = "qwen3.8-2.4t-a95b"       # 分诊/结构化提取
+    # 5 个百炼模型（各司其职）
+    model_intake: str = "qwen3.8-2.4t-a95b"       # 结构化提取/计分辅助（有思考链）
+    model_triage: str = "qwen-plus"              # 意图分类（无思考链，4 类标签输出快）
     model_dialog: str = "deepseek-v4-pro-0813"    # 开放对话/共情（有 reasoning_content 思考链）
+    model_dialog_stream: str = "qwen-plus"  # 流式干预专用（无思考链，首 content ~0.5s）
     model_report: str = "deepseek-v4-flash-0731" # 高频/兜底（有 reasoning_content 思考链）
     model_embed: str = "text-embedding-v3"       # RAG 向量化
 
@@ -42,6 +44,7 @@ class Settings(BaseSettings):
 
     # LLM 温度：计分场景确定性优先，对话场景放宽
     temp_intake: float = 0.1
+    temp_triage: float = 0.1   # 意图分类确定性优先
     temp_dialog: float = 0.35
     temp_report: float = 0.1
 

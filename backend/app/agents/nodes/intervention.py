@@ -104,11 +104,12 @@ async def stream_intervention(
     messages = prebuilt_messages or (await build_intervention_messages(state))[0]
     collected: list[str] = []
     try:
+        # 流式用 dialog_stream 角色（无思考链模型，首 token 快）；非流式 intervention_node 仍用 dialog（deepseek 高质量）
         async for token in provider.stream(
-            role="dialog",
+            role="dialog_stream",
             messages=messages,
             temperature=0.35,
-            max_tokens=3000,  # deepseek-v4 有 reasoning_content 思考链，600 不够
+            max_tokens=3000,
         ):
             collected.append(token)
             yield token

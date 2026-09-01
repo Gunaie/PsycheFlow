@@ -37,17 +37,17 @@ async def triage_node(state: AgentState) -> dict:
             "agent_trace": trace,
         }
 
-    # 2. LLM 意图分类（role=intake 温度 0.1 确定性优先）
+    # 2. LLM 意图分类（role=triage 用 qwen-plus 无思考链，首 token 快；4 类标签 max_tokens 50 足够）
     try:
         user_prompt = TRIAGE_USER_TEMPLATE.format(message=message)
         reply = await provider.chat(
-            role="intake",
+            role="triage",
             messages=[
                 {"role": "system", "content": TRIAGE_SYSTEM},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.1,
-            max_tokens=500,  # deepseek-v4 有 reasoning_content 思考链，20 太小
+            max_tokens=50,
         )
         intent = reply.strip()
         # 兜底：LLM 幻觉出非 4 类标签 → 默认走倾诉（最安全路径）

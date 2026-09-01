@@ -89,9 +89,9 @@ class TestChatNormal:
             # intervention LLM 被调用 1 次，role=dialog（共情回应，不是分诊）
             m.intv_provider.chat.assert_awaited_once()
             assert m.intv_provider.chat.call_args.kwargs["role"] == "dialog"
-            # triage LLM 也被调用 1 次，role=intake（意图分类）
+            # triage LLM 也被调用 1 次，role=triage（qwen-plus 无思考链意图分类）
             m.triage_provider.chat.assert_awaited_once()
-            assert m.triage_provider.chat.call_args.kwargs["role"] == "intake"
+            assert m.triage_provider.chat.call_args.kwargs["role"] == "triage"
 
     def test_rag_failure_degrades_to_plain_chat(self):
         """RAG 抛 RuntimeError → intervention 捕获，sources=[]，LLM 仍生成回复。"""

@@ -106,9 +106,9 @@ class TestChatStreamNormal:
             tokens = [e["data"]["token"] for e in events if e["event"] == "token"]
             assert "".join(tokens) == "我听到你"
 
-            # triage 调 LLM 分类 1 次（intake 角色）
+            # triage 调 LLM 分类 1 次（triage 角色配 qwen-plus 无思考链）
             m.triage_provider.chat.assert_awaited_once()
-            assert m.triage_provider.chat.call_args.kwargs["role"] == "intake"
+            assert m.triage_provider.chat.call_args.kwargs["role"] == "triage"
             # intervention 用 stream（非 chat），被调用 1 次
             m.intv_provider.stream.assert_called_once()
             # RAG 检索 1 次（build_intervention_messages 调 1 次，stream_intervention 复用 prebuilt）

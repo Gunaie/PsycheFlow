@@ -40,7 +40,9 @@ class LLMProvider:
     def model_for(self, role: str) -> str:
         mapping = {
             "intake": self._settings.model_intake,
+            "triage": self._settings.model_triage,
             "dialog": self._settings.model_dialog,
+            "dialog_stream": self._settings.model_dialog_stream,
             "report": self._settings.model_report,
             "embed": self._settings.model_embed,
         }
@@ -51,7 +53,9 @@ class LLMProvider:
     def temp_for(self, role: str) -> float:
         mapping = {
             "intake": self._settings.temp_intake,
+            "triage": self._settings.temp_triage,
             "dialog": self._settings.temp_dialog,
+            "dialog_stream": self._settings.temp_dialog,  # 流式干预复用 dialog 温度 0.35
             "report": self._settings.temp_report,
         }
         return mapping.get(role, 0.7)
@@ -82,9 +86,13 @@ class LLMProvider:
     ):
         """流式 chat completion，async yield content token（用户可见文本）。
 
-        deepseek-v4 系列有 reasoning_content（思考链）字段，stream 模式下 delta
-        可能同时含 reasoning_content 和 content；此处只 yield content（最终回复），
-        思考链不推给用户（避免把内部推理泄露成可见 token）。
+        deepseek-v4 / qwen3 系列均有 reasoning_content（思考链），stream 模式下
+        delta 可能同时含 reasoning_content 和 content；此处只 yield content（最终
+        回复），思考链不推给用户。
+
+        模型选择：dialog_stream 角色配 qwen-plus（无思考链），实测首 content
+        ~0.5s 满足 NFR-5（首 token < 2s）。qwen3.8 系列不支持 enable_thinking=False
+        （百炼报 400 restricted to True），故用无思考链模型而非关思考。
         """
         temp = self.temp_for(role) if temperature is None else temperature
         stream = await self.client.chat.completions.create(
