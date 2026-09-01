@@ -154,3 +154,20 @@ class BatchEntry(Base):
 
     batch: Mapped["ScreeningBatch"] = relationship(back_populates="entries")
     session: Mapped["Session | None"] = relationship()
+
+
+class AuditLog(Base):
+    """审计日志 DB 镜像：与 logs/*.json 文件双写，便于查询/聚合/合规导出。
+
+    - event_type：crisis（危机命中）/ report（报告生成）
+    - payload：与同名 JSON 文件内容一致的完整快照
+    - session_id/account_id：冗余索引列，便于按账号/会话检索审计
+    """
+    __tablename__ = "audit_logs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    ts: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    event_type: Mapped[str] = mapped_column(String(16), index=True)
+    session_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    account_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)

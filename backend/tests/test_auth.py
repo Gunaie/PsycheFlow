@@ -109,3 +109,47 @@ class TestAuthRegister:
         r = isolated_client.post("/api/sessions", json={"label": "no-login"})
         assert r.status_code == 200
         assert len(r.json()["session_id"]) == 32
+
+
+class TestTeacherAuthHardening:
+    """授权链复检：教师账号不得凭 label 绕过密码拿 token。"""
+
+    def test_teacher_login_by_label_rejected_403(self, isolated_client):
+        reg = isolated_client.post(
+            "/api/auth/register",
+            json={
+                "consents": FULL_CONSENTS, "profile": {}, "role": "teacher",
+                "label": "tch01", "password": "secret123",
+            },
+        )
+        assert reg.status_code == 200, f"教师注册应成功 实际 {reg.status_code}"
+
+        # 凭 label 直接登录应被拒（绕密漏洞修复）
+        r = isolated_client.post("/api/auth/login_by_label", json={"label": "tch01"})
+        assert r.status_code == 403, f"教师 label 登录应 403 实际 {r.status_code}"
+        assert "teacher_requires_password" in str(r.json())
+
+    def test_teacher_password_login_still_works(self, isolated_client):
+        isolated_client.post(
+            "/api/auth/register",
+            json={
+                "consents": FULL_CONSENTS, "profile": {}, "role": "teacher",
+                "label": "tch02", "password": "secret123",
+            },
+        )
+        r = isolated_client.post(
+            "/api/auth/login_by_password",
+            json={"label": "tch02", "password": "secret123"},
+        )
+        assert r.status_code == 200
+        assert len(r.json()["token"]) == 64
+
+    def test_student_label_login_unaffected(self, isolated_client):
+        """学生 label 是匿名凭证本身，登录不受教师加固影响。"""
+        sreg = isolated_client.post(
+            "/api/auth/register", json={"consents": FULL_CONSENTS, "profile": PROFILE}
+        )
+        assert sreg.status_code == 200
+        slabel = sreg.json()["label"]
+        r = isolated_client.post("/api/auth/login_by_label", json={"label": slabel})
+        assert r.status_code == 200, f"学生 label 登录应 200 实际 {r.status_code}"

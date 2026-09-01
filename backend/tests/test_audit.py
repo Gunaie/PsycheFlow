@@ -92,6 +92,48 @@ class TestAudit:
         assert data["referred_12355_bool"] is True
         assert "跳楼" in data["user_input_raw"] or "不想活" in data["user_input_raw"]
 
+    def test_crisis_dual_writes_db(self, env_setup, monkeypatch):
+        """合规加固：危机命中应同时写 JSON 文件 + DB AuditLog 行（双写一致性）。"""
+        d = env_setup; c = d["client"]
+        monkeypatch.setattr(audit_mod, "ensure_logs_dir", lambda: d["logs_dir"])
+        TSL = d["TestingSessionLocal"]
+        # 把审计 DB 写入指向临时 engine（生产默认走 app.db.SessionLocal）
+        monkeypatch.setattr(audit_mod, "_get_audit_session", lambda: TSL())
+        from app.models import AuditLog
+
+        r = c.post("/api/chat", json={
+            "message": "我不想活了，想跳楼一死了之", "history": [], "session_id": "DBDUAL_SES",
+        })
+        assert r.status_code == 200 and r.json()["crisis"] is True
+
+        # DB 镜像：应有 1 行 crisis 审计，payload 与文件一致
+        db = TSL()
+        try:
+            rows = db.query(AuditLog).filter(AuditLog.event_type == "crisis").all()
+        finally:
+            db.close()
+        assert len(rows) >= 1, f"危机命中应 DB 双写 AuditLog 行，实际 {len(rows)}"
+        last = rows[-1]
+        assert last.session_id == "DBDUAL_SES"
+        assert last.payload.get("referred_12355_bool") is True
+        assert isinstance(last.payload.get("trigger_words"), list) and len(last.payload["trigger_words"]) >= 1
+        # 文件也写了（双写一致性）
+        assert len(glob.glob(os.path.join(d["logs_dir"], "crisis_*.json"))) >= 1
+
+    def test_db_write_failure_does_not_block_endpoint(self, env_setup, monkeypatch):
+        """审计 DB 写入失败也绝不阻断危机响应（best-effort 原则）。"""
+        d = env_setup; c = d["client"]
+        monkeypatch.setattr(audit_mod, "ensure_logs_dir", lambda: d["logs_dir"])
+        # 让 _get_audit_session 抛异常（模拟 DB 不可用）
+        def _boom():
+            raise RuntimeError("DB unavailable")
+        monkeypatch.setattr(audit_mod, "_get_audit_session", _boom)
+        r = c.post("/api/chat", json={"message": "我真的想死", "session_id": "NOBLOCK_DB_SES"})
+        assert r.status_code == 200, f"DB 审计写失败也不能阻断危机响应 实际 {r.status_code}"
+        assert r.json()["crisis"] is True
+        # 文件审计仍应正常落盘（DB 失败不影响文件）
+        assert len(glob.glob(os.path.join(d["logs_dir"], "crisis_*.json"))) >= 1
+
     def test_report_generation_writes_audit_json(self, env_setup, monkeypatch):
         d = env_setup
         # patch ensure_logs_dir 让所有审计写进临时 logs_dir（与 crisis 测试一致方式，最可靠）

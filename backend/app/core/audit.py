@@ -25,6 +25,43 @@ def ensure_logs_dir() -> str:
     return settings.logs_dir
 
 
+def _get_audit_session():
+    """审计 DB session 工厂：模块级，便于测试 monkeypatch 指向临时 engine。
+
+    运行时默认走 app.db.SessionLocal（生产 SQLite）；测试中可被替换为指向
+    临时 engine 的 sessionmaker，使 DB 双写可验证。
+    """
+    from app.db import SessionLocal
+
+    return SessionLocal()
+
+
+def _db_write_audit(event_type: str, payload: dict) -> None:
+    """审计 DB 镜像写入（best-effort，失败仅 warning，绝不阻断主业务）。
+
+    与 logs/*.json 文件双写：JSON 文件为人类可读留痕，DB 行便于查询/聚合/
+    合规导出。session_id/account_id 冗余为索引列以支持按账号/会话检索。
+    """
+    try:
+        from app.models import AuditLog
+
+        db = _get_audit_session()
+        try:
+            db.add(
+                AuditLog(
+                    event_type=event_type,
+                    session_id=payload.get("session_id"),
+                    account_id=payload.get("account_id"),
+                    payload=payload,
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("audit DB 镜像写入失败(event=%s): %s", event_type, e)
+
+
 def write_crisis_audit(
     session_id: str | None,
     account_id: str | None,
@@ -56,10 +93,12 @@ def write_crisis_audit(
     try:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
-        return path
     except Exception as e:
-        logger.warning("write_crisis_audit 失败: %s", str(e))
+        logger.warning("write_crisis_audit 文件写入失败: %s", str(e))
         return None
+    # DB 镜像双写（best-effort，失败仅 warning，绝不阻断主业务）
+    _db_write_audit("crisis", payload)
+    return path
 
 
 def write_report_audit(
@@ -95,7 +134,9 @@ def write_report_audit(
     try:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
-        return path
     except Exception as e:
-        logger.warning("write_report_audit 失败: %s", str(e))
+        logger.warning("write_report_audit 文件写入失败: %s", str(e))
         return None
+    # DB 镜像双写（best-effort，失败仅 warning，绝不阻断主业务）
+    _db_write_audit("report", payload)
+    return path

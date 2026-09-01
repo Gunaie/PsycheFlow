@@ -190,10 +190,20 @@ async def login_by_token(req: LoginByToken, db: Session = Depends(get_db)):
 
 @router.post("/login_by_label", response_model=AuthResp)
 async def login_by_label(req: LoginByLabel, db: Session = Depends(get_db)):
+    """匿名 label 登录（仅限学生/家长：label 本身即匿名凭证）。
+
+    授权链加固：教师账号 password_hash 非空，必须走 /login_by_password，
+    凭 label 直接拿 token 会绕过密码 → 一律 403。
+    """
     stmt = select(User).where(User.label == req.label)
     user = db.execute(stmt).scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="label 无效或不存在")
+    if user.role == "teacher":
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "teacher_requires_password", "reason": "教师账号须使用密码登录"},
+        )
     return AuthResp(account_id=user.id, token=user.token, label=user.label)
 
 
