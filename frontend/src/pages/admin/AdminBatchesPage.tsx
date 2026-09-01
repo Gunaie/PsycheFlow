@@ -32,11 +32,19 @@ interface BatchCreateResp {
 
 const CSV_TEMPLATE = '学号,姓名,年级,班级\nS001,张小明,高一,1班\nS002,李小红,高一,1班\nS003,王小刚,高一,2班';
 
+interface ScaleOption {
+  scale_id: string;
+  scale_name: string;
+  description: string;
+  item_count: number;
+}
+
 export default function AdminBatchesPage() {
   const navigate = useNavigate();
   const [batches, setBatches] = useState<BatchItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [scaleOptions, setScaleOptions] = useState<ScaleOption[]>([]);
 
   // 创建表单
   const [showCreate, setShowCreate] = useState(false);
@@ -69,6 +77,10 @@ export default function AdminBatchesPage() {
         else setError(e.message);
       })
       .finally(() => setLoading(false));
+    // 量表选项动态拉取（D1 量表库扩展：不再硬编码）
+    apiGet<ScaleOption[]>('/api/scales')
+      .then(setScaleOptions)
+      .catch(() => {});
   }, [navigate]);
 
   const handleFile = (f: File | undefined) => {
@@ -169,14 +181,12 @@ export default function AdminBatchesPage() {
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1.5">施测量表（可多选）</label>
-              <div className="flex gap-4">
-                {[
-                  { id: 'phq_a', label: 'PHQ-A 抑郁' },
-                  { id: 'scared', label: 'SCARED 焦虑' },
-                ].map((s) => (
-                  <label key={s.id} className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
-                    <input type="checkbox" checked={scales.includes(s.id)} onChange={() => toggleScale(s.id)} />
-                    {s.label}
+              <div className="flex flex-wrap gap-4">
+                {scaleOptions.map((s) => (
+                  <label key={s.scale_id} className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+                    <input type="checkbox" checked={scales.includes(s.scale_id)} onChange={() => toggleScale(s.scale_id)} />
+                    {s.scale_name}
+                    <span className="text-xs text-slate-400">（{s.item_count} 题）</span>
                   </label>
                 ))}
               </div>
