@@ -2,6 +2,9 @@
 
 通过 .env 注入，避免硬编码与密钥入库。
 """
+import os
+
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -37,7 +40,22 @@ class Settings(BaseSettings):
     temp_dialog: float = 0.35
     temp_report: float = 0.1
 
+    # 目录：审计日志 + RAG 知识库（默认从 sqlite_path 推导，支持 .env 覆盖）
+    logs_dir: str = ""
+    rag_knowledge_dir: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @model_validator(mode="after")
+    def _ensure_dirs(self) -> "Settings":
+        data_dir = os.path.dirname(self.sqlite_path)
+        if not self.logs_dir:
+            self.logs_dir = os.path.join(data_dir, "logs")
+        if not self.rag_knowledge_dir:
+            self.rag_knowledge_dir = os.path.join(data_dir, "knowledge")
+        os.makedirs(self.logs_dir, exist_ok=True)
+        os.makedirs(self.rag_knowledge_dir, exist_ok=True)
+        return self
 
 
 settings = Settings()

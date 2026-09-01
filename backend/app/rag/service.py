@@ -52,7 +52,11 @@ class RAGService:
         return {"indexed": len(docs), "collection_size": self.store.count()}
 
     async def search(self, query: str, top_k: int = 3) -> list:
-        """检索相关片段。返回 [{text, source, distance}]。"""
+        """检索相关片段。返回 [{text, source, chunk_id, distance}]。
+
+        source 保证来自 chunk 的 metadata.source，不为空；
+        每条额外带 chunk_id: int 字段供前端展示片段号。
+        """
         q_emb = (await self.llm.embed([query]))[0]
         results = self.store.query(q_emb, top_k=top_k)
         docs = (results.get("documents") or [[]])[0]
@@ -61,9 +65,19 @@ class RAGService:
         out = []
         for i, doc in enumerate(docs):
             meta = metas[i] if i < len(metas) else {}
+            meta = meta or {}
+            # source 从 metadata 取值，保证不为空
+            src = meta.get("source") or ""
+            # chunk_id 从 metadata 取值，保证是 int
+            cid = meta.get("chunk_id", 0)
+            try:
+                cid_int = int(cid)
+            except (TypeError, ValueError):
+                cid_int = 0
             out.append({
                 "text": doc,
-                "source": (meta or {}).get("source", ""),
+                "source": src,
+                "chunk_id": cid_int,
                 "distance": dists[i] if i < len(dists) else None,
             })
         return out

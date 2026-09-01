@@ -13,12 +13,28 @@ CRISIS_KEYWORDS = [
 ]
 
 
-def detect_crisis(text: str) -> bool:
-    """扫描文本是否命中危机关键词。空串返回 False。"""
+def detect_crisis_with_words(text: str) -> tuple[bool, list[str]]:
+    """扫描文本是否命中危机关键词，返回 (是否命中, 被命中的触发词列表)。
+
+    空串返回 (False, [])。命中的关键词按出现顺序去重收集。
+    """
+    trigger_words: list[str] = []
     if not text:
-        return False
+        return (False, trigger_words)
     lower = text.lower()
-    return any(kw in lower for kw in CRISIS_KEYWORDS)
+    for kw in CRISIS_KEYWORDS:
+        if kw in lower and kw not in trigger_words:
+            trigger_words.append(kw)
+    return (len(trigger_words) > 0, trigger_words)
+
+
+def detect_crisis(text: str) -> bool:
+    """扫描文本是否命中危机关键词。空串返回 False。
+
+    向后兼容：内部调用 detect_crisis_with_words，只返回 bool 结果。
+    原调用点 `if detect_crisis(...)` 语义不变。
+    """
+    return detect_crisis_with_words(text)[0]
 
 
 def crisis_message() -> str:

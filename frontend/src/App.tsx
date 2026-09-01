@@ -2,6 +2,9 @@ import { Link, Route, Routes } from 'react-router-dom'
 import HomePage from './pages/HomePage'
 import ScalePage from './pages/ScalePage'
 import ChatPage from './pages/ChatPage'
+import RegisterPage from './pages/RegisterPage'
+import LoginPage from './pages/LoginPage'
+import HistoryPage from './pages/HistoryPage'
 
 export default function App() {
   return (
@@ -19,8 +22,12 @@ export default function App() {
       <main className="flex-1 max-w-3xl w-full mx-auto px-4 py-6">
         <Routes>
           <Route path="/" element={<HomePage />} />
+          <Route path="/scale" element={<ScalePage />} />
           <Route path="/scales/:scaleId" element={<ScalePage />} />
           <Route path="/chat" element={<ChatPage />} />
+          <Route path="/register" element={<RegisterPage />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/history" element={<HistoryPage />} />
         </Routes>
       </main>
 

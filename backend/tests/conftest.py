@@ -30,6 +30,8 @@ def client():
             db.close()
 
     app.dependency_overrides[get_db] = _override
+    from app.api import deps as _deps
+    app.dependency_overrides[_deps.get_db_session] = _override
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()

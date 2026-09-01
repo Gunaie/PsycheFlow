@@ -557,4 +557,59 @@ async def generate_report_pdf(session, assessments: list) -> bytes:
         all_dims.extend(_compute_subdims(a))
     narrative_md = await _build_narrative(assessments, all_dims)
     html_str = render_report_html(session, assessments, narrative_md)
-    return HTML(string=html_str).write_pdf()
+    pdf_bytes = HTML(string=html_str).write_pdf()
+
+    # —— 审计日志：报告生成 ——（不阻断返回，try/except 包死）
+    try:
+        from app.core.audit import write_report_audit
+
+        # 构造 scores_dict: {scale_id: {score, severity, max_score, crisis_level}}
+        scores_dict: dict = {}
+        for a in assessments:
+            sid = a.get("scale_id") if isinstance(a, dict) else getattr(a, "scale_id", None)
+            if not sid:
+                continue
+            total_score = a.get("total_score") if isinstance(a, dict) else getattr(a, "total_score", 0)
+            severity = a.get("severity") if isinstance(a, dict) else getattr(a, "severity", "none")
+            crisis_level = a.get("crisis_level") if isinstance(a, dict) else getattr(a, "crisis_level", "")
+            max_score = _scale_max_score(sid) or 0
+            scores_dict[sid] = {
+                "score": int(total_score) if total_score is not None else 0,
+                "severity": severity,
+                "max_score": int(max_score) if max_score is not None else 0,
+                "crisis_level": crisis_level,
+            }
+        # has_crisis: 任一量表 crisis_level == "elevated" 或 needs_crisis_escalation
+        def _a_crisis(a) -> bool:
+            if isinstance(a, dict):
+                return (
+                    a.get("crisis_level") == "elevated"
+                    or bool(a.get("needs_crisis_escalation"))
+                )
+            return (
+                getattr(a, "crisis_level", "") == "elevated"
+                or bool(getattr(a, "needs_crisis_escalation", False))
+            )
+        has_crisis = any(_a_crisis(a) for a in assessments)
+
+        # narrative_len: 优先取 LLM 返回的发展建议原始长度（Markdown 文本）
+        narrative_len = len(narrative_md) if narrative_md else 0
+
+        session_id_val = getattr(session, "id", None)
+        account_id_val = getattr(session, "account_id", None)
+        write_report_audit(
+            str(session_id_val) if session_id_val is not None else None,
+            account_id_val if account_id_val else None,
+            has_crisis,
+            scores_dict,
+            len(pdf_bytes),
+            narrative_len,
+        )
+    except Exception as e:
+        import logging
+
+        logging.getLogger("psycheflow.audit").warning(
+            "write_report_audit 失败: %s", str(e)
+        )
+
+    return pdf_bytes

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { apiPost } from '../api'
 import CrisisBanner from '../components/CrisisBanner'
+import FooterDisclaimer from '../components/FooterDisclaimer'
 
 interface ChatTurn {
   role: 'user' | 'assistant'
@@ -10,6 +11,7 @@ interface ChatTurn {
 interface SourceRef {
   text: string
   source: string
+  chunk_id?: number
 }
 
 interface ChatResponse {
@@ -43,6 +45,7 @@ export default function ChatPage() {
       const res = await apiPost<ChatResponse>('/api/chat', {
         message: msg,
         history: turns,
+        session_id: localStorage.getItem('psycheflow_active_session_id') || null,
       })
       setTurns([...history, { role: 'assistant', content: res.reply }])
       setSources(res.sources)
@@ -98,20 +101,15 @@ export default function ChatPage() {
           <div ref={bottomRef} />
         </div>
 
-        {sources.length > 0 && (
-          <div className="px-4 pb-3 border-t border-slate-100 pt-2">
-            <details className="text-xs text-slate-400">
-              <summary className="cursor-pointer hover:text-slate-600">
-                知识参考（{sources.length}）
-              </summary>
-              <ul className="mt-1 space-y-1">
-                {sources.map((s, i) => (
-                  <li key={i} className="text-slate-500">
-                    {s.source}：{s.text}
-                  </li>
-                ))}
-              </ul>
-            </details>
+        {sources.length >= 1 && (
+          <div className="sources mt-3 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">
+            <div className="mb-1 text-xs font-semibold text-slate-500">知识参考（来自 PsycheFlow 心理知识库公开摘要）</div>
+            {sources.map((s, i) => (
+              <div key={i} className="mb-2 last:mb-0 rounded border border-slate-200 bg-white p-2">
+                <p className="text-xs text-slate-500 mb-1">来源：《{s.source}》片段 #{(s.chunk_id ?? 0)+1}</p>
+                <p className="text-slate-700">{s.text}</p>
+              </div>
+            ))}
           </div>
         )}
       </div>
@@ -139,6 +137,8 @@ export default function ChatPage() {
           发送
         </button>
       </div>
+
+      <FooterDisclaimer />
     </div>
   )
 }
