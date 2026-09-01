@@ -95,13 +95,15 @@ CRISIS_HOTLINE_12355=12355
 | 启动/重启 | `docker compose up -d --build` | **重建 chroma 容器会清空向量索引**，之后必须 build_index() |
 | 重启单服务 | `docker restart psycheflow-backend` | 仅重启进程，**不会重新读 .env**。改 .env 必须用 `docker compose up -d backend` |
 | 看后端日志 | `docker logs psycheflow-backend --tail 50` | 或加 `--since 10m` 看最近 10 分钟 |
-| 跑 pytest | `docker exec psycheflow-backend uv run pytest -q --no-header` | 176 passed + 1 skipped |
+| 跑 pytest | `docker exec psycheflow-backend uv run pytest -q --no-header` | 181 passed + 1 skipped |
 | 重建 RAG 索引 | `docker exec psycheflow-backend uv run python -c "import asyncio; from app.rag.service import rag_service; print(asyncio.run(rag_service.build_index()))"` | chroma 被重建后必跑 |
 | 跑验证脚本 | `docker exec psycheflow-backend uv run python scripts/verify_leftovers.py` | has_assessment + triage 抽样 |
-| 跑性能压测 | `docker exec psycheflow-backend uv run python /app/../scripts/perf_bench.py` | 50 并发 health + 10 并发 chat |
+| 跑性能压测 | `docker exec psycheflow-backend uv run python scripts/perf_bench.py` | 50 并发 health + 10 并发 chat（脚本位于 `backend/scripts/`，容器内 `/app/scripts/`） |
 | 前端生产构建 | `docker exec psycheflow-frontend sh -c "npm run build"` | 验证前端编译无错 |
-| 生产部署 | `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build` | 后端 4 workers + 前端 nginx 80 端口 |
 | 进容器 shell | `docker exec -it psycheflow-backend bash` | |
+| 生成自签 TLS 证书 | `docker run --rm -v "${PWD}/certs:/certs" alpine:latest sh -c "apk add --no-cache openssl >/dev/null 2>&1; openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout /certs/privkey.pem -out /certs/fullchain.pem -subj '/CN=localhost'"` | 内网/开发用；生产放真实证书（Let's Encrypt）到 `./certs/` 同名文件 |
+| 验证 nginx 配置 | `docker run --rm --add-host=backend:127.0.0.1 -v "${PWD}/frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro" -v "${PWD}/certs:/etc/nginx/certs:ro" nginx:alpine nginx -t` | 改 nginx.conf 后跑；`--add-host` 让 standalone 容器解析 `backend` upstream |
+| 生产部署（HTTPS） | `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build` | 需先生成证书到 `./certs/`；前端 80→443 跳转，4 workers + healthcheck |
 
 ### 测对话接口（推荐：容器内 python）
 
@@ -286,11 +288,20 @@ print(f'agent={d[\"current_agent\"]}, crisis={d[\"crisis\"]}, reply[:80]={d[\"re
 
 按优先级排序：
 
-1. **性能压测**（未完成）：脚本已写（`scripts/perf_bench.py`）但未在容器内跑通（路径问题）。需修复脚本路径后在容器内运行，验证 50 并发 health + 10 并发 chat
-2. **合规加固深化**：审计日志双写（文件 + DB）、未成年人数据加密评估
-3. **Ollama 本地兜底**：断网/降本场景的灾备方案
-4. **多 Provider 切换**：硅基流动等备用 Provider
-5. **多租户支持**：按学校/区域隔离数据
+1. ~~**性能压测**~~ ✅（2026-09-01 跑通，commit 待补）：脚本 [backend/scripts/perf_bench.py](backend/scripts/perf_bench.py)，命令 `docker exec psycheflow-backend uv run python scripts/perf_bench.py`。验收数据：
+   - `/api/health` x50 并发：50/50 (100%)，总耗时 138ms，平均 123.6ms，P50 123.4ms，P95 127.9ms，QPS 361.2 ✅ 满足 NFR「接口 < 200ms」
+   - `/api/chat` x10 并发：10/10 (100%)，全 `agent=intervention`/`crisis=False`，端到端整轮平均 20.9s，P50 20.2s，总耗时 26.8s。注：此处测的是 LangGraph 三节点串行（triage→assessment→intervention）+ deepseek-v4 reasoning_content 思考链的**完整响应时延**，非首 token；NFR-5「首 token < 2s」需流式接口（SSE/streaming）改造后单独测量，当前端到端 ~21s 属已知架构特征非 bug
+2. **合规加固深化** ✅（2026-09-01，字段级加密按评估结论暂缓）：
+   - ✅ **审计日志双写（文件 + DB）**：新增 `AuditLog` 表（[models.py](backend/app/models.py)），[audit.py](backend/app/core/audit.py) 的 `write_crisis_audit`/`write_report_audit` 落 JSON 文件后镜像写 DB 行（`_db_write_audit`，best-effort 失败仅 warning 不阻断主业务）。单测 `test_crisis_dual_writes_db` + `test_db_write_failure_does_not_block_endpoint` 验证双写一致性 + 不阻断
+   - ✅ **授权链复检**：修复 [auth.py](backend/app/api/auth.py) `login_by_label` 教师绕密漏洞——教师账号 password_hash 非空却可凭 label 直接拿 token，绕过密码。现已一律 403（`teacher_requires_password`），必须走 `/login_by_password`。单测 `TestTeacherAuthHardening` 3 例覆盖（教师 label 拒、密码通、学生不受影响）
+   - ⏳ **未成年人数据加密评估**（结论：暂不实施字段级加密，当前最优是传输层+访问层加固）：
+     - 敏感数据盘点：`User.profile`(name/student_no/grade/klass/gender/age/guardian_phone/school/teacher_email)、`BatchEntry`(student_no/student_name)、`ConversationTurn.content`、`AssessmentRecord.answers/interpretation`
+     - 现状保护：传输层 dev HTTP，prod nginx **已上 TLS1.2/1.3 + HSTS + CSP + 全套安全头**（[nginx.conf](frontend/nginx.conf)）；静态层 SQLite `./data/psycheflow.db` Docker volume 无加密；访问层 token=token_hex(32) 分离 + 教师 PBKDF2-SHA256 加盐 + login_by_label 漏洞已修 + 审计 DB 双写
+     - 结论：SQLite MVP 实施字段级加密（guardian_phone 走 Fernet/AES）需密钥管理（env 弱密钥 / KMS 过度工程）且破坏 SQL 查询，性价比低。**三步状态**：(a) ✅ 生产 nginx TLS+HSTS+CSP 已完成（2026-09-01，自签证书已生成验证，nginx -t + compose config 双绿）、(b) ⏳ `./data` volume 容器内非 root + 文件 600 权限、(c) ⏳ SQLite 备份文件加密；规模化迁 PostgreSQL 后对 guardian_phone/teacher_email 走 pgcrypto 列级加密
+3. **流式接口（首 token 验收前置）**：把 `/api/chat` 改为 SSE 流式输出，以测量并满足 NFR-5 首 token < 2s
+4. **Ollama 本地兜底**：断网/降本场景的灾备方案
+5. **多 Provider 切换**：硅基流动等备用 Provider
+6. **多租户支持**：按学校/区域隔离数据
 
 ---
 
@@ -332,3 +343,5 @@ dd853fb B 二期：LangGraph 四智能体编排 + RAG .md 修复 + ChatPage 阶�
 - [ ] 浏览器访问 http://localhost:8000/docs → FastAPI Swagger UI 正常
 - [ ] 生产构建验证：`docker exec psycheflow-frontend sh -c "npm run build"` 无错误
 - [ ] compose 语法验证：`docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet` 无错误
+- [ ] 审计 DB 双写：`docker exec psycheflow-backend uv run pytest tests/test_audit.py::TestAudit::test_crisis_dual_writes_db -q` 通过
+- [ ] 授权链加固：`docker exec psycheflow-backend uv run pytest tests/test_auth.py::TestTeacherAuthHardening -q` 通过（教师凭 label 登录应 403）

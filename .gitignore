@@ -29,6 +29,8 @@ frontend/vite.config.d.ts
 .env
 .env.local
 *.key
+# TLS 证书（生产真实证书/自签证书均不入库）
+certs/
 
 # 数据库与数据（运行期产物，不入库）
 data/psycheflow.db

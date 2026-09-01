@@ -26,12 +26,15 @@ services:
     build:
       context: ./frontend
       target: prod               # 用 nginx:alpine 镜像
-    volumes: !reset []           # 去掉所有 volume 挂载（纯静态文件）
+    volumes:
+      - ./certs:/etc/nginx/certs:ro   # TLS 证书挂载（自签/真实证书放 ./certs）
     command: ["nginx", "-g", "daemon off;"]  # 显式覆盖（镜像 CMD 已是此命令）
     ports:
-      - "80:80"                 # 生产前端直接 80 端口
+      - "80:80"                 # 80 仅做 HTTP→HTTPS 跳转
+      - "443:443"               # 生产前端主入口（HTTPS）
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:80/"]
+      # --no-check-certificate 兼容自签证书；真实证书同样适用
+      test: ["CMD", "wget", "--no-check-certificate", "--spider", "-q", "https://localhost:443/"]
       interval: 30s
       timeout: 3s
       retries: 3
