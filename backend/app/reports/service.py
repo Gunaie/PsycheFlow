@@ -2,13 +2,14 @@
 
 章节结构与参考 MHT 对齐：
   页眉 → 个人基本信息条 → 1.测评工具介绍 → 2.测评结果解读注意事项 →
-  3.测评人员信息表 → 4.测评结果(综合等级渐变横幅 + 尺度总览表 + 因子剖析表) →
+  3.测评人员信息表 → 4.测评结果(综合等级渐变横幅 + 因子雷达图 + 尺度总览表 + 因子剖析表) →
   5.测评结果剖析(逐因子详解卡片) → 6.发展建议(LLM)
 
 危机兜底：
   危机升级情形下，在"综合等级横幅"与"人员信息表"之间硬编码红色危机框
  （safety.crisis_message + 12355 热线），零 LLM——即便 LLM 建议软化，硬框不可绕过。
 """
+import math
 import os
 from datetime import datetime
 
@@ -349,6 +350,90 @@ def _overall_severity(assessments: list) -> str:
     return worst
 
 
+def _radar_chart(dims: list, cx: int = 240, cy: int = 170, r: int = 120) -> dict:
+    """生成 9 因子 SVG 雷达图的几何数据，供模板直接拼装 <polygon>/<line>/<text>。
+
+    返回：
+      width/height: SVG viewBox 尺寸
+      grid_rings: [points_str] — 4 层正多边形坐标（25/50/75/100%）
+      axes:       [(x1,y1,x2,y2)] — n 条轴心线（中心→外圈）
+      data_poly:  points_str — 得分多边形
+      data_color: str — 取"最差因子"的严重度配色作为填充色
+      data_fill:  str — rgba 半透明填充字符串（基于 data_color）
+      labels:     [(name,x,y,anchor)] — 每个因子外围标签坐标 + text-anchor
+      percent_texts: [(pct,x,y,color)] — 得分百分位数据点旁标
+    """
+    n = len(dims)
+    if n < 3:
+        # 不够 3 条轴就不画雷达图（模板里会判断 data_poly 空值）
+        return {}
+    angles = [2 * math.pi * i / n - math.pi / 2 for i in range(n)]
+    ring_levels = [0.25, 0.50, 0.75, 1.00]
+    grid_rings = []
+    for k in ring_levels:
+        grid_rings.append(
+            " ".join(
+                f"{cx + r * k * math.cos(a):.1f},{cy + r * k * math.sin(a):.1f}"
+                for a in angles
+            )
+        )
+    axes = [(cx, cy, cx + r * math.cos(a), cy + r * math.sin(a)) for a in angles]
+    worst_dim = max(dims, key=lambda d: SEVERITY_RANK.get(d["severity"], 0))
+    data_color = worst_dim["severity_color"]
+    # 严重度配色 → 半透明 fill（按 #RRGGBB 估算 0.28 alpha）
+    data_fill = f"{data_color}47"  # hex + '47' ≈ 0.28 opacity
+
+    data_pts = []
+    percent_texts = []
+    for d, a in zip(dims, angles):
+        p = d["pct"] / 100.0
+        px = cx + r * p * math.cos(a)
+        py = cy + r * p * math.sin(a)
+        data_pts.append((px, py))
+        # 数据点旁文字：稍微向外推 6px
+        tx = cx + (r * p + 10) * math.cos(a)
+        ty = cy + (r * p + 10) * math.sin(a)
+        percent_texts.append((d["pct"], tx, ty, d["severity_color"]))
+    data_poly = " ".join(f"{x:.1f},{y:.1f}" for x, y in data_pts)
+    data_dots = [(f"{x:.1f}", f"{y:.1f}") for x, y in data_pts]
+
+    # 标签：外圈 +18 到 34 px，按方向选择 text-anchor
+    labels = []
+    lr_out = r + 26
+    for d, a in zip(dims, angles):
+        lx = cx + lr_out * math.cos(a)
+        ly = cy + lr_out * math.sin(a)
+        dx = math.cos(a)
+        if dx < -0.35:
+            anchor = "end"
+        elif dx > 0.35:
+            anchor = "start"
+        else:
+            anchor = "middle"
+        labels.append((d["name"], lx, ly, anchor))
+
+    # 轴刻度百分比文字：在每条轴 25/50/75/100% 位置画小刻度数字（仅 4 个）
+    ring_labels = [
+        (str(int(k * 100)) + "%", cx + 2, cy - r * k - 2) for k in ring_levels
+    ]
+
+    return {
+        "width": 480,
+        "height": 360,
+        "cx": cx,
+        "cy": cy,
+        "grid_rings": grid_rings,
+        "axes": axes,
+        "data_poly": data_poly,
+        "data_color": data_color,
+        "data_fill": data_fill,
+        "data_dots": data_dots,
+        "labels": labels,
+        "percent_texts": percent_texts,
+        "ring_labels": ring_labels,
+    }
+
+
 def render_report_html(session, assessments: list, narrative_md: str) -> str:
     """参考 MHT 结构组装完整上下文 + Jinja2 渲染。"""
     has_crisis = any(a.get("needs_crisis_escalation") for a in assessments)
@@ -376,6 +461,9 @@ def render_report_html(session, assessments: list, narrative_md: str) -> str:
     # 3. 综合等级
     overall_sev = _overall_severity(assessments)
     overall = OVERALL_LEVEL[overall_sev]
+
+    # 3b. 因子雷达图（如果有至少 3 个子维度）
+    radar = _radar_chart(all_dims)
 
     # 4. 工具介绍拼接
     intro_parts = []
@@ -431,7 +519,9 @@ def render_report_html(session, assessments: list, narrative_md: str) -> str:
         info_fields=info_fields,
         # 4.综合等级
         overall=overall,
-        # 4a.尺度总览表
+        # 4b.因子雷达图
+        radar=radar,
+        # 4c.尺度总览表
         scales=rendered_scales,
         # 4b.因子剖析表 + 5. 因子详解卡
         dims=all_dims,
