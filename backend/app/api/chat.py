@@ -1,9 +1,10 @@
 """开放对话端点：LangGraph 四智能体编排（分诊→测评→干预→升级）。
 
-POST /api/chat  {message, history?, session_id?, account_id?}
--> {reply, sources, crisis, current_agent, agent_trace}
+POST /api/chat  {message, history?, session_id?, account_id?, persona_id?}
+-> {reply, sources, crisis, current_agent, agent_trace, persona_id}
 
-向后兼容 NFR-1：旧字段 reply/sources/crisis 不变；新增 current_agent/agent_trace 为可选。
+向后兼容 NFR-1：旧字段 reply/sources/crisis 不变；新增 current_agent/agent_trace/
+persona_id 为可选。persona_id 仅影响干预节点人格，危机升级零 LLM 不受理格影响。
 """
 import logging
 
@@ -12,6 +13,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.agents.graph import graph
+from app.agents.personas import get_persona
 from app.api.deps import get_current_account, get_db_session
 from app.core.safety import crisis_message
 from app.models import ConversationTurn, User
@@ -31,6 +33,7 @@ class ChatRequest(BaseModel):
     history: list[ChatMessage] = Field(default_factory=list)
     session_id: str | None = None
     account_id: str | None = None
+    persona_id: str | None = None  # 多角色人格，不传=默认"暖暖"
 
 
 @router.post("")
@@ -61,11 +64,14 @@ async def chat(
         db.rollback()
 
     # —— 步骤 2：LangGraph 四智能体编排（triage→assessment→intervention/escalation）——
+    # persona 请求级解析：未知 id 回退 default（回传 canonical id 供前端校正）
+    effective_persona_id = get_persona(req.persona_id).persona_id
     initial_state = {
         "session_id": effective_session_id or "",
         "account_id": effective_account_id or "",
         "user_message": req.message,
         "history": [{"role": m.role, "content": m.content} for m in req.history],
+        "persona_id": effective_persona_id,
         "agent_trace": [],
     }
 
@@ -118,11 +124,12 @@ async def chat(
         logging.warning("write assistant ConversationTurn failed: %s", e)
         db.rollback()
 
-    # —— 步骤 4：返回（旧字段 reply/sources/crisis 不变；新增 current_agent/agent_trace）——
+    # —— 步骤 4：返回（旧字段 reply/sources/crisis 不变；新增 current_agent/agent_trace/persona_id）——
     return {
         "reply": reply,
         "sources": sources,
         "crisis": is_crisis,
         "current_agent": current_agent,
         "agent_trace": agent_trace,
+        "persona_id": effective_persona_id,
     }

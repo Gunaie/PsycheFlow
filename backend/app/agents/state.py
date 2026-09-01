@@ -14,6 +14,7 @@ class AgentState(TypedDict, total=False):
     account_id: str
     user_message: str
     history: list  # [{role, content}, ...]
+    persona_id: str  # 干预人格（default/sister/senior/listener），未知回退 default
 
     # Triage 节点输出
     detected_words: list  # [str]

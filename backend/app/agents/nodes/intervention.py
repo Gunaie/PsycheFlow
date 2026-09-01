@@ -5,7 +5,8 @@
 """
 import logging
 
-from app.agents.prompts import INTERVENTION_SYSTEM, INTERVENTION_USER_TEMPLATE
+from app.agents.personas import build_system_prompt, get_persona
+from app.agents.prompts import INTERVENTION_USER_TEMPLATE
 from app.agents.state import AgentState
 from app.core.llm import provider
 from app.rag.service import rag_service
@@ -20,10 +21,16 @@ async def intervention_node(state: AgentState) -> dict:
     1. rag_service.search(user_message, top_k=3) → 检索知识库片段
     2. 拼接 rag_context 注入 LLM prompt
     3. provider.chat(role="dialog", temp=0.35) 生成共情回应
+       （system prompt = 安全底线 + persona_id 对应人格特色，未知人格回退 default）
     4. sources 字段返回供前端渲染
     """
     message = state.get("user_message", "")
     trace = state.get("agent_trace", []) + ["intervention"]
+
+    # 0. 解析人格（未知/为空回退 default）
+    persona = get_persona(state.get("persona_id"))
+    system_prompt = build_system_prompt(persona)
+    logger.info("intervention: persona=%s", persona.persona_id)
 
     # 1. RAG 检索
     rag_sources: list = []
@@ -58,7 +65,7 @@ async def intervention_node(state: AgentState) -> dict:
         reply = await provider.chat(
             role="dialog",
             messages=[
-                {"role": "system", "content": INTERVENTION_SYSTEM},
+                {"role": "system", "content": system_prompt},
                 *history,
                 {"role": "user", "content": user_prompt},
             ],

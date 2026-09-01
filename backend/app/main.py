@@ -17,6 +17,7 @@ from app.api.rag import router as rag_router
 from app.api.scales import router as scales_router
 from app.api.sessions import router as sessions_router
 from app.api.admin import router as admin_router
+from app.api.personas import router as personas_router
 from app.api.screening import router as screening_router
 from app.core.config import settings
 from app.db import init_db
@@ -72,6 +73,7 @@ app.include_router(scales_router)
 app.include_router(chat_router)
 app.include_router(sessions_router)
 app.include_router(admin_router)
+app.include_router(personas_router)
 app.include_router(screening_router)
 
 

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { apiPost } from '../api'
+import { apiGet, apiPost } from '../api'
 import CrisisBanner from '../components/CrisisBanner'
 import FooterDisclaimer from '../components/FooterDisclaimer'
 
@@ -15,12 +15,20 @@ interface SourceRef {
   chunk_id?: number
 }
 
+interface PersonaOption {
+  persona_id: string
+  name: string
+  avatar: string
+  description: string
+}
+
 interface ChatResponse {
   reply: string
   sources: SourceRef[]
   crisis: boolean
   current_agent?: string  // 新增可选字段（向后兼容）
   agent_trace?: string[]   // 新增可选字段
+  persona_id?: string      // 实际生效的人格（未知 id 回退 default）
 }
 
 // 4 智能体阶段定义
@@ -101,11 +109,20 @@ export default function ChatPage() {
   const [crisis, setCrisis] = useState(false)
   const [currentAgent, setCurrentAgent] = useState<string | undefined>(undefined)
   const [error, setError] = useState<string | null>(null)
+  const [personas, setPersonas] = useState<PersonaOption[]>([])
+  const [personaId, setPersonaId] = useState('default')
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [turns, loading])
+
+  // 拉取可用人格列表（失败不阻断对话，保留默认人格）
+  useEffect(() => {
+    apiGet<PersonaOption[]>('/api/personas').then(setPersonas).catch(() => {})
+  }, [])
+
+  const activePersona = personas.find(p => p.persona_id === personaId)
 
   const send = async () => {
     const msg = input.trim()
@@ -121,11 +138,14 @@ export default function ChatPage() {
         message: msg,
         history: turns,
         session_id: localStorage.getItem('psycheflow_active_session_id') || null,
+        persona_id: personaId,
       })
       setTurns([...history, { role: 'assistant', content: res.reply, agent: res.current_agent }])
       setSources(res.sources)
       setCrisis(res.crisis)
       setCurrentAgent(res.current_agent)
+      // 后端对未知人格回退 default 时，同步校正本地选择
+      if (res.persona_id) setPersonaId(res.persona_id)
     } catch (e) {
       setError((e as Error).message)
       setSources([])
@@ -140,8 +160,34 @@ export default function ChatPage() {
     <div className="space-y-3 flex flex-col h-[calc(100vh-160px)]">
       <div>
         <h1 className="text-xl font-bold text-slate-800">开放对话</h1>
-        <p className="text-sm text-slate-500 mt-1">和 PsycheFlow 陪伴助手聊聊你的近况。</p>
+        <p className="text-sm text-slate-500 mt-1">
+          {activePersona
+            ? `和「${activePersona.name}」聊聊你的近况：${activePersona.description}。`
+            : '和 PsycheFlow 陪伴助手聊聊你的近况。'}
+        </p>
       </div>
+
+      {/* 多角色人格选择（切换只影响干预 Agent 的语气风格，安全底线不变） */}
+      {personas.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {personas.map(p => (
+            <button
+              key={p.persona_id}
+              type="button"
+              title={p.description}
+              onClick={() => setPersonaId(p.persona_id)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm border transition ${
+                personaId === p.persona_id
+                  ? 'bg-primary-50 border-primary-500 text-primary-700 font-semibold'
+                  : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
+              }`}
+            >
+              <span aria-hidden>{p.avatar}</span>
+              {p.name}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* 4 智能体阶段 Stepper */}
       <StageStepper currentAgent={currentAgent} crisis={crisis} />
@@ -184,7 +230,7 @@ export default function ChatPage() {
                 </span>
               </div>
               <div className="bg-slate-100 text-slate-400 px-3 py-2 rounded-2xl text-sm">
-                陪伴助手正在思考…
+                {activePersona ? `${activePersona.name}正在思考…` : '陪伴助手正在思考…'}
               </div>
             </div>
           )}

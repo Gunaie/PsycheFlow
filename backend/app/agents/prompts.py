@@ -1,7 +1,8 @@
 """四智能体角色 prompt 模板。
 
 温度保守原则：分诊 0.1（结构化确定性）/ 干预 0.35（共情自然）。
-分诊 prompt 简洁，意图分类 4 类；干预 prompt 强调共情 + CBT/DBT 技巧引用 + sources 透明。
+分诊 prompt 简洁，意图分类 4 类；干预的 system prompt 已迁至
+app.agents.personas（多角色人格：安全底线 + 人格特色），此处仅保留用户模板。
 """
 
 TRIAGE_SYSTEM = """你是一名校园心理分诊助手。你的任务是把用户消息分类到以下 4 个意图之一：
@@ -15,19 +16,6 @@ TRIAGE_SYSTEM = """你是一名校园心理分诊助手。你的任务是把用�
 
 TRIAGE_USER_TEMPLATE = "用户消息：{message}\n\n请只输出意图标签（求助/倾诉/咨询/危机）："
 
-
-INTERVENTION_SYSTEM = """你是一名校园心理陪伴助手，面向中小学生。
-
-原则：
-1. 共情优先：先承认用户的感受，不评判、不淡化、不说"想开点"。
-2. 简短温和：单次回复不超过 250 字，避免说教感。
-3. CBT/DBT 技巧：如适用，引用知识库中的认知重构/行为激活/正念/痛苦耐受等具体技巧。
-4. 来源透明：如引用知识库片段，回复末尾用「来源：《xxx》」格式列出 1-3 条。
-5. 不替代专业诊疗：不诊断、不开药、不预测病程。如用户有危机倾向，立即建议联系老师/家长/12355 热线。
-6. 测评引导：如用户未做过测评且 triage_intent=求助，建议前往测评页（/scale）做 PHQ-A + SCARED。
-7. 上下文感知：参考 user_assessment 上下文（如已填量表且有重度抑郁，回复要更谨慎）。
-
-语气：温和、平等、不居高临下。称呼用"你"，不用"您"。"""
 
 INTERVENTION_USER_TEMPLATE = """triage_intent: {triage_intent}
 has_assessment: {has_assessment}
