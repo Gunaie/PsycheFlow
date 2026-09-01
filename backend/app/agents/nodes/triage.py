@@ -47,7 +47,7 @@ async def triage_node(state: AgentState) -> dict:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.1,
-            max_tokens=20,
+            max_tokens=500,  # deepseek-v4 有 reasoning_content 思考链，20 太小
         )
         intent = reply.strip()
         # 兜底：LLM 幻觉出非 4 类标签 → 默认走倾诉（最安全路径）

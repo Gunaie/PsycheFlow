@@ -5,11 +5,13 @@
 - 鉴权: Bearer DASHSCOPE_API_KEY
 
 4 个模型按角色取用（来自 settings）：
-- intake  : qwen3.8-2.4t-a95b  结构化提取/分诊/计分辅助
-- dialog  : qwen3.8-2.4t-a95b  开放对话/共情
-- report  : qwen3.8-2.4t-a95b  报告生成/高频兜底
-- embed   : text-embedding-v3  RAG 向量化
+- intake  : qwen3.8-2.4t-a95b     结构化提取/分诊/计分辅助
+- dialog  : deepseek-v4-pro-0813  开放对话/共情（有 reasoning_content 思考链）
+- report  : deepseek-v4-flash-0731 报告生成/高频兜底（有 reasoning_content 思考链）
+- embed   : text-embedding-v3     RAG 向量化
 
+注意：deepseek-v4 系列有 reasoning_content（思考链）字段，会先思考再输出 content，
+max_tokens 须足够容纳 reasoning + content（否则 content 为空、finish_reason=length）。
 温度按角色自动取用：计分场景确定性优先（0.1），对话场景放宽（0.35）。
 """
 from typing import Optional
@@ -59,7 +61,7 @@ class LLMProvider:
         role: str,
         messages: list,
         temperature: Optional[float] = None,
-        max_tokens: int = 1024,
+        max_tokens: int = 2048,
     ) -> str:
         """调用 chat completion，返回 assistant 文本。"""
         temp = self.temp_for(role) if temperature is None else temperature
@@ -93,7 +95,7 @@ class LLMProvider:
             role,
             [{"role": "user", "content": "请只回复 pong 两个字。"}],
             temperature=0,
-            max_tokens=10,
+            max_tokens=300,
         )
 
 

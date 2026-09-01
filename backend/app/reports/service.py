@@ -255,6 +255,7 @@ async def _build_narrative(assessments: list, all_dims: list) -> str:
                 {"role": "system", "content": REPORT_SYSTEM},
                 {"role": "user", "content": user_msg},
             ],
+            max_tokens=4000,  # deepseek-v4 有 reasoning_content 思考链，须留足余量
         )
         # 防止大模型返回空字符串/空白（不抛异常但实际为空），兜底生效
         if not result or not result.strip():

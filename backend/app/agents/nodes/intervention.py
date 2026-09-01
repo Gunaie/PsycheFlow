@@ -70,7 +70,7 @@ async def intervention_node(state: AgentState) -> dict:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.35,
-            max_tokens=600,
+            max_tokens=3000,  # deepseek-v4 有 reasoning_content 思考链，600 不够
         )
         # 空字符串/纯空白不抛异常，须显式检查触发 fallback（同 reports 教训）
         if not reply or not reply.strip():
