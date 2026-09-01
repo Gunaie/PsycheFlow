@@ -73,6 +73,36 @@ class LLMProvider:
         )
         return resp.choices[0].message.content or ""
 
+    async def stream(
+        self,
+        role: str,
+        messages: list,
+        temperature: Optional[float] = None,
+        max_tokens: int = 2048,
+    ):
+        """流式 chat completion，async yield content token（用户可见文本）。
+
+        deepseek-v4 系列有 reasoning_content（思考链）字段，stream 模式下 delta
+        可能同时含 reasoning_content 和 content；此处只 yield content（最终回复），
+        思考链不推给用户（避免把内部推理泄露成可见 token）。
+        """
+        temp = self.temp_for(role) if temperature is None else temperature
+        stream = await self.client.chat.completions.create(
+            model=self.model_for(role),
+            messages=messages,
+            temperature=temp,
+            max_tokens=max_tokens,
+            stream=True,
+        )
+        async for chunk in stream:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            # 只取 content（最终回复），reasoning_content 思考链不外推
+            content = getattr(delta, "content", None)
+            if content:
+                yield content
+
     async def embed(self, texts: list) -> list:
         """调用 embedding，返回向量列表。
 

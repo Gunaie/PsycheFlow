@@ -298,7 +298,13 @@ print(f'agent={d[\"current_agent\"]}, crisis={d[\"crisis\"]}, reply[:80]={d[\"re
      - 敏感数据盘点：`User.profile`(name/student_no/grade/klass/gender/age/guardian_phone/school/teacher_email)、`BatchEntry`(student_no/student_name)、`ConversationTurn.content`、`AssessmentRecord.answers/interpretation`
      - 现状保护：传输层 dev HTTP，prod nginx **已上 TLS1.2/1.3 + HSTS + CSP + 全套安全头**（[nginx.conf](frontend/nginx.conf)）；静态层 SQLite `./data/psycheflow.db` Docker volume 无加密；访问层 token=token_hex(32) 分离 + 教师 PBKDF2-SHA256 加盐 + login_by_label 漏洞已修 + 审计 DB 双写
      - 结论：SQLite MVP 实施字段级加密（guardian_phone 走 Fernet/AES）需密钥管理（env 弱密钥 / KMS 过度工程）且破坏 SQL 查询，性价比低。**三步状态**：(a) ✅ 生产 nginx TLS+HSTS+CSP 已完成（2026-09-01，自签证书已生成验证，nginx -t + compose config 双绿）、(b) ⏳ `./data` volume 容器内非 root + 文件 600 权限、(c) ⏳ SQLite 备份文件加密；规模化迁 PostgreSQL 后对 guardian_phone/teacher_email 走 pgcrypto 列级加密
-3. **流式接口（首 token 验收前置）**：把 `/api/chat` 改为 SSE 流式输出，以测量并满足 NFR-5 首 token < 2s
+3. ~~**流式接口（首 token 验收前置）**~~ ✅（2026-09-01 SSE 骨架完成，首 token 优化待决策）：
+   - **SSE 骨架**：新增 [POST /api/chat/stream](backend/app/api/chat.py)（保留旧 `/api/chat` 向后兼容）。架构 Option C：手动跑 triage→assessment（同步等结果），再用 `provider.stream()` 边生成边推 token；危机路径不流式，推完整 crisis_message 后 close。[llm.py](backend/app/core/llm.py) 加 `stream()`（只 yield `delta.content`，过滤 `reasoning_content` 思考链）。[intervention.py](backend/app/agents/nodes/intervention.py) 重构出 `build_intervention_messages`+`stream_intervention`+`FALLBACK_REPLY`，流式与非流式复用同一套 prompt 拼接。SSE 事件：`agent`(节点切换)/`sources`(RAG 卡片提前推)/`token`(流式)/`crisis`(完整话术)/`error`/`done`
+   - **前端**：[api.ts](frontend/src/api.ts) 加 `streamChat`（fetch+ReadableStream 解析 SSE，因 EventSource 不支持 POST+auth）；[ChatPage.tsx](frontend/src/pages/ChatPage.tsx) `send` 改用 `streamChat`，边收 token 边追加到 assistant 气泡，空 assistant turn 在 loading 时显示"思考中"
+   - **测试**：187 passed / 1 skipped（+6 流式单测 [test_api_chat_stream.py](backend/tests/test_api_chat_stream.py)：正常 token 序列/危机不流式/空回复 fallback/异常 fallback/未知人格回退/RAG 空不推 sources）
+   - **实测首 token（脚本 [sse_first_token.py](backend/scripts/sse_first_token.py)）**：消息"最近考试压力大，睡不好"，事件序列：0.57s agent:triage → 2.96s agent:assessment（triage LLM 分类 ~2.4s）→ 3.20s sources:3 条（RAG ~0.24s）→ **18.08s 首 token** → 20.59s done（回复 198 字）
+   - **瓶颈分析**：首 token 18s 远超 NFR-5「<2s」。triage ~2.4s（intake=qwen3.8-2.4t-a95b 可接受），**intervention 首 token 14.9s**（3.20→18.08）是主因——dialog=deepseek-v4-pro-0813 有 `reasoning_content` 思考链，stream 模式下先输出思考链（10-15s）再输出 content，`stream()` 只 yield content 故首 token 要等思考链跑完
+   - **首 token 优化选项（待决策）**：(A) dialog 角色换无思考链轻量模型如 `qwen3.8-2.4t-a95b`，首 token 预计 <3s，但共情质量可能降；(B) `llm.py` 加 `dialog_stream` 角色专用流式（qwen3.8），非流式 `/api/chat` 仍用 deepseek-v4-pro（高质量），需 `.env` 加 `MODEL_DIALOG_STREAM`；(C) `stream()` 也推 `reasoning_content` 当"思考中"提示（但泄露内部推理，不推荐）；(D) triage 换更快模型或 detect_crisis 后并行启动（干预需 triage_intent 输入，难并行）
 4. **Ollama 本地兜底**：断网/降本场景的灾备方案
 5. **多 Provider 切换**：硅基流动等备用 Provider
 6. **多租户支持**：按学校/区域隔离数据

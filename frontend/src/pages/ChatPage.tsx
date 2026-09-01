@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { apiGet, apiPost, apiPostBlob, apiPostForm } from '../api'
+import { apiGet, apiPostBlob, apiPostForm, streamChat } from '../api'
 import { WavRecorder } from '../lib/recorder'
 import CrisisBanner from '../components/CrisisBanner'
 import FooterDisclaimer from '../components/FooterDisclaimer'
@@ -136,26 +136,97 @@ export default function ChatPage() {
     setLoading(true)
     setError(null)
     setCurrentAgent(undefined)
-    const history: ChatTurn[] = [...turns, { role: 'user', content: msg }]
-    setTurns(history)
+    setSources([])
+    setCrisis(false)
+
+    // 先写 user turn + 空 assistant turn（占位，边收 token 边填）
+    const prevTurns = turns
+    const newTurns: ChatTurn[] = [
+      ...prevTurns,
+      { role: 'user', content: msg },
+      { role: 'assistant', content: '', agent: undefined },
+    ]
+    setTurns(newTurns)
+
     try {
-      const res = await apiPost<ChatResponse>('/api/chat', {
-        message: msg,
-        history: turns,
-        session_id: localStorage.getItem('psycheflow_active_session_id') || null,
-        persona_id: personaId,
-      })
-      setTurns([...history, { role: 'assistant', content: res.reply, agent: res.current_agent }])
-      setSources(res.sources)
-      setCrisis(res.crisis)
-      setCurrentAgent(res.current_agent)
-      // 后端对未知人格回退 default 时，同步校正本地选择
-      if (res.persona_id) setPersonaId(res.persona_id)
+      await streamChat(
+        {
+          message: msg,
+          history: prevTurns, // 历史不含当前轮 user msg
+          session_id: localStorage.getItem('psycheflow_active_session_id') || null,
+          persona_id: personaId,
+        },
+        (evt) => {
+          const { event, data } = evt
+          if (event === 'agent') {
+            // 更新 stepper + 当前 assistant 气泡的 agent badge
+            setCurrentAgent(data.agent)
+            setTurns((prev) => {
+              const next = [...prev]
+              const last = next.length - 1
+              if (next[last]?.role === 'assistant') {
+                next[last] = { ...next[last], agent: data.agent }
+              }
+              return next
+            })
+          } else if (event === 'sources') {
+            setSources(data.sources || [])
+          } else if (event === 'token') {
+            // 累加 token 到 assistant 气泡（边生成边显示）
+            setTurns((prev) => {
+              const next = [...prev]
+              const last = next.length - 1
+              if (next[last]?.role === 'assistant') {
+                next[last] = {
+                  ...next[last],
+                  content: next[last].content + data.token,
+                }
+              }
+              return next
+            })
+          } else if (event === 'crisis') {
+            // 危机路径不流式，整段话术一次性推
+            setTurns((prev) => {
+              const next = [...prev]
+              const last = next.length - 1
+              if (next[last]?.role === 'assistant') {
+                next[last] = { ...next[last], content: data.reply, agent: 'escalation' }
+              }
+              return next
+            })
+            setCrisis(true)
+            setCurrentAgent('escalation')
+          } else if (event === 'done') {
+            // 兜底：若 token 累加缺失（如异常 fallback），用 done.reply 补全
+            setTurns((prev) => {
+              const next = [...prev]
+              const last = next.length - 1
+              if (next[last]?.role === 'assistant') {
+                const cur = next[last].content || ''
+                if (!cur.trim() && data.reply) {
+                  next[last] = {
+                    ...next[last],
+                    content: data.reply,
+                    agent: data.current_agent || next[last].agent,
+                  }
+                } else if (data.current_agent) {
+                  next[last] = { ...next[last], agent: data.current_agent }
+                }
+              }
+              return next
+            })
+            setCrisis(!!data.crisis)
+            setCurrentAgent(data.current_agent)
+            if (data.sources && data.sources.length) setSources(data.sources)
+            // 后端对未知人格回退 default 时，同步校正本地选择
+            if (data.persona_id) setPersonaId(data.persona_id)
+          } else if (event === 'error') {
+            setError(data.message || '流式异常')
+          }
+        },
+      )
     } catch (e) {
       setError((e as Error).message)
-      setSources([])
-      setCrisis(false)
-      setCurrentAgent(undefined)
     } finally {
       setLoading(false)
     }
@@ -275,7 +346,9 @@ export default function ChatPage() {
                     : 'bg-slate-100 text-slate-700'
                 }`}
               >
-                {t.content}
+                {t.role === 'assistant' && loading && i === turns.length - 1 && !t.content
+                  ? (activePersona ? `${activePersona.name}正在思考…` : '陪伴助手正在思考…')
+                  : t.content}
               </div>
               {t.role === 'assistant' && t.content && (
                 <button
@@ -289,18 +362,6 @@ export default function ChatPage() {
               )}
             </div>
           ))}
-          {loading && (
-            <div className="flex flex-col items-start">
-              <div className="mb-1 ml-1">
-                <span className="inline-block text-[10px] font-medium px-2 py-0.5 rounded border bg-slate-100 text-slate-500 border-slate-300">
-                  编排中…
-                </span>
-              </div>
-              <div className="bg-slate-100 text-slate-400 px-3 py-2 rounded-2xl text-sm">
-                {activePersona ? `${activePersona.name}正在思考…` : '陪伴助手正在思考…'}
-              </div>
-            </div>
-          )}
           <div ref={bottomRef} />
         </div>
 

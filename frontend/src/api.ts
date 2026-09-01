@@ -111,3 +111,76 @@ export async function apiPostForm<T>(path: string, form: FormData): Promise<T> {
   if (!r.ok) throw await toError(r)
   return r.json() as Promise<T>
 }
+
+// —— SSE 流式对话消费（fetch + ReadableStream 解析，因 EventSource 不支持 POST+auth）——
+
+export interface SSEEvent {
+  event: string
+  data: any
+}
+
+/**
+ * 流式对话：POST /api/chat/stream，边收 SSE 事件边回调 onEvent。
+ *
+ * 不用 EventSource：它只支持 GET，无法带 body 与 Authorization 头。
+ * 改用 fetch + ReadableStream 手动按 \n\n 分割解析 SSE 事件。
+ */
+export async function streamChat(
+  body: unknown,
+  onEvent: (evt: SSEEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const r = await fetch('/api/chat/stream', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify(body),
+    signal,
+  })
+  if (!r.ok) throw await toError(r)
+  if (!r.body) throw new Error('响应体为空，无法流式读取')
+
+  const reader = r.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      // SSE 事件以空行 \n\n 分隔；最后一段可能不完整，留在 buffer
+      const parts = buffer.split('\n\n')
+      buffer = parts.pop() || ''
+      for (const part of parts) {
+        const evt = parseSSE(part)
+        if (evt) onEvent(evt)
+      }
+    }
+    // flush 残留
+    if (buffer.trim()) {
+      const evt = parseSSE(buffer)
+      if (evt) onEvent(evt)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+}
+
+/** 解析单条 SSE 事件块（多行 event:/data:，data 可多行拼接）。 */
+function parseSSE(raw: string): SSEEvent | null {
+  let event = 'message'
+  const dataLines: string[] = []
+  for (const line of raw.split('\n')) {
+    if (line.startsWith('event: ')) event = line.slice(7).trim()
+    else if (line.startsWith('data: ')) dataLines.push(line.slice(6))
+  }
+  if (dataLines.length === 0) return null
+  const dataStr = dataLines.join('\n')
+  try {
+    return { event, data: JSON.parse(dataStr) }
+  } catch {
+    return { event, data: dataStr }
+  }
+}
