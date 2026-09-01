@@ -145,8 +145,17 @@ class TestAudit:
 class TestConversationTurns:
     def test_two_rounds_insert_four_rows_alternating(self, env_setup):
         d = env_setup; c = d["client"]
-        with patch("app.api.chat.provider") as mp:
-            mp.chat = AsyncMock(side_effect=["你好呀，今天感觉怎么样？", "听起来学习压力确实很大，可以试试 4-2-6 腹式呼吸。"])
+        # B 二期：chat 走 LangGraph，triage+intervention 节点各自调 LLM
+        # triage 固定返回"倾诉"意图，intervention 用 side_effect 给 2 轮不同回复
+        with patch("app.agents.nodes.triage.provider") as mt, \
+             patch("app.agents.nodes.intervention.provider") as mi, \
+             patch("app.agents.nodes.intervention.rag_service") as mr:
+            mt.chat = AsyncMock(return_value="倾诉")
+            mr.search = AsyncMock(return_value=[])
+            mi.chat = AsyncMock(side_effect=[
+                "你好呀，今天感觉怎么样？",
+                "听起来学习压力确实很大，可以试试 4-2-6 腹式呼吸。",
+            ])
             r1 = c.post("/api/chat", json={"message": "你好，最近压力有点大", "history": []})
             r2 = c.post("/api/chat", json={"message": "是啊，作业好多", "history": [{"role":"user","content":"你好最近压力大"},{"role":"assistant","content":"xx"}]})
         assert r1.status_code == 200 and r2.status_code == 200
@@ -170,8 +179,13 @@ class TestConversationTurns:
     def test_old_payload_no_session_account_still_200(self, env_setup):
         d = env_setup; c = d["client"]
         # 传最原始结构：只有 message, history；兼容（TR-7.3）
-        with patch("app.api.chat.provider") as mp:
-            mp.chat = AsyncMock(return_value="好的我收到了")
+        # B 二期：chat 走 LangGraph，patch triage+intervention 节点
+        with patch("app.agents.nodes.triage.provider") as mt, \
+             patch("app.agents.nodes.intervention.provider") as mi, \
+             patch("app.agents.nodes.intervention.rag_service") as mr:
+            mt.chat = AsyncMock(return_value="倾诉")
+            mi.chat = AsyncMock(return_value="好的我收到了")
+            mr.search = AsyncMock(return_value=[])
             r = c.post("/api/chat", json={"message": "就是试试历史请求格式", "history": []})
         assert r.status_code == 200
         # turns 里两行列的 session_id/account_id 都是 NULL

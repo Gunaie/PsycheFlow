@@ -1,6 +1,9 @@
-"""开放对话端点：危机前置扫描 + RAG 知识增强 + LLM 回复。
+"""开放对话端点：LangGraph 四智能体编排（分诊→测评→干预→升级）。
 
-POST /api/chat  {message, history?, session_id?, account_id?} -> {reply, sources, crisis}
+POST /api/chat  {message, history?, session_id?, account_id?}
+-> {reply, sources, crisis, current_agent, agent_trace}
+
+向后兼容 NFR-1：旧字段 reply/sources/crisis 不变；新增 current_agent/agent_trace 为可选。
 """
 import logging
 
@@ -8,13 +11,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.agents.graph import graph
 from app.api.deps import get_current_account, get_db_session
-from app.core.llm import provider
-from app.core.safety import crisis_message, detect_crisis, detect_crisis_with_words
+from app.core.safety import crisis_message
 from app.models import ConversationTurn, User
-from app.rag.service import rag_service
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
+
+logger = logging.getLogger("psycheflow.api.chat")
 
 
 class ChatMessage(BaseModel):
@@ -27,14 +31,6 @@ class ChatRequest(BaseModel):
     history: list[ChatMessage] = Field(default_factory=list)
     session_id: str | None = None
     account_id: str | None = None
-
-
-SYSTEM_PROMPT = (
-    "你是 PsycheFlow 校园心理陪伴助手，面向青少年学生。"
-    "你温暖、共情、不评判，擅长倾听学业压力、情绪困扰、人际烦恼。"
-    "你不是医生，不做诊断或开药；遇到自伤/自杀等严重议题，鼓励对方寻求信任的老师、家长或专业帮助。"
-    "回答简洁亲和，可参考知识库中的心理科普片段。"
-)
 
 
 @router.post("")
@@ -64,66 +60,21 @@ async def chat(
         logging.warning("write user ConversationTurn failed: %s", e)
         db.rollback()
 
-    # 1. 危机前置扫描：命中即兜底转介，不进 LLM
-    crisis_hit, trigger_words = detect_crisis_with_words(req.message)
-    if crisis_hit:
-        # —— 审计日志：危机命中 ——（不阻断返回，try/except 包死）
-        try:
-            from app.core.audit import write_crisis_audit
-
-            reply_crisis = crisis_message()
-            write_crisis_audit(
-                effective_session_id,
-                effective_account_id,
-                trigger_words,
-                req.message,
-                reply_crisis,
-            )
-        except Exception:
-            reply_crisis = crisis_message()
-        # —— 步骤 3a：危机分支写 assistant 轮 ——
-        try:
-            db.add(
-                ConversationTurn(
-                    session_id=effective_session_id,
-                    account_id=effective_account_id,
-                    role="assistant",
-                    content=reply_crisis,
-                    sources_json=None,
-                    crisis_hit=True,
-                )
-            )
-            db.commit()
-        except Exception as e:
-            logging.warning("write crisis assistant ConversationTurn failed: %s", e)
-            db.rollback()
-        return {
-            "reply": reply_crisis,
-            "sources": [],
-            "crisis": True,
-        }
-
-    # 2. RAG 检索相关心理知识片段（失败则降级为纯对话）
-    try:
-        sources = await rag_service.search(req.message, top_k=3)
-    except Exception:
-        sources = []
-
-    context = ""
-    if sources:
-        context = "\n\n【知识参考】\n" + "\n".join(f"- {s['text']}" for s in sources)
-
-    messages = [{"role": "system", "content": SYSTEM_PROMPT + context}]
-    for m in req.history:
-        if m.role in ("user", "assistant"):
-            messages.append({"role": m.role, "content": m.content})
-    messages.append({"role": "user", "content": req.message})
+    # —— 步骤 2：LangGraph 四智能体编排（triage→assessment→intervention/escalation）——
+    initial_state = {
+        "session_id": effective_session_id or "",
+        "account_id": effective_account_id or "",
+        "user_message": req.message,
+        "history": [{"role": m.role, "content": m.content} for m in req.history],
+        "agent_trace": [],
+    }
 
     try:
-        reply = await provider.chat(role="dialog", messages=messages)
+        final_state = await graph.ainvoke(initial_state)
     except Exception as e:
-        # LLM 失败也要写 assistant 轮（记录失败），尽量留痕
-        err_reply = f"[服务异常] 对话生成失败，请稍后重试。({type(e).__name__})"
+        logger.exception("graph.ainvoke failed: %s", e)
+        # 兜底：返回错误提示，仍写 assistant 轮
+        err_reply = f"[服务异常] 对话编排失败，请稍后重试。({type(e).__name__})"
         try:
             db.add(
                 ConversationTurn(
@@ -137,16 +88,20 @@ async def chat(
             )
             db.commit()
         except Exception as we:
-            logging.warning("write llm-error assistant ConversationTurn failed: %s", we)
+            logging.warning("write graph-error assistant ConversationTurn failed: %s", we)
             db.rollback()
         raise HTTPException(
             status_code=502,
-            detail=f"对话生成失败: {type(e).__name__}: {e}",
+            detail=f"对话编排失败: {type(e).__name__}: {e}",
         )
 
-    formatted_sources = [{"text": s["text"], "source": s["source"]} for s in sources]
+    reply = final_state.get("final_reply") or crisis_message()
+    sources = final_state.get("sources", [])
+    is_crisis = final_state.get("crisis", False)
+    current_agent = final_state.get("current_agent", "")
+    agent_trace = final_state.get("agent_trace", [])
 
-    # —— 步骤 3b：正常分支写 assistant 轮 ——
+    # —— 步骤 3：写 assistant 轮 ConversationTurn（保留旧 crisis_hit 字段）——
     try:
         db.add(
             ConversationTurn(
@@ -154,17 +109,20 @@ async def chat(
                 account_id=effective_account_id,
                 role="assistant",
                 content=reply,
-                sources_json=formatted_sources if formatted_sources else None,
-                crisis_hit=False,
+                sources_json=sources if sources else None,
+                crisis_hit=is_crisis,
             )
         )
         db.commit()
     except Exception as e:
-        logging.warning("write normal assistant ConversationTurn failed: %s", e)
+        logging.warning("write assistant ConversationTurn failed: %s", e)
         db.rollback()
 
+    # —— 步骤 4：返回（旧字段 reply/sources/crisis 不变；新增 current_agent/agent_trace）——
     return {
         "reply": reply,
-        "sources": formatted_sources,
-        "crisis": False,
+        "sources": sources,
+        "crisis": is_crisis,
+        "current_agent": current_agent,
+        "agent_trace": agent_trace,
     }

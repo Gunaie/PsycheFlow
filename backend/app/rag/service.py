@@ -19,14 +19,16 @@ def chunk_text(text: str) -> list:
 
 
 def load_corpus(knowledge_dir: str = KNOWLEDGE_DIR) -> list:
-    """读取 data/knowledge/*.txt，返回 [{id, text, source}]。"""
+    """读取 data/knowledge/*.{txt,md}，返回 [{id, text, source}]。"""
     docs = []
-    for path in sorted(glob.glob(os.path.join(knowledge_dir, "*.txt"))):
-        source = os.path.basename(path)
-        with open(path, "r", encoding="utf-8") as f:
-            text = f.read()
-        for i, chunk in enumerate(chunk_text(text)):
-            docs.append({"id": f"{source}#{i}", "text": chunk, "source": source})
+    patterns = ("*.txt", "*.md")
+    for pattern in patterns:
+        for path in sorted(glob.glob(os.path.join(knowledge_dir, pattern))):
+            source = os.path.basename(path)
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+            for i, chunk in enumerate(chunk_text(text)):
+                docs.append({"id": f"{source}#{i}", "text": chunk, "source": source})
     return docs
 
 

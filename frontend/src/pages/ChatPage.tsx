@@ -6,6 +6,7 @@ import FooterDisclaimer from '../components/FooterDisclaimer'
 interface ChatTurn {
   role: 'user' | 'assistant'
   content: string
+  agent?: string  // 当前回复来自哪个 Agent（triage/assessment/intervention/escalation）
 }
 
 interface SourceRef {
@@ -18,6 +19,78 @@ interface ChatResponse {
   reply: string
   sources: SourceRef[]
   crisis: boolean
+  current_agent?: string  // 新增可选字段（向后兼容）
+  agent_trace?: string[]   // 新增可选字段
+}
+
+// 4 智能体阶段定义
+const AGENT_STAGES = [
+  { key: 'triage', label: '分诊', color: 'bg-blue-500', lightColor: 'bg-blue-50 text-blue-700 border-blue-300' },
+  { key: 'assessment', label: '测评', color: 'bg-cyan-500', lightColor: 'bg-cyan-50 text-cyan-700 border-cyan-300' },
+  { key: 'intervention', label: '干预', color: 'bg-emerald-500', lightColor: 'bg-emerald-50 text-emerald-700 border-emerald-300' },
+  { key: 'escalation', label: '升级', color: 'bg-red-500', lightColor: 'bg-red-100 text-red-700 border-red-400' },
+]
+
+function getStageIndex(agent: string | undefined): number {
+  if (!agent) return -1
+  return AGENT_STAGES.findIndex(s => s.key === agent)
+}
+
+function StageStepper({ currentAgent, crisis }: { currentAgent: string | undefined; crisis: boolean }) {
+  const currentIdx = getStageIndex(currentAgent)
+  return (
+    <div className="flex items-center justify-between px-2 py-2 bg-slate-50 rounded-lg border border-slate-200">
+      {AGENT_STAGES.map((stage, i) => {
+        const isCurrent = i === currentIdx
+        const isPast = currentIdx > i
+        const isCrisis = crisis && stage.key === 'escalation'
+        return (
+          <div key={stage.key} className="flex items-center flex-1 last:flex-none">
+            <div className="flex flex-col items-center">
+              <div
+                className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition ${
+                  isCrisis
+                    ? 'bg-red-500 text-white ring-4 ring-red-200'
+                    : isCurrent
+                    ? `${stage.color} text-white ring-4 ring-slate-200`
+                    : isPast
+                    ? 'bg-slate-400 text-white'
+                    : 'bg-slate-200 text-slate-400'
+                }`}
+              >
+                {i + 1}
+              </div>
+              <span
+                className={`mt-1 text-[10px] font-medium ${
+                  isCurrent || isCrisis ? 'text-slate-700' : 'text-slate-400'
+                }`}
+              >
+                {stage.label}
+              </span>
+            </div>
+            {i < AGENT_STAGES.length - 1 && (
+              <div
+                className={`flex-1 h-0.5 mx-1 mb-4 transition ${
+                  currentIdx > i ? 'bg-slate-400' : 'bg-slate-200'
+                }`}
+              />
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function AgentBadge({ agent }: { agent: string | undefined }) {
+  if (!agent) return null
+  const stage = AGENT_STAGES.find(s => s.key === agent)
+  if (!stage) return null
+  return (
+    <span className={`inline-block text-[10px] font-medium px-2 py-0.5 rounded border ${stage.lightColor}`}>
+      from: {stage.label} Agent
+    </span>
+  )
 }
 
 export default function ChatPage() {
@@ -26,6 +99,7 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(false)
   const [sources, setSources] = useState<SourceRef[]>([])
   const [crisis, setCrisis] = useState(false)
+  const [currentAgent, setCurrentAgent] = useState<string | undefined>(undefined)
   const [error, setError] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -39,6 +113,7 @@ export default function ChatPage() {
     setInput('')
     setLoading(true)
     setError(null)
+    setCurrentAgent(undefined)
     const history: ChatTurn[] = [...turns, { role: 'user', content: msg }]
     setTurns(history)
     try {
@@ -47,24 +122,29 @@ export default function ChatPage() {
         history: turns,
         session_id: localStorage.getItem('psycheflow_active_session_id') || null,
       })
-      setTurns([...history, { role: 'assistant', content: res.reply }])
+      setTurns([...history, { role: 'assistant', content: res.reply, agent: res.current_agent }])
       setSources(res.sources)
       setCrisis(res.crisis)
+      setCurrentAgent(res.current_agent)
     } catch (e) {
       setError((e as Error).message)
       setSources([])
       setCrisis(false)
+      setCurrentAgent(undefined)
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <div className="space-y-4 flex flex-col h-[calc(100vh-160px)]">
+    <div className="space-y-3 flex flex-col h-[calc(100vh-160px)]">
       <div>
         <h1 className="text-xl font-bold text-slate-800">开放对话</h1>
         <p className="text-sm text-slate-500 mt-1">和 PsycheFlow 陪伴助手聊聊你的近况。</p>
       </div>
+
+      {/* 4 智能体阶段 Stepper */}
+      <StageStepper currentAgent={currentAgent} crisis={crisis} />
 
       {crisis && <CrisisBanner />}
 
@@ -78,8 +158,13 @@ export default function ChatPage() {
           {turns.map((t, i) => (
             <div
               key={i}
-              className={`flex ${t.role === 'user' ? 'justify-end' : 'justify-start'}`}
+              className={`flex flex-col ${t.role === 'user' ? 'items-end' : 'items-start'}`}
             >
+              {t.role === 'assistant' && t.agent && (
+                <div className="mb-1 ml-1">
+                  <AgentBadge agent={t.agent} />
+                </div>
+              )}
               <div
                 className={`max-w-[80%] px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap ${
                   t.role === 'user'
@@ -92,7 +177,12 @@ export default function ChatPage() {
             </div>
           ))}
           {loading && (
-            <div className="flex justify-start">
+            <div className="flex flex-col items-start">
+              <div className="mb-1 ml-1">
+                <span className="inline-block text-[10px] font-medium px-2 py-0.5 rounded border bg-slate-100 text-slate-500 border-slate-300">
+                  编排中…
+                </span>
+              </div>
               <div className="bg-slate-100 text-slate-400 px-3 py-2 rounded-2xl text-sm">
                 陪伴助手正在思考…
               </div>
