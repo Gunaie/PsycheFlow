@@ -36,3 +36,16 @@ def get_current_account(
     except Exception:
         # 任何异常（DB 断连、SQL 错误等）都静默返回 None
         return None
+
+
+def get_current_teacher(
+    account: User | None = Depends(get_current_account),
+) -> User:
+    """C 三期：B 端管理后台权限依赖。非教师登录一律 403。"""
+    from fastapi import HTTPException
+
+    if account is None:
+        raise HTTPException(status_code=401, detail={"code": "unauthorized"})
+    if account.role != "teacher":
+        raise HTTPException(status_code=403, detail={"code": "forbidden", "reason": "仅教师账号可访问"})
+    return account

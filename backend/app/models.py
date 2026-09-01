@@ -24,6 +24,8 @@ class User(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     label: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     role: Mapped[str] = mapped_column(String(16), default="student")
+    # B 端教师密码登录（SHA-256 加盐哈希），学生为空
+    password_hash: Mapped[str | None] = mapped_column(String(128), nullable=True, default=None)
     profile: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
     consents: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
     token: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
@@ -98,3 +100,57 @@ class AssessmentRecord(Base):
     @property
     def needs_crisis_escalation(self) -> bool:
         return self.crisis_level == "elevated"
+
+
+class ScreeningBatch(Base):
+    """C 三期：教师创建的批量筛查批次。
+
+    - teacher_id：创建教师（users.id，role=teacher）
+    - scale_ids：本批施测量表列表，如 ["phq_a"] / ["phq_a", "scared"]
+    - status：active 进行中 / closed 已关闭（关闭后学生筛查码失效）
+    """
+    __tablename__ = "screening_batches"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    teacher_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    scale_ids: Mapped[list] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    teacher: Mapped["User"] = relationship()
+    entries: Mapped[list["BatchEntry"]] = relationship(
+        back_populates="batch", cascade="all, delete-orphan",
+        order_by="BatchEntry.student_no"
+    )
+
+
+class BatchEntry(Base):
+    """批次内学生条目：名单由教师 CSV 上传，学生凭 entry_code 匿名进入答题。
+
+    - student_no/grade/klass：教师自行上传的名单信息（B 端可见）
+    - entry_code：6 位唯一筛查码（C 端唯一凭证，不含真实信息）
+    - status：pending 未完成 / completed 已完成
+    - session_id：完成后关联的评估会话（关联 AssessmentRecord 供统计）
+    """
+    __tablename__ = "batch_entries"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    batch_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("screening_batches.id", ondelete="CASCADE"), index=True
+    )
+    student_no: Mapped[str] = mapped_column(String(64), nullable=False)
+    student_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    grade: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    klass: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    entry_code: Mapped[str] = mapped_column(String(16), unique=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    session_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    batch: Mapped["ScreeningBatch"] = relationship(back_populates="entries")
+    session: Mapped["Session | None"] = relationship()

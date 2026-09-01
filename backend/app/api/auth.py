@@ -1,4 +1,6 @@
-"""认证与账号端点：注册（含知情同意校验）、token 登录、label 登录。"""
+"""认证与账号端点：注册（含知情同意校验）、token 登录、label 登录、教师密码登录。"""
+import hashlib
+import secrets
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -45,6 +47,14 @@ class RegisterReq(BaseModel):
     consents: Consent
     profile: Profile = Profile()
     role: Literal["student", "teacher", "parent"] = "student"
+    # C 三期：教师注册需设置密码与登录账号名（label）
+    password: str | None = None
+    label: str | None = None
+
+
+class LoginByPassword(BaseModel):
+    label: str
+    password: str
 
 
 class AuthResp(BaseModel):
@@ -64,6 +74,22 @@ class LoginByLabel(BaseModel):
 # ---------------------------------------------------------------------------
 # 辅助
 # ---------------------------------------------------------------------------
+
+def _hash_password(password: str) -> str:
+    """PBKDF2-SHA256 加盐哈希，格式 salt_hex$hash_hex（无需第三方依赖）。"""
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("ascii"), 100_000)
+    return f"{salt}${digest.hex()}"
+
+
+def _verify_password(password: str, stored: str) -> bool:
+    try:
+        salt, expected = stored.split("$", 1)
+    except ValueError:
+        return False
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("ascii"), 100_000)
+    return secrets.compare_digest(digest.hex(), expected)
+
 
 def _gen_label(max_attempts: int = 5) -> str:
     """生成形如 ceshi-<4位hex> 的匿名 label，冲突重试最多 max_attempts 次。
@@ -94,17 +120,42 @@ async def register(req: RegisterReq, db: Session = Depends(get_db)):
             detail={"code": "missing_consents", "missing": missing},
         )
 
-    # 2) 生成唯一 label（冲突重试）
-    label: str | None = None
-    for candidate in _gen_label():
-        exists = db.execute(
-            select(User).where(User.label == candidate)
-        ).scalar_one_or_none()
-        if not exists:
-            label = candidate
-            break
+    # 2) 教师角色：密码必填（>=6位），label 可自定义
+    custom_label: str | None = None
+    password_hash: str | None = None
+    if req.role == "teacher":
+        if not req.password or len(req.password) < 6:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "invalid_password", "reason": "教师注册须设置至少 6 位密码"},
+            )
+        password_hash = _hash_password(req.password)
+        if req.label:
+            candidate = req.label.strip()
+            if not (3 <= len(candidate) <= 64):
+                raise HTTPException(
+                    status_code=422,
+                    detail={"code": "invalid_label", "reason": "账号名长度须为 3-64 字符"},
+                )
+            exists = db.execute(
+                select(User).where(User.label == candidate)
+            ).scalar_one_or_none()
+            if exists:
+                raise HTTPException(status_code=409, detail="账号名已被使用")
+            custom_label = candidate
 
-    # 3) 账号 id / token（MVP：token 直接等于 account_id 即可，opaque 足够）
+    # 3) 生成唯一 label（冲突重试；教师自定义 label 优先）
+    label: str | None = custom_label
+    if label is None:
+        for candidate in _gen_label():
+            exists = db.execute(
+                select(User).where(User.label == candidate)
+            ).scalar_one_or_none()
+            if not exists:
+                label = candidate
+                break
+
+    # 4) 账号 id / token（MVP：token 直接等于 account_id 即可，opaque 足够）
     account_id = uuid.uuid4().hex
     token = account_id
 
@@ -112,6 +163,7 @@ async def register(req: RegisterReq, db: Session = Depends(get_db)):
         id=account_id,
         label=label,
         role=req.role,
+        password_hash=password_hash,
         profile=req.profile.model_dump(),
         consents=req.consents.model_dump(),
         token=token,
@@ -142,4 +194,15 @@ async def login_by_label(req: LoginByLabel, db: Session = Depends(get_db)):
     user = db.execute(stmt).scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="label 无效或不存在")
+    return AuthResp(account_id=user.id, token=user.token, label=user.label)
+
+
+@router.post("/login_by_password", response_model=AuthResp)
+async def login_by_password(req: LoginByPassword, db: Session = Depends(get_db)):
+    """C 三期：教师密码登录（仅 role=teacher 且已设置密码的账号可用）。"""
+    user = db.execute(
+        select(User).where(User.label == req.label)
+    ).scalar_one_or_none()
+    if not user or not user.password_hash or not _verify_password(req.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="账号名或密码错误")
     return AuthResp(account_id=user.id, token=user.token, label=user.label)

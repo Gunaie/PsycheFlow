@@ -61,6 +61,18 @@ def _migrate_sqlite_columns(engine) -> None:
         import logging
         logging.getLogger("psycheflow.db").warning("sessions.account_id 迁移失败，忽略", exc_info=True)
 
+    try:
+        # users.password_hash：C 三期教师密码登录新增
+        if not _col_exists(engine, "users", "password_hash"):
+            with engine.connect() as conn:
+                conn.execute(text(
+                    "ALTER TABLE users ADD COLUMN password_hash VARCHAR(128) NULL"
+                ))
+                conn.commit()
+    except Exception:
+        import logging
+        logging.getLogger("psycheflow.db").warning("users.password_hash 迁移失败，忽略", exc_info=True)
+
 
 def get_db():
     """FastAPI 依赖：每请求一个 DB session。"""
