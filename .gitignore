@@ -21,6 +21,9 @@ dist/
 build/
 .vite/
 *.local
+*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
 
 # 环境与密钥
 .env
