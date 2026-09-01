@@ -1,8 +1,8 @@
 # PsycheFlow 项目交接文档
 
 > 最后更新：2026-09-01
-> 当前 commit：`2a34df1`（生产化准备，main 分支）
-> 阶段：D 四期全部完成 + 生产化准备，准备进入五期优化（性能/合规/部署）
+> 当前 commit：`fe1a595`（SSE 首 token 优化，main 分支）
+> 阶段：D 四期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标），准备进入五期优化（合规深化/部署）
 
 ---
 
@@ -22,7 +22,7 @@ docker exec psycheflow-backend uv run python -c "import asyncio; from app.rag.se
 
 # 4. 跑测试（验证全绿）
 docker exec psycheflow-backend uv run pytest -q --no-header
-# 期望：176 passed, 1 skipped, 0 failed
+# 期望：187 passed, 1 skipped, 0 failed
 
 # 5. 浏览器打开
 # 前端：http://localhost:5174/chat
@@ -42,10 +42,14 @@ DASHSCOPE_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx   # ← 完整 Key 问旧�
 DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 
 # ============ 模型配置（百炼模型） ============
-# 分诊/结构化提取（MoE 架构，分类精准）
+# 结构化提取/计分辅助（MoE 架构，分类精准）
 MODEL_INTAKE=qwen3.8-2.4t-a95b
+# 意图分类（无思考链，4 类标签输出快；triage 节点专用）
+MODEL_TRIAGE=qwen-plus
 # 开放对话/共情（deepseek-v4 有 reasoning_content 思考链，max_tokens 须够大）
 MODEL_DIALOG=deepseek-v4-pro-0813
+# 流式干预专用（无思考链，首 token 快；SSE /api/chat/stream 用此角色）
+MODEL_DIALOG_STREAM=qwen-plus
 # 高频/兜底/报告辅助（deepseek-v4 有 reasoning_content 思考链）
 MODEL_REPORT=deepseek-v4-flash-0731
 # RAG 向量化
@@ -78,13 +82,16 @@ CRISIS_HOTLINE_12355=12355
 
 | 模型 | 角色 | 注意 |
 |---|---|---|
-| `qwen3.8-2.4t-a95b` | intake | MoE 架构，分类精准。如果配额耗尽，次选 `qwen3.8-27b` |
+| `qwen3.8-2.4t-a95b` | intake | MoE 架构，分类精准。**有思考链**，max_tokens 须够。**不支持 `enable_thinking=False`**（百炼报 400 restricted to True）。如果配额耗尽，次选 `qwen3.8-27b` |
+| `qwen-plus` | triage / dialog_stream | **无思考链**，首 content ~0.5s（实测），满足 NFR-5「首 token < 2s」。triage 意图分类 + SSE 流式干预专用 |
 | `deepseek-v4-pro-0813` | dialog | **有 `reasoning_content` 思考链**，max_tokens 须 ≥3000，否则 content 为空 |
 | `deepseek-v4-flash-0731` | report | 同上，max_tokens 须 ≥4000 |
 | `qwen-audio-3.0-asr-flash` | ASR | DashScope 原生 multimodal-generation HTTP，**不走** OpenAI 兼容协议 |
 | `qwen-audio-3.0-tts-flash` | TTS | DashScope 原生 audio/tts HTTP，**不走** SDK WebSocket（SDK 会崩） |
 
-> **deepseek-v4 reasoning_content 坑**：deepseek-v4 系列有思考链字段，会先"思考"再输出 content。max_tokens 太小时被思考链用完，content 为空、`finish_reason=length`。**不是**配额耗尽（已验证两个 deepseek 模型仍有额度）。各节点 max_tokens：triage=500, intervention=3000, reports=4000, llm 默认=2048。
+> **deepseek-v4 reasoning_content 坑**：deepseek-v4 系列有思考链字段，会先"思考"再输出 content。max_tokens 太小时被思考链用完，content 为空、`finish_reason=length`。**不是**配额耗尽（已验证两个 deepseek 模型仍有额度）。各节点 max_tokens：triage=50（qwen-plus 无思考链）, intervention=3000, reports=4000, llm 默认=2048。
+>
+> **qwen3.8 思考链无法关闭坑**：qwen3.8-2.4t-a95b 强制 `enable_thinking=True`（百炼报 400 restricted to True），关不掉。流式场景下思考链阻塞首 content token 5-6s，**不能用**于 SSE 流式。已改用 `qwen-plus`（无思考链）承担 triage 和 dialog_stream 两个角色（commit `fe1a595`）。
 
 ---
 
@@ -95,17 +102,21 @@ CRISIS_HOTLINE_12355=12355
 | 启动/重启 | `docker compose up -d --build` | **重建 chroma 容器会清空向量索引**，之后必须 build_index() |
 | 重启单服务 | `docker restart psycheflow-backend` | 仅重启进程，**不会重新读 .env**。改 .env 必须用 `docker compose up -d backend` |
 | 看后端日志 | `docker logs psycheflow-backend --tail 50` | 或加 `--since 10m` 看最近 10 分钟 |
-| 跑 pytest | `docker exec psycheflow-backend uv run pytest -q --no-header` | 181 passed + 1 skipped |
+| 跑 pytest | `docker exec psycheflow-backend uv run pytest -q --no-header` | 187 passed + 1 skipped |
 | 重建 RAG 索引 | `docker exec psycheflow-backend uv run python -c "import asyncio; from app.rag.service import rag_service; print(asyncio.run(rag_service.build_index()))"` | chroma 被重建后必跑 |
 | 跑验证脚本 | `docker exec psycheflow-backend uv run python scripts/verify_leftovers.py` | has_assessment + triage 抽样 |
 | 跑性能压测 | `docker exec psycheflow-backend uv run python scripts/perf_bench.py` | 50 并发 health + 10 并发 chat（脚本位于 `backend/scripts/`，容器内 `/app/scripts/`） |
+| **SSE 首 token 实测** | `docker exec psycheflow-backend uv run python scripts/sse_first_token.py` | NFR-5 验证：首 token 应 < 2s（实测 1.72s） |
+| **流式 chunk 诊断** | `docker exec psycheflow-backend uv run python scripts/diag_stream.py` | 对比各模型首 content token 时间 + chunk delta 字段结构 |
 | 前端生产构建 | `docker exec psycheflow-frontend sh -c "npm run build"` | 验证前端编译无错 |
 | 进容器 shell | `docker exec -it psycheflow-backend bash` | |
 | 生成自签 TLS 证书 | `docker run --rm -v "${PWD}/certs:/certs" alpine:latest sh -c "apk add --no-cache openssl >/dev/null 2>&1; openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout /certs/privkey.pem -out /certs/fullchain.pem -subj '/CN=localhost'"` | 内网/开发用；生产放真实证书（Let's Encrypt）到 `./certs/` 同名文件 |
 | 验证 nginx 配置 | `docker run --rm --add-host=backend:127.0.0.1 -v "${PWD}/frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro" -v "${PWD}/certs:/etc/nginx/certs:ro" nginx:alpine nginx -t` | 改 nginx.conf 后跑；`--add-host` 让 standalone 容器解析 `backend` upstream |
 | 生产部署（HTTPS） | `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build` | 需先生成证书到 `./certs/`；前端 80→443 跳转，4 workers + healthcheck |
 
-### 测对话接口（推荐：容器内 python）
+### 测对话接口
+
+**非流式（旧 /api/chat，向后兼容）**：
 
 ```bash
 docker exec -i psycheflow-backend uv run python -c "
@@ -117,6 +128,15 @@ d=json.loads(urllib.request.urlopen(req,timeout=60).read())
 print(f'agent={d[\"current_agent\"]}, crisis={d[\"crisis\"]}, reply[:80]={d[\"reply\"][:80]}')
 "
 # 期望：agent=intervention, crisis=False, reply 含共情内容
+```
+
+**流式（SSE /api/chat/stream，推荐）**：
+
+```bash
+docker exec psycheflow-backend uv run python scripts/sse_first_token.py
+# 期望：首 token < 2s（实测 1.72s），事件序列 agent(triage)→agent(assessment)→agent(intervention)→sources→token×N→done
+# 危机消息：docker exec psycheflow-backend uv run python scripts/sse_first_token.py --message "我想自杀"
+# 期望：首 token N/A（危机不流式），事件 agent(triage)→crisis→done，crisis reply 含 12355
 ```
 
 ---
@@ -166,18 +186,29 @@ print(f'agent={d[\"current_agent\"]}, crisis={d[\"crisis\"]}, reply[:80]={d[\"re
 **现象**：Windows Docker bind mount 可能不立即识别 public 目录新增文件。
 **解决**：`docker restart psycheflow-frontend` 后生效。
 
+### P12：qwen3.8 思考链无法关闭，SSE 首 token 阻塞（**重要，NFR-5 关键**）
+**现象**：SSE 流式 `/api/chat/stream` 首 token 实测 18.08s，远超 NFR-5「首 token < 2s」。瓶颈：triage（intake=qwen3.8-2.4t-a95b）+ intervention（dialog=deepseek-v4-pro-0813）两节点都有 `reasoning_content` 思考链，stream 模式下先输出思考链（5-15s）再输出 content，`stream()` 只 yield content 故首 token 要等思考链跑完。
+**误判 1**：以为 `qwen3.8` 可用 `extra_body={"enable_thinking": False}` 关思考——百炼报 400 `The value of the enable_thinking parameter is restricted to True`，**qwen3.8 强制开启思考**。
+**误判 2**：以为关了思考后首 token 4.80s 达标——实际是 `stream()` 抛 BadRequestError 被 `stream_intervention` 捕获走 `FALLBACK_REPLY`，4.80s 是 fallback 一次性 yield 时间（triage 4.43s + 0.37s），非真实流式首 token。
+**解决**（commit `fe1a595`）：triage 和 dialog_stream 两个角色都换 **`qwen-plus`**（无思考链模型），实测首 content ~0.5s。triage `max_tokens` 500→50（4 类标签）。`llm.py stream()` 移除 `extra_body`（对 qwen3.8 报 400，qwen-plus 不需要）。实测首 token **1.72s**（triage 0.65s + RAG 0.16s + stream 首 token 0.32s），NFR-5 达标。非流式 `/api/chat` 仍用 deepseek-v4-pro（高质量），流式用 qwen-plus（首 token 快）。
+**诊断**：`docker exec psycheflow-backend uv run python scripts/diag_stream.py` 对比各模型 chunk 结构 + 首 content 时间；`scripts/sse_first_token.py` 跑端到端 SSE 首 token 实测。
+
 ---
 
 ## 5. 当前模型配置
 
 | Role | 模型 | 用途 | 温度 | max_tokens | 状态 |
 |---|---|---|---|---|---|
-| intake | `qwen3.8-2.4t-a95b` | triage 意图分类 | 0.1 | 500 | ✅ |
-| dialog | `deepseek-v4-pro-0813` | intervention 共情对话 | 0.35 | 3000 | ✅ |
-| report | `deepseek-v4-flash-0731` | 报告生成 | 0.1 | 4000 | ✅ |
+| intake | `qwen3.8-2.4t-a95b` | 结构化提取/计分辅助（有思考链） | 0.1 | 2048 | ✅ |
+| triage | `qwen-plus` | triage 意图分类（**无思考链，首 token 快**） | 0.1 | 50 | ✅ |
+| dialog | `deepseek-v4-pro-0813` | intervention 非流式共情对话（有思考链） | 0.35 | 3000 | ✅ |
+| dialog_stream | `qwen-plus` | intervention **SSE 流式**共情对话（无思考链） | 0.35 | 3000 | ✅ |
+| report | `deepseek-v4-flash-0731` | 报告生成（有思考链） | 0.1 | 4000 | ✅ |
 | embed | `text-embedding-v3` | Chroma RAG 向量化 | — | — | ✅ |
 | asr | `qwen-audio-3.0-asr-flash` | 语音识别（DashScope HTTP） | — | — | ✅ |
 | tts | `qwen-audio-3.0-tts-flash` | 语音合成（DashScope HTTP） | — | — | ✅ |
+
+> **triage 角色分工演进**：原 intake（qwen3.8）承担 triage 意图分类 + 结构化提取两职，但 qwen3.8 有思考链阻塞 SSE 首 token。commit `fe1a595` 拆分出独立 `triage` 角色配 qwen-plus（无思考链），intake 仍保留 qwen3.8 给结构化提取/计分辅助。
 
 ---
 
@@ -227,6 +258,19 @@ print(f'agent={d[\"current_agent\"]}, crisis={d[\"crisis\"]}, reply[:80]={d[\"re
 | [pages/admin/](frontend/src/pages/admin/) | 管理后台三页（登录/批次列表/批次详情） |
 | [lib/recorder.ts](frontend/src/lib/recorder.ts) | D3：浏览器 WAV 录音器（16kHz PCM） |
 | [components/CrisisBanner.tsx](frontend/src/components/CrisisBanner.tsx) | 危机横幅组件 |
+
+### 诊断/验证脚本（backend/scripts/，容器内 /app/scripts/）
+
+| 路径 | 作用 |
+|---|---|
+| [scripts/sse_first_token.py](backend/scripts/sse_first_token.py) | **NFR-5 验证**：SSE /api/chat/stream 首 token 实测（实测 1.72s） |
+| [scripts/diag_stream.py](backend/scripts/diag_stream.py) | 各模型 stream chunk 结构 + 首 content token 对比（诊断思考链阻塞） |
+| [scripts/perf_bench.py](backend/scripts/perf_bench.py) | 性能压测：50 并发 health + 10 并发 chat |
+| [scripts/verify_leftovers.py](backend/scripts/verify_leftovers.py) | 遗留项验证：has_assessment 链路 + triage 意图抽样 |
+| [scripts/voice_api_e2e.py](backend/scripts/voice_api_e2e.py) | D3 语音 ASR/TTS 端到端验证 |
+| [scripts/voice_probe.py](backend/scripts/voice_probe.py) | D3 语音 API 单点探测 |
+| [scripts/tts_http_diag.py](backend/scripts/tts_http_diag.py) | TTS HTTP API 诊断（DashScope 原生端点） |
+| [scripts/diag_deepseek.py](backend/scripts/diag_deepseek.py) | deepseek-v4 reasoning_content 思考链诊断 |
 
 ### 部署文件
 
@@ -282,6 +326,16 @@ print(f'agent={d[\"current_agent\"]}, crisis={d[\"crisis\"]}, reply[:80]={d[\"re
   - nginx.conf 优化（gzip / 30d 缓存 / 安全头 / 流式代理 / 10m 上传）
   - Token 安全加固（secrets.token_hex(32) 替代 account_id）
 
+### SSE 流式 + 首 token 优化 ✅（commit 70d2917 → fe1a595）
+- **SSE 骨架**（commit 70d2917）：POST /api/chat/stream（保留旧 /api/chat 向后兼容）。手动跑 triage→assessment 同步等结果，再 provider.stream() 边生成边推 token；危机路径不流式推完整 crisis_message 后 close；审计双写不破坏。SSE 事件：agent/sources/token/crisis/error/done。前端 streamChat（fetch+ReadableStream 解析 SSE，不用 EventSource 因不支持 POST+auth）+ ChatPage 边收 token 边显示
+- **首 token 优化**（commit fe1a595，NFR-5 达标）：首 token **18.08s → 1.72s**
+  - 瓶颈定位：triage（intake=qwen3.8）+ intervention（dialog=deepseek-v4-pro）两节点都有 reasoning_content 思考链，stream 模式下先输出思考链 5-15s 再输出 content
+  - 误判排查：qwen3.8 不支持 `enable_thinking=False`（百炼报 400 restricted to True）；以为关思考后 4.80s 达标，实际是 stream() 抛 BadRequestError 被 stream_intervention 捕获走 FALLBACK_REPLY 的假象
+  - 解决：triage + dialog_stream 两个角色都换 **qwen-plus**（无思考链，首 content ~0.5s）。新增 `model_triage`/`temp_triage` 配置项 + role="triage" 映射。triage max_tokens 500→50。llm.py stream() 移除 extra_body
+  - 时序分解（1.72s）：triage 0.65s + RAG 0.16s + stream 首 token 0.32s
+  - 浏览器实测 PASS：agent stepper 分诊→测评→干预实时更新，3 个知识卡片渲染，回复边生成边显示；危机消息红色 banner + 12355 + 无 token 流式
+  - 187 passed / 1 skipped（+6 流式单测 test_api_chat_stream.py）
+
 ---
 
 ## 8. 待做事项（五期优化）
@@ -298,13 +352,15 @@ print(f'agent={d[\"current_agent\"]}, crisis={d[\"crisis\"]}, reply[:80]={d[\"re
      - 敏感数据盘点：`User.profile`(name/student_no/grade/klass/gender/age/guardian_phone/school/teacher_email)、`BatchEntry`(student_no/student_name)、`ConversationTurn.content`、`AssessmentRecord.answers/interpretation`
      - 现状保护：传输层 dev HTTP，prod nginx **已上 TLS1.2/1.3 + HSTS + CSP + 全套安全头**（[nginx.conf](frontend/nginx.conf)）；静态层 SQLite `./data/psycheflow.db` Docker volume 无加密；访问层 token=token_hex(32) 分离 + 教师 PBKDF2-SHA256 加盐 + login_by_label 漏洞已修 + 审计 DB 双写
      - 结论：SQLite MVP 实施字段级加密（guardian_phone 走 Fernet/AES）需密钥管理（env 弱密钥 / KMS 过度工程）且破坏 SQL 查询，性价比低。**三步状态**：(a) ✅ 生产 nginx TLS+HSTS+CSP 已完成（2026-09-01，自签证书已生成验证，nginx -t + compose config 双绿）、(b) ⏳ `./data` volume 容器内非 root + 文件 600 权限、(c) ⏳ SQLite 备份文件加密；规模化迁 PostgreSQL 后对 guardian_phone/teacher_email 走 pgcrypto 列级加密
-3. ~~**流式接口（首 token 验收前置）**~~ ✅（2026-09-01 SSE 骨架完成，首 token 优化待决策）：
-   - **SSE 骨架**：新增 [POST /api/chat/stream](backend/app/api/chat.py)（保留旧 `/api/chat` 向后兼容）。架构 Option C：手动跑 triage→assessment（同步等结果），再用 `provider.stream()` 边生成边推 token；危机路径不流式，推完整 crisis_message 后 close。[llm.py](backend/app/core/llm.py) 加 `stream()`（只 yield `delta.content`，过滤 `reasoning_content` 思考链）。[intervention.py](backend/app/agents/nodes/intervention.py) 重构出 `build_intervention_messages`+`stream_intervention`+`FALLBACK_REPLY`，流式与非流式复用同一套 prompt 拼接。SSE 事件：`agent`(节点切换)/`sources`(RAG 卡片提前推)/`token`(流式)/`crisis`(完整话术)/`error`/`done`
+3. ~~**流式接口（首 token 验收前置）**~~ ✅（2026-09-01 SSE 骨架 + 首 token 优化完成，**NFR-5 达标**）：
+   - **SSE 骨架**（commit 70d2917）：新增 [POST /api/chat/stream](backend/app/api/chat.py)（保留旧 `/api/chat` 向后兼容）。架构 Option C：手动跑 triage→assessment（同步等结果），再用 `provider.stream()` 边生成边推 token；危机路径不流式，推完整 crisis_message 后 close。[llm.py](backend/app/core/llm.py) 加 `stream()`（只 yield `delta.content`，过滤 `reasoning_content` 思考链）。[intervention.py](backend/app/agents/nodes/intervention.py) 重构出 `build_intervention_messages`+`stream_intervention`+`FALLBACK_REPLY`，流式与非流式复用同一套 prompt 拼接。SSE 事件：`agent`(节点切换)/`sources`(RAG 卡片提前推)/`token`(流式)/`crisis`(完整话术)/`error`/`done`
    - **前端**：[api.ts](frontend/src/api.ts) 加 `streamChat`（fetch+ReadableStream 解析 SSE，因 EventSource 不支持 POST+auth）；[ChatPage.tsx](frontend/src/pages/ChatPage.tsx) `send` 改用 `streamChat`，边收 token 边追加到 assistant 气泡，空 assistant turn 在 loading 时显示"思考中"
+   - **首 token 优化**（commit fe1a595，NFR-5 达标）：首 token **18.08s → 1.72s**
+     - 瓶颈：triage（intake=qwen3.8）+ intervention（dialog=deepseek-v4-pro）两节点都有 reasoning_content 思考链，stream 模式下先输出思考链 5-15s 再输出 content
+     - 误判排查：qwen3.8 不支持 `enable_thinking=False`（百炼报 400 restricted to True）；4.80s 假象是 stream() 抛异常走 FALLBACK_REPLY
+     - 解决：triage + dialog_stream 两角色都换 **qwen-plus**（无思考链，首 content ~0.5s）。详见 §4 P12 + §7「SSE 流式 + 首 token 优化」段
    - **测试**：187 passed / 1 skipped（+6 流式单测 [test_api_chat_stream.py](backend/tests/test_api_chat_stream.py)：正常 token 序列/危机不流式/空回复 fallback/异常 fallback/未知人格回退/RAG 空不推 sources）
-   - **实测首 token（脚本 [sse_first_token.py](backend/scripts/sse_first_token.py)）**：消息"最近考试压力大，睡不好"，事件序列：0.57s agent:triage → 2.96s agent:assessment（triage LLM 分类 ~2.4s）→ 3.20s sources:3 条（RAG ~0.24s）→ **18.08s 首 token** → 20.59s done（回复 198 字）
-   - **瓶颈分析**：首 token 18s 远超 NFR-5「<2s」。triage ~2.4s（intake=qwen3.8-2.4t-a95b 可接受），**intervention 首 token 14.9s**（3.20→18.08）是主因——dialog=deepseek-v4-pro-0813 有 `reasoning_content` 思考链，stream 模式下先输出思考链（10-15s）再输出 content，`stream()` 只 yield content 故首 token 要等思考链跑完
-   - **首 token 优化选项（待决策）**：(A) dialog 角色换无思考链轻量模型如 `qwen3.8-2.4t-a95b`，首 token 预计 <3s，但共情质量可能降；(B) `llm.py` 加 `dialog_stream` 角色专用流式（qwen3.8），非流式 `/api/chat` 仍用 deepseek-v4-pro（高质量），需 `.env` 加 `MODEL_DIALOG_STREAM`；(C) `stream()` 也推 `reasoning_content` 当"思考中"提示（但泄露内部推理，不推荐）；(D) triage 换更快模型或 detect_crisis 后并行启动（干预需 triage_intent 输入，难并行）
+   - **非阻塞后续项**：triage 从 qwen3.8 换 qwen-plus 后，准确率需重测（之前 9/9）。sse 实测 1/1 正确，但样本少，建议跑一轮多消息采样确认不退化
 4. **Ollama 本地兜底**：断网/降本场景的灾备方案
 5. **多 Provider 切换**：硅基流动等备用 Provider
 6. **多租户支持**：按学校/区域隔离数据
@@ -314,6 +370,9 @@ print(f'agent={d[\"current_agent\"]}, crisis={d[\"crisis\"]}, reply[:80]={d[\"re
 ## 9. Git 提交历史
 
 ```
+fe1a595 feat: SSE 首 token 优化 18s→1.7s（NFR-5 达标）— triage+dialog_stream 换 qwen-plus 无思考链
+70d2917 feat: SSE 流式对话 — POST /api/chat/stream 边生成边推 token
+d2e3b50 feat: 生产传输层加固 — nginx TLS + HSTS + CSP + 安全头
 2a34df1 feat: 生产化准备 — docker-compose.prod.yml + nginx 优化 + token 安全加固
 8eac960 fix: deepseek-v4 reasoning_content 思考链导致 content 为空 — 增大 max_tokens，换回 deepseek
 2a2c783 fix: 遗留项收尾 — has_assessment 链路 + triage 抽样验证通过，修复 Intervention 空回复 fallback
@@ -337,10 +396,12 @@ dd853fb B 二期：LangGraph 四智能体编排 + RAG .md 修复 + ChatPage 阶�
 
 - [ ] `docker ps` 显示 3 容器 Up（psycheflow-backend / psycheflow-frontend / psycheflow-chroma）
 - [ ] 重建 RAG 索引：`docker exec psycheflow-backend uv run python -c "import asyncio; from app.rag.service import rag_service; print(asyncio.run(rag_service.build_index()))"` 输出 `{'indexed': 183, ...}`
-- [ ] 跑测试：`docker exec psycheflow-backend uv run pytest -q --no-header` → 176 passed / 1 skipped / 0 failed
+- [ ] 跑测试：`docker exec psycheflow-backend uv run pytest -q --no-header` → 187 passed / 1 skipped / 0 failed
 - [ ] 遗留项验证：`docker exec psycheflow-backend uv run python scripts/verify_leftovers.py` → has_assessment PASS + triage 9/9
+- [ ] **SSE 首 token 验证（NFR-5）**：`docker exec psycheflow-backend uv run python scripts/sse_first_token.py` → 首 token < 2s（实测 1.72s），事件序列 agent(triage)→agent(assessment)→agent(intervention)→sources→token×N→done
+- [ ] **SSE 危机验证**：`docker exec psycheflow-backend uv run python scripts/sse_first_token.py --message "我想自杀"` → 首 token N/A（危机不流式），crisis 事件含 12355
 - [ ] 浏览器访问 http://localhost:5174/chat → 看到 StageStepper「1 分诊 2 测评 3 干预 4 升级」
-- [ ] 输入「我最近压力大」→ 回复是共情内容（呼吸/放松建议），**不是**含 12355 的危机话术
+- [ ] 输入「我最近压力大」→ 回复是共情内容（呼吸/放松建议），**不是**含 12355 的危机话术；**文字应逐字出现**（SSE 流式），非一次性出现
 - [ ] 输入「我想自杀」→ CrisisBanner 出现 + 回复含 12355 + sources 为空 + current_agent=escalation
 - [ ] 输入「重度抑郁症状」→ sources 里有 `ccmd3_summary.md`
 - [ ] C 三期：访问 http://localhost:5174/admin/login → 注册教师账号 → 创建批次 → /screening 输码作答
