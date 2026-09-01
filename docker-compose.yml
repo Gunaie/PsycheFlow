@@ -1,0 +1,54 @@
+services:
+  # ---------- 向量库 ----------
+  chroma:
+    image: chromadb/chroma:latest
+    container_name: psycheflow-chroma
+    restart: unless-stopped
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./data/chroma:/chroma/chroma
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+
+  # ---------- 后端 ----------
+  backend:
+    build: ./backend
+    container_name: psycheflow-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      # 代码热重载
+      - ./backend:/app
+      # 保留构建时装好的 .venv，避免被宿主机空目录覆盖导致每次重装依赖
+      - /app/.venv
+      # 数据持久化（SQLite + 报告产物）
+      - ./data:/app/data
+      # 审计日志
+      - ./logs:/app/logs
+    environment:
+      # volume 跨文件系统，关闭 hardlink 警告
+      - UV_LINK_MODE=copy
+    env_file:
+      - .env
+    depends_on:
+      - chroma
+    command: uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # ---------- 前端 ----------
+  frontend:
+    build:
+      context: ./frontend
+      target: dev
+    container_name: psycheflow-frontend
+    restart: unless-stopped
+    ports:
+      - "5174:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    command: npm run dev -- --host 0.0.0.0
