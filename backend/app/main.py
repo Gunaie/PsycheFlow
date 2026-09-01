@@ -19,6 +19,7 @@ from app.api.sessions import router as sessions_router
 from app.api.admin import router as admin_router
 from app.api.personas import router as personas_router
 from app.api.screening import router as screening_router
+from app.api.voice import router as voice_router
 from app.core.config import settings
 from app.db import init_db
 
@@ -75,6 +76,7 @@ app.include_router(sessions_router)
 app.include_router(admin_router)
 app.include_router(personas_router)
 app.include_router(screening_router)
+app.include_router(voice_router)
 
 
 @app.get("/api/health")

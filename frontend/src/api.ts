@@ -100,3 +100,14 @@ export async function apiPostBlob(path: string, body: unknown): Promise<Blob> {
   if (!r.ok) throw await toError(r)
   return r.blob()
 }
+
+/** multipart 文件上传（语音转写等场景）。 */
+export async function apiPostForm<T>(path: string, form: FormData): Promise<T> {
+  const r = await fetch(path, {
+    method: 'POST',
+    headers: { ...getAuthHeaders() }, // 不手动设 Content-Type，交给浏览器生成 boundary
+    body: form,
+  })
+  if (!r.ok) throw await toError(r)
+  return r.json() as Promise<T>
+}

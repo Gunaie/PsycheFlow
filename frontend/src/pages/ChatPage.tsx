@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { apiGet, apiPost } from '../api'
+import { apiGet, apiPost, apiPostBlob, apiPostForm } from '../api'
+import { WavRecorder } from '../lib/recorder'
 import CrisisBanner from '../components/CrisisBanner'
 import FooterDisclaimer from '../components/FooterDisclaimer'
 
@@ -111,6 +112,10 @@ export default function ChatPage() {
   const [error, setError] = useState<string | null>(null)
   const [personas, setPersonas] = useState<PersonaOption[]>([])
   const [personaId, setPersonaId] = useState('default')
+  const [recording, setRecording] = useState(false)
+  const [transcribing, setTranscribing] = useState(false)
+  const [speakingIdx, setSpeakingIdx] = useState<number | null>(null)
+  const recorderRef = useRef<WavRecorder | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -153,6 +158,58 @@ export default function ChatPage() {
       setCurrentAgent(undefined)
     } finally {
       setLoading(false)
+    }
+  }
+
+  /** 语音输入：点击开始录音，再次点击结束并转写回填输入框（可编辑后再发送）。 */
+  const toggleRecord = async () => {
+    if (recording) {
+      const rec = recorderRef.current
+      recorderRef.current = null
+      setRecording(false)
+      setTranscribing(true)
+      try {
+        const blob = await rec!.stop()
+        const form = new FormData()
+        form.append('file', blob, 'speech.wav')
+        const { text } = await apiPostForm<{ text: string }>('/api/voice/transcribe', form)
+        setInput((prev) => (prev ? `${prev}${text}` : text))
+      } catch (e) {
+        setError((e as Error).message)
+      } finally {
+        setTranscribing(false)
+      }
+    } else {
+      try {
+        setError(null)
+        const rec = new WavRecorder()
+        await rec.start()
+        recorderRef.current = rec
+        setRecording(true)
+      } catch (e) {
+        setError('无法使用麦克风：' + (e as Error).message)
+      }
+    }
+  }
+
+  /** 语音输出：朗读 AI 回复（后端已剥离「来源：《xxx》」标记）。 */
+  const speak = async (idx: number, text: string) => {
+    if (speakingIdx !== null) return
+    setSpeakingIdx(idx)
+    try {
+      const blob = await apiPostBlob('/api/voice/synthesize', { text })
+      const url = URL.createObjectURL(blob)
+      const audio = new Audio(url)
+      const done = () => {
+        URL.revokeObjectURL(url)
+        setSpeakingIdx(null)
+      }
+      audio.onended = done
+      audio.onerror = done
+      await audio.play()
+    } catch (e) {
+      setError('语音播放失败：' + (e as Error).message)
+      setSpeakingIdx(null)
     }
   }
 
@@ -220,6 +277,16 @@ export default function ChatPage() {
               >
                 {t.content}
               </div>
+              {t.role === 'assistant' && t.content && (
+                <button
+                  type="button"
+                  onClick={() => speak(i, t.content)}
+                  disabled={speakingIdx !== null}
+                  className="mt-1 ml-1 text-[11px] text-slate-400 hover:text-slate-600 disabled:opacity-50"
+                >
+                  {speakingIdx === i ? '⏹ 朗读中…' : '🔊 朗读'}
+                </button>
+              )}
             </div>
           ))}
           {loading && (
@@ -253,6 +320,19 @@ export default function ChatPage() {
       {error && <div className="bg-red-50 text-red-600 text-sm p-3 rounded-lg">{error}</div>}
 
       <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={toggleRecord}
+          disabled={loading || transcribing}
+          title={recording ? '点击结束录音' : '点击开始录音'}
+          className={`px-4 py-2.5 rounded-xl text-sm font-semibold transition ${
+            recording
+              ? 'bg-red-500 text-white animate-pulse'
+              : 'bg-slate-200 text-slate-600 hover:bg-slate-300 disabled:opacity-50'
+          }`}
+        >
+          {transcribing ? '识别中…' : recording ? '⏹ 结束' : '🎤'}
+        </button>
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}

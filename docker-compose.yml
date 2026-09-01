@@ -31,6 +31,8 @@ services:
     environment:
       # volume 跨文件系统，关闭 hardlink 警告
       - UV_LINK_MODE=copy
+      # PyPI 走阿里云源（镜像 ENV 里的清华源曾对本机 IP 限流 403）
+      - UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple/
     env_file:
       - .env
     depends_on:

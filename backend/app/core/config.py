@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     model_report: str = "deepseek-v4-flash-0731"  # 高频/兜底
     model_embed: str = "text-embedding-v3"      # RAG 向量化
 
+    # 语音（D3 四期，DashScope 原生 HTTP API）
+    model_asr: str = "qwen-audio-3.0-asr-flash"  # 语音识别（multimodal-generation）
+    model_tts: str = "qwen-audio-3.0-tts-flash"  # 语音合成（audio/tts/SpeechSynthesizer）
+    tts_voice: str = "longanhuan_v3.6"           # TTS 音色
+
     # Chroma 向量库
     chroma_host: str = "chroma"
     chroma_port: int = 8000

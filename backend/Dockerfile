@@ -21,9 +21,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-wqy-zenhei \
     && rm -rf /var/lib/apt/lists/*
 
-# uv PyPI 用清华源（加速 Python 依赖安装）
-ENV UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
-ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+# uv PyPI 用阿里云源（加速 Python 依赖安装；清华源曾对本机 IP 限流 403）
+ENV UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple/
+ENV PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 
 # 用 pip 从清华源安装 uv（避免从 ghcr.io 拉镜像，国内访问不稳定）
 RUN pip install --no-cache-dir uv
