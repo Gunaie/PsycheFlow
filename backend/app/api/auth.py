@@ -155,9 +155,9 @@ async def register(req: RegisterReq, db: Session = Depends(get_db)):
                 label = candidate
                 break
 
-    # 4) 账号 id / token（MVP：token 直接等于 account_id 即可，opaque 足够）
+    # 4) 账号 id / token（token 与 account_id 分离，避免 account_id 泄露即登录）
     account_id = uuid.uuid4().hex
-    token = account_id
+    token = secrets.token_hex(32)  # 256-bit 随机 token
 
     user = User(
         id=account_id,

@@ -1,0 +1,39 @@
+# 生产环境 override：docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# 覆盖开发配置：去 --reload、去 volume 挂载、用 prod 镜像、加 healthcheck
+services:
+  # ---------- 后端（生产） ----------
+  backend:
+    # 生产模式：用镜像内置代码，不挂载宿主机源码
+    volumes:
+      - ./data:/app/data        # 保留数据持久化
+      - ./logs:/app/logs        # 保留审计日志
+    # 去掉 --reload，多 worker 提升并发
+    command: >
+      uv run uvicorn app.main:app
+      --host 0.0.0.0 --port 8000
+      --workers 4
+      --no-access-log
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: always
+
+  # ---------- 前端（生产） ----------
+  frontend:
+    build:
+      context: ./frontend
+      target: prod               # 用 nginx:alpine 镜像
+    volumes: !reset []           # 去掉所有 volume 挂载（纯静态文件）
+    command: ["nginx", "-g", "daemon off;"]  # 显式覆盖（镜像 CMD 已是此命令）
+    ports:
+      - "80:80"                 # 生产前端直接 80 端口
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:80/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    restart: always

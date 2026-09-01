@@ -79,7 +79,8 @@ class TestAuthRegister:
         assert r.status_code == 200
         body = r.json()
         assert len(body["account_id"]) == 32
-        assert body["token"] == body["account_id"]  # MVP 轻量 opaque token 约定
+        assert len(body["token"]) == 64  # secrets.token_hex(32) = 64 chars
+        assert body["token"] != body["account_id"]  # token 与 account_id 分离（安全加固）
         assert isinstance(body["label"], str) and len(body["label"]) >= 6
 
     def test_bearer_token_links_session_to_account(self, isolated_client):
