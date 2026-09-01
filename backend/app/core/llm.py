@@ -5,10 +5,10 @@
 - 鉴权: Bearer DASHSCOPE_API_KEY
 
 4 个模型按角色取用（来自 settings）：
-- intake  : qwen3.7-plus            结构化提取/分诊/计分辅助
-- dialog  : deepseek-v4-pro-0813    开放对话/共情
-- report  : deepseek-v4-flash-0731  报告生成/高频兜底
-- embed   : text-embedding-v3       RAG 向量化
+- intake  : qwen3.8-2.4t-a95b  结构化提取/分诊/计分辅助
+- dialog  : qwen3.8-2.4t-a95b  开放对话/共情
+- report  : qwen3.8-2.4t-a95b  报告生成/高频兜底
+- embed   : text-embedding-v3  RAG 向量化
 
 温度按角色自动取用：计分场景确定性优先（0.1），对话场景放宽（0.35）。
 """

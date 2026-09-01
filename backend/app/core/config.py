@@ -14,9 +14,9 @@ class Settings(BaseSettings):
     dashscope_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
     # 4 个百炼模型（各司其职）
-    model_intake: str = "qwen3.7-plus"          # 分诊/结构化提取/报告
-    model_dialog: str = "deepseek-v4-pro-0813"  # 开放对话/共情
-    model_report: str = "deepseek-v4-flash-0731"  # 高频/兜底
+    model_intake: str = "qwen3.8-2.4t-a95b"     # 分诊/结构化提取/报告
+    model_dialog: str = "qwen3.8-2.4t-a95b"    # 开放对话/共情
+    model_report: str = "qwen3.8-2.4t-a95b"    # 高频/兜底
     model_embed: str = "text-embedding-v3"      # RAG 向量化
 
     # 语音（D3 四期，DashScope 原生 HTTP API）

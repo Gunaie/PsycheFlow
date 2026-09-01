@@ -72,6 +72,10 @@ async def intervention_node(state: AgentState) -> dict:
             temperature=0.35,
             max_tokens=600,
         )
+        # 空字符串/纯空白不抛异常，须显式检查触发 fallback（同 reports 教训）
+        if not reply or not reply.strip():
+            logger.warning("intervention: LLM returned empty reply, triggering fallback")
+            raise ValueError("empty reply from LLM")
         logger.info("intervention: reply len=%d", len(reply))
     except Exception as e:
         logger.warning("intervention: LLM failed: %s", str(e))

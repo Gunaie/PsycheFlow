@@ -127,3 +127,28 @@ async def test_integration_help_request_no_assessment_context():
     assert final_state["triage_intent"] == "求助"
     assert final_state["has_assessment"] is False
     assert final_state["assessment_context"] == {}
+
+
+@pytest.mark.asyncio
+async def test_integration_empty_llm_reply_triggers_fallback():
+    """LLM 返回空字符串 → Intervention 节点 fallback 话术（同 reports 教训）。"""
+    initial_state = {
+        "session_id": "test-int-sid-005-empty",
+        "account_id": "test-int-acc-005",
+        "user_message": "我心情不好",
+        "history": [],
+        "agent_trace": [],
+    }
+    with patch("app.agents.nodes.triage.provider") as mock_triage_p, \
+         patch("app.agents.nodes.intervention.provider") as mock_intv_p, \
+         patch("app.agents.nodes.intervention.rag_service") as mock_rag:
+        mock_triage_p.chat = AsyncMock(return_value="倾诉")
+        mock_intv_p.chat = AsyncMock(return_value="")  # 空回复
+        mock_rag.search = AsyncMock(return_value=[])
+        final_state = await graph.ainvoke(initial_state)
+
+    assert final_state["current_agent"] == "intervention"
+    reply = final_state["final_reply"]
+    # fallback 话术非空且含 12355 热线
+    assert reply and reply.strip()
+    assert "12355" in reply
