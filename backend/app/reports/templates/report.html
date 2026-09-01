@@ -15,15 +15,11 @@
 
 body {
   font-family: "WenQuanYi Zen Hei", "Noto Sans CJK SC", "PingFang SC", "Microsoft YaHei", sans-serif;
-  color: #1e293b;
+  color: #0f172a;
   font-size: 11.5px;
   line-height: 1.8;
   margin: 0;
-  background:
-    radial-gradient(circle at 8% 0%, #eff6ff 0%, transparent 26%),
-    radial-gradient(circle at 92% 1%, #f0fdfa 0%, transparent 28%),
-    #ffffff;
-  background-attachment: fixed;
+  background: #ffffff;
 }
 
 /* ========== 1. 页眉区（左上 logo 标识 + 右上官方名 + 居中大标题 + 副标题 + 分隔装饰线） ========== */
@@ -38,26 +34,23 @@ body {
   align-items: center;
   gap: 8px;
   font-size: 11px;
-  color: #1e40af;
+  color: #1e3a5f;
   font-weight: 700;
   letter-spacing: 1px;
 }
 .logo-dot {
-  width: 22px; height: 22px; border-radius: 6px;
-  background: linear-gradient(135deg, #2563eb 0%, #06b6d4 100%);
+  width: 22px; height: 22px; border-radius: 4px;
+  background: #1e3a5f;
   color: #fff;
   font-size: 13px; font-weight: 900;
   text-align: center; line-height: 22px;
-  box-shadow: 0 1px 2px rgba(37,99,235,0.28);
 }
 .org-label {
   font-size: 12px;
-  color: #2563eb;
+  color: #1e3a5f;
   font-weight: 600;
-  padding: 3px 10px;
-  border-radius: 999px;
-  background: #eff6ff;
-  border: 1px solid #bfdbfe;
+  padding-bottom: 2px;
+  border-bottom: 2px solid #1e3a5f;
 }
 .header-brand-right { min-width: 200px; text-align: right; color: #64748b; font-size: 10px; }
 
@@ -65,66 +58,49 @@ body {
   text-align: center;
   font-size: 28px;
   font-weight: 900;
-  background: linear-gradient(90deg, #0f172a 0%, #1e40af 55%, #0891b2 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: #0f172a;
   letter-spacing: 3px;
   margin: 4px 0 2px;
 }
 .doc-subtitle {
   text-align: center;
   font-size: 12.5px;
-  color: #475569;
+  color: #334155;
   letter-spacing: 2px;
   margin-bottom: 4px;
 }
 .deco-line {
   text-align: center;
   margin: 0 auto 12px;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 8px;
 }
 .deco-line .line {
-  width: 120px;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, #94a3b8, transparent);
-}
-.deco-line .diamond {
-  width: 8px; height: 8px;
-  background: linear-gradient(135deg,#2563eb,#06b6d4);
-  transform: rotate(45deg);
-  box-shadow: 0 0 0 2px #e0f2fe;
+  display: inline-block;
+  width: 140px;
+  height: 2px;
+  background: #1e3a5f;
 }
 
 /* ========== 页眉下的 姓名/机构/报告日期 信息条 ========== */
 .info-strip {
-  border: 1px solid #e2e8f0;
-  background: linear-gradient(90deg,#f8fafc 0%,#eff6ff 50%,#f0fdfa 100%);
-  padding: 8px 14px;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  padding: 7px 14px;
   font-size: 11px;
   margin-bottom: 14px;
   display: flex;
   flex-wrap: wrap;
   gap: 18px 28px;
-  border-radius: 6px;
-  box-shadow: 0 1px 2px rgba(15,23,42,0.04);
 }
 .info-strip span { white-space: nowrap; }
 .info-strip strong { color: #0f172a; }
 
-/* ========== 危机框（升级：左侧深红粗边柱 + 顶部图标 + 渐变背景） ========== */
+/* ========== 危机框（官方严肃红：左侧 6px 深红柱 + 浅红底） ========== */
 .crisis {
-  background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+  background: #fef2f2;
   border: 1px solid #fca5a5;
   border-left: 6px solid #b91c1c;
-  border-radius: 8px;
-  padding: 12px 16px;
-  margin: 0 0 18px;
-  position: relative;
-  box-shadow: 0 2px 6px rgba(239, 68, 68, 0.10);
+  padding: 10px 14px;
+  margin: 0 0 16px;
 }
 .crisis .t {
   font-weight: bold;
@@ -161,33 +137,30 @@ body {
 }
 .crisis .hotline strong { font-size: 15px; color: #b91c1c; letter-spacing: 1px; }
 
-/* ========== 章节标题（左侧深蓝光柱 + 文字阴影轻微高亮） ========== */
+/* ========== 章节标题（左侧深蓝实心柱 + 右侧实线延伸，对齐 MHT 官方报告风格） ========== */
 h2.section-title {
-  font-size: 14.5px;
+  font-size: 14px;
   font-weight: 700;
   color: #0f172a;
-  margin: 18px 0 8px;
-  padding: 4px 0 4px 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  margin: 16px 0 7px;
+  padding: 0;
   page-break-after: avoid;
 }
 h2.section-title::before {
   content: "";
   display: inline-block;
   width: 5px;
-  height: 16px;
-  border-radius: 3px;
-  background: linear-gradient(180deg, #2563eb, #06b6d4);
-  box-shadow: 0 0 0 2px #dbeafe;
+  height: 14px;
+  background: #1e3a5f;
+  margin-right: 7px;
+  vertical-align: -1px;
 }
 h2.section-title::after {
   content: "";
-  flex: 1;
+  display: block;
   height: 1px;
-  background: linear-gradient(90deg, #cbd5e1 0%, transparent 100%);
-  margin-left: 8px;
+  background: #cbd5e1;
+  margin-top: 5px;
 }
 
 .section-text {
@@ -196,113 +169,87 @@ h2.section-title::after {
   line-height: 1.9;
   text-indent: 2em;
   text-align: justify;
-  background: #fafbfc;
-  border: 1px solid #f1f5f9;
+  background: #fff;
+  border: 1px solid #e2e8f0;
   padding: 10px 14px;
-  border-radius: 6px;
 }
 .section-text p { margin: 0; }
 
-/* ========== 章节 3：测评人员信息表（圆角 + 表头渐变色） ========== */
+/* ========== 章节 3：测评人员信息表 ========== */
 table.person-info {
   width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
+  border-collapse: collapse;
   font-size: 11px;
-  margin-top: 4px;
-  border-radius: 8px;
-  overflow: hidden;
-  box-shadow: 0 1px 3px rgba(15,23,42,0.06);
-  border: 1px solid #e2e8f0;
+  margin-top: 6px;
+  border: 1px solid #cbd5e1;
 }
 table.person-info th {
-  background: linear-gradient(180deg, #f8fafc, #eef2f7);
-  border-right: 1px solid #e2e8f0;
-  border-bottom: 1px solid #e2e8f0;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
   color: #334155;
   font-weight: 600;
-  padding: 7px 8px;
+  padding: 6px 8px;
   text-align: center;
   width: 16%;
   white-space: nowrap;
 }
-table.person-info th:last-child { border-right: none; }
 table.person-info td {
-  border-right: 1px solid #e2e8f0;
-  border-bottom: 1px solid #e2e8f0;
+  border: 1px solid #cbd5e1;
   color: #0f172a;
-  padding: 7px 10px;
+  padding: 6px 10px;
   text-align: left;
   width: 34%;
   background: #fff;
 }
-table.person-info td:last-child { border-right: none; }
-table.person-info tr:last-child td { border-bottom: none; }
-table.person-info tr:last-child th { border-bottom: 1px solid #e2e8f0; }
-table.person-info tr:nth-child(3) th { border-bottom: none; }
 
-/* ========== 章节 4：综合等级横幅 ========== */
+/* ========== 章节 4：综合等级横幅（保持 MHT 参考的彩色大字渐变，仅去掉装饰圆保持严肃） ========== */
 .overall-banner {
   background: {{ overall.gradient }};
-  border-radius: 10px;
-  padding: 20px 32px;
-  margin: 12px 0 16px;
+  border-radius: 6px;
+  padding: 16px 28px;
+  margin: 10px 0 14px;
   text-align: center;
   color: #fff;
-  box-shadow: 0 6px 14px rgba(15,23,42,0.14);
-  position: relative;
-  overflow: hidden;
 }
-.overall-banner::before, .overall-banner::after {
-  content: "";
-  position: absolute;
-  border-radius: 50%;
-  background: rgba(255,255,255,0.12);
-}
-.overall-banner::before { width: 200px; height: 200px; top: -90px; left: -70px; }
-.overall-banner::after  { width: 140px; height: 140px; bottom: -60px; right: -40px; background: rgba(255,255,255,0.09); }
-.overall-banner > * { position: relative; }
 .overall-banner .lvl-zh {
-  font-size: 36px;
+  font-size: 32px;
   font-weight: 900;
-  letter-spacing: 7px;
-  text-shadow: 0 2px 0 rgba(0,0,0,0.18);
+  letter-spacing: 6px;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.18);
 }
 .overall-banner .lvl-en {
-  margin-top: 6px;
-  font-size: 12px;
-  letter-spacing: 2px;
+  margin-top: 4px;
+  font-size: 11.5px;
+  letter-spacing: 1.5px;
   opacity: 0.95;
-  text-transform: uppercase;
 }
 .overall-banner .lvl-desc {
-  margin-top: 10px;
-  font-size: 12px;
+  margin-top: 8px;
+  font-size: 11.5px;
   opacity: 0.98;
-  padding: 6px 14px;
-  background: rgba(0,0,0,0.12);
+  padding: 4px 12px;
+  background: rgba(0,0,0,0.14);
   display: inline-block;
   border-radius: 999px;
-  backdrop-filter: blur(2px);
 }
 
 /* ========== 4.2 因子雷达图 ========== */
 .chart-box {
   background: #fff;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  box-shadow: 0 2px 8px rgba(15,23,42,0.05);
+  border: 1px solid #cbd5e1;
   padding: 10px 4px 14px;
   margin: 10px 0 14px;
   page-break-inside: avoid;
 }
 .chart-title {
   text-align: center;
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 700;
   color: #1e3a5f;
   margin: 2px 0 0;
   letter-spacing: 1px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid #e2e8f0;
 }
 .chart-title small {
   display: block;
@@ -317,108 +264,81 @@ table.person-info tr:nth-child(3) th { border-bottom: none; }
   text-align: center;
 }
 
-/* 量表/因子表的小标题带菱形装饰 */
+/* 量表/因子表的小标题 */
 .mht-caption {
-  margin: 12px 0 4px;
+  margin: 10px 0 4px;
   font-size: 11.5px;
   font-weight: 700;
   color: #1e3a5f;
   letter-spacing: 0.5px;
   padding-left: 2px;
 }
-.mht-caption::after {
-  content: "";
-  display: block;
-  width: 36px;
-  height: 2px;
-  margin-top: 3px;
-  background: linear-gradient(90deg, #2563eb, #06b6d4);
-  border-radius: 2px;
-}
 
-/* ========== 通用 MHT 表格（升级：圆角边框、奇偶行斑马纹、thead 深蓝渐变） ========== */
+/* ========== 通用 MHT 表格（深海军蓝表头白字，回归官方朴实风） ========== */
 table.mht-table {
   width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
+  border-collapse: collapse;
   font-size: 10.5px;
-  margin: 10px 0 14px;
+  margin: 6px 0 12px;
   table-layout: fixed;
-  border-radius: 8px;
-  overflow: hidden;
-  box-shadow: 0 1px 4px rgba(15,23,42,0.06);
-  border: 1px solid #e2e8f0;
+  border: 1px solid #1e3a5f;
 }
 table.mht-table thead th {
-  background: linear-gradient(180deg, #22467a 0%, #1e3a5f 100%);
+  background: #1e3a5f;
   color: #fff;
   font-weight: 700;
-  padding: 8px 6px;
+  padding: 7px 6px;
   text-align: center;
-  border-right: 1px solid rgba(255,255,255,0.10);
+  border: 1px solid #1e3a5f;
   letter-spacing: 0.5px;
 }
-table.mht-table thead th:last-child { border-right: none; }
 table.mht-table tbody td {
-  border-right: 1px solid #e2e8f0;
-  border-bottom: 1px solid #e2e8f0;
-  padding: 7px 6px;
+  border: 1px solid #cbd5e1;
+  padding: 6px 6px;
   color: #0f172a;
   background: #fff;
   text-align: center;
   vertical-align: middle;
 }
 table.mht-table tbody tr:nth-child(even) td { background: #fafbfc; }
-table.mht-table tbody tr:last-child td { border-bottom: none; }
-table.mht-table tbody td:last-child { border-right: none; }
 table.mht-table tbody td.td-name { text-align: left; font-weight: 600; }
 table.mht-table tbody td.td-score { font-weight: bold; font-size: 12px; }
 
 .lvl-pill {
   display: inline-block;
-  padding: 3px 11px;
-  border-radius: 999px;
+  padding: 2px 9px;
+  border-radius: 3px;
   color: #fff;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.5px;
-  box-shadow: inset 0 -1px 0 rgba(0,0,0,0.08);
 }
 
-/* 得分进度条（表格右侧 — 双色渐变） */
+/* 得分进度条（纯实色填充，无花哨混色） */
 .mini-bar {
   width: 100%;
   height: 10px;
-  background: linear-gradient(90deg, #f1f5f9, #e2e8f0);
-  border-radius: 5px;
+  background: #e2e8f0;
+  border-radius: 2px;
   overflow: hidden;
-  position: relative;
 }
-.mini-bar > div {
-  height: 100%;
-  border-radius: 5px;
-  background-image: linear-gradient(90deg, currentColor, rgba(255,255,255,0.4));
-  background-blend-mode: overlay;
-}
+.mini-bar > div { height: 100%; }
 
-/* ========== 章节 5：逐因子详解卡（升级：soft shadow + 彩色左侧边柱 + 渐变进度条） ========== */
+/* ========== 章节 5：逐因子详解卡（朴实官方风，1px 边框 + 浅灰底头 + 左侧色条） ========== */
 .dim-group-title {
-  margin: 16px 0 6px;
-  font-size: 12.5px;
+  margin: 14px 0 6px;
+  font-size: 12px;
   font-weight: 700;
   color: #1e3a5f;
-  padding: 4px 10px;
-  background: linear-gradient(90deg, #eff6ff 0%, transparent 80%);
-  border-left: 3px solid #2563eb;
-  border-radius: 4px;
+  padding: 3px 8px;
+  background: #f1f5f9;
+  border-left: 3px solid #1e3a5f;
   letter-spacing: 1px;
 }
 .dim-card {
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  margin: 10px 0;
+  border: 1px solid #cbd5e1;
+  margin: 8px 0;
   overflow: hidden;
-  box-shadow: 0 2px 5px rgba(15,23,42,0.05);
   background: #fff;
   page-break-inside: avoid;
   position: relative;
@@ -434,138 +354,109 @@ table.mht-table tbody td.td-score { font-weight: bold; font-size: 12px; }
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 12px 8px 18px;
-  background: linear-gradient(180deg, #fafafa 0%, #f5f7fa 100%);
-  border-bottom: 1px solid #f1f5f9;
+  padding: 6px 12px 6px 16px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
 }
 .dim-card-head .badge {
   flex-shrink: 0;
   min-width: 56px;
   text-align: center;
-  padding: 3px 7px;
-  border-radius: 999px;
+  padding: 2px 6px;
+  border-radius: 3px;
   color: #fff;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.5px;
-  box-shadow: inset 0 -1px 0 rgba(0,0,0,0.12);
 }
 .dim-card-head .name {
   font-weight: 700;
-  font-size: 12.5px;
+  font-size: 12px;
   color: #0f172a;
 }
 .dim-card-head .score {
   margin-left: auto;
   font-size: 11px;
   color: #475569;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 4px;
-  padding: 2px 8px;
 }
-.dim-card-head .score strong { color: #0f172a; font-size: 13.5px; }
+.dim-card-head .score strong { color: #0f172a; font-size: 13px; }
 .dim-card-body {
-  padding: 10px 14px 12px 18px;
+  padding: 8px 12px 10px 16px;
 }
 .dim-card-body .desc {
   font-size: 10.5px;
   color: #64748b;
-  margin-bottom: 6px;
-  padding: 4px 8px;
-  background: #f8fafc;
-  border-radius: 4px;
-  border-left: 2px solid #cbd5e1;
+  margin-bottom: 5px;
 }
 .dim-card-body .interp {
   font-size: 11px;
   color: #334155;
   line-height: 1.9;
   text-align: justify;
-  padding: 4px 0 0;
-}
-.dim-card-body .interp::first-letter {
-  font-weight: 700;
-  color: #1e3a5f;
+  padding: 3px 0 0;
 }
 .dim-card-body .progress {
-  margin: 8px 0 6px;
-  height: 11px;
-  background: linear-gradient(90deg, #f1f5f9, #e2e8f0);
-  border-radius: 6px;
+  margin: 6px 0 4px;
+  height: 10px;
+  background: #e2e8f0;
+  border-radius: 2px;
   overflow: hidden;
-  position: relative;
-  box-shadow: inset 0 1px 0 rgba(0,0,0,0.04);
 }
 .dim-card-body .progress > div {
   height: 100%;
-  border-radius: 6px;
-  background-image: linear-gradient(90deg, var(--bar) 0%, rgba(255,255,255,0.55) 100%);
-  background-blend-mode: overlay;
-  box-shadow: inset 0 -2px 0 rgba(0,0,0,0.08);
-  transition: width 0.4s ease;
+  background: var(--bar, #94a3b8);
 }
 
-/* ========== 章节 6：发展建议（升级：柔和蓝色卡片 + 圆角 + 阴影） ========== */
+/* ========== 章节 6：发展建议（简洁浅灰底 + 左侧深蓝条标题） ========== */
 .narrative {
   color: #334155;
   font-size: 11.5px;
   line-height: 1.95;
-  background: linear-gradient(180deg, #fbfdff 0%, #f5faff 100%);
-  border: 1px solid #dbeafe;
-  border-radius: 10px;
-  padding: 14px 18px;
-  box-shadow: 0 2px 6px rgba(37,99,235,0.06);
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  padding: 12px 18px 14px;
 }
 .narrative h2 {
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 700;
   color: #1e3a5f;
-  border-left: 4px solid #2563eb;
-  padding: 3px 10px;
-  margin: 14px 0 8px;
-  background: #eff6ff;
-  border-radius: 0 4px 4px 0;
+  border-left: 4px solid #1e3a5f;
+  padding: 2px 10px;
+  margin: 12px 0 6px;
+  background: #f1f5f9;
 }
-.narrative p { margin: 5px 0; text-align: justify; text-indent: 2em; }
-.narrative ul, .narrative ol { margin: 5px 0 8px; padding-left: 22px; }
-.narrative li { margin: 3px 0; line-height: 1.85; }
-.narrative li::marker { color: #2563eb; font-weight: 700; }
+.narrative h3 {
+  font-size: 12px;
+  font-weight: 700;
+  color: #1e3a5f;
+  border-left: 3px solid #1e3a5f;
+  padding: 2px 8px;
+  margin: 10px 0 5px;
+  background: #f8fafc;
+}
+.narrative p { margin: 4px 0; text-align: justify; text-indent: 2em; }
+.narrative ul, .narrative ol { margin: 4px 0 6px; padding-left: 22px; }
+.narrative li { margin: 2px 0; line-height: 1.85; }
 .narrative strong { color: #0f172a; }
 
-/* ========== 页脚（升级：虚线分隔 + 柔和灰蓝 + 编号胶囊） ========== */
+/* ========== 页脚（简洁虚线分隔 + 居中编号） ========== */
 .footer {
-  margin-top: 28px;
-  padding-top: 12px;
-  color: #94a3b8;
+  margin-top: 24px;
+  padding-top: 10px;
+  color: #64748b;
   font-size: 9.5px;
   text-align: center;
   line-height: 1.8;
-  border-top: 1px dashed #cbd5e1;
-  position: relative;
+  border-top: 1px dashed #94a3b8;
 }
 .footer .footer-code {
   display: inline-block;
-  margin-top: 6px;
-  padding: 2px 10px;
-  background: #f1f5f9;
+  margin-top: 4px;
+  padding: 1px 8px;
   color: #475569;
-  border-radius: 999px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid #cbd5e1;
   font-size: 9px;
   letter-spacing: 1px;
-}
-.footer::before {
-  content: "PsycheFlow";
-  position: absolute;
-  top: -9px; left: 50%;
-  transform: translateX(-50%);
-  background: #fff;
-  padding: 0 10px;
-  color: #cbd5e1;
-  font-size: 10px;
-  letter-spacing: 3px;
-  font-weight: 700;
 }
 </style>
 </head>
@@ -582,7 +473,7 @@ table.mht-table tbody td.td-score { font-weight: bold; font-size: 12px; }
 <div class="doc-title">{{ report_title }}</div>
 <div class="doc-subtitle">{{ report_subtitle }}</div>
 <div class="deco-line">
-  <span class="line"></span><span class="diamond"></span><span class="line"></span>
+  <span class="line"></span>
 </div>
 
 {# ========== 页眉信息条 ========== #}
