@@ -1,7 +1,7 @@
 # PsycheFlow 项目交接文档
 
 > 最后更新：2026-09-02
-> 当前 commit：`<new>`（生产验收/打包交付 — E2E 7/7 + prod compose 复检 + DEPLOY.md）
+> 当前 commit：`c529bb9`（生产验收/打包交付 — E2E 7/7 + prod compose 复检 + DEPLOY.md）
 > 阶段：D 四期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标）+ Ollama 本地兜底（五期灾备，整机共享独立容器 + RTX 4060 GPU 直通 + Open WebUI 图形界面，E2E 验证通过）+ 生产验收/打包交付（E2E 7/7、prod compose 复检、部署文档），五期待办仅剩 #5 多 Provider（待注册硅基流动）与 #6 多租户
 
 ---
@@ -389,7 +389,7 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 ## 9. Git 提交历史
 
 ```
-<new> feat: 生产验收/打包交付 — E2E 7/7 验收脚本 + prod compose 复检 + DEPLOY.md 部署文档
+c529bb9 feat: 生产验收/打包交付 — E2E 7/7 验收脚本 + prod compose 复检 + DEPLOY.md 部署文档
 dd30704 feat: Ollama 升级为整机共享独立容器 — 模型库迁 E:\OllamaModels + Open WebUI 图形界面（多项目复用）
 90afc1b feat: Ollama 真实联调 — Docker ollama 服务 + RTX 4060 GPU 直通，qwen2.5:7b 导入，E2E 兜底验证通过
 29999db feat: Ollama 本地兜底 — cloud 异常/空回复时回退本地 LLM（llm.py _chat_once/_stream_once + 10 单测）
