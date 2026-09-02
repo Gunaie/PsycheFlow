@@ -1,7 +1,7 @@
 # PsycheFlow 项目交接文档
 
 > 最后更新：2026-09-02
-> 当前 commit：`29999db`（Ollama 本地兜底 — cloud 异常/空回复时回退本地 LLM）
+> 当前 commit：`90afc1b`（Ollama 真实联调 — Docker ollama 服务 + RTX 4060 GPU 直通）
 > 阶段：D 四期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标）+ Ollama 本地兜底（五期灾备，E2E 验证：Docker ollama 服务 + RTX 4060 GPU 直通），准备进入五期剩余项（多 Provider / 多租户）
 
 ---
@@ -384,7 +384,7 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 ## 9. Git 提交历史
 
 ```
-<new> feat: Ollama 真实联调 — Docker ollama 服务 + RTX 4060 GPU 直通，qwen2.5:7b 导入，E2E 兜底验证通过
+90afc1b feat: Ollama 真实联调 — Docker ollama 服务 + RTX 4060 GPU 直通，qwen2.5:7b 导入，E2E 兜底验证通过
 29999db feat: Ollama 本地兜底 — cloud 异常/空回复时回退本地 LLM（llm.py _chat_once/_stream_once + 10 单测）
 fd86fae feat: 合规加固深化 (b)(c) — 容器非 root + SQLite 0600 + 备份 AES 加密
 09c271e fix: 替换无额度的 qwen-plus — triage=qwen3.8-27b + dialog_stream=qwen3.8-max 关思考链，NFR-5 仍达标(1.75s)
