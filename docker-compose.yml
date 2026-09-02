@@ -39,27 +39,11 @@ services:
       - chroma
     command: uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
-  # ---------- Ollama 本地兜底模型（五期灾备） ----------
-  # 首次需导入模型（一次性，blob 落 ./data/ollama 持久化）：
-  #   docker cp <gguf> psycheflow-ollama:/tmp/qwen.gguf
-  #   docker exec psycheflow-ollama sh -c 'printf "FROM /tmp/qwen.gguf\n" > /tmp/Modelfile && ollama create qwen2.5:7b -f /tmp/Modelfile'
-  # 宿主机访问 http://localhost:11434；后端容器经 compose 网络访问 http://ollama:11434/v1
-  ollama:
-    image: ollama/ollama:latest
-    container_name: psycheflow-ollama
-    restart: unless-stopped
-    ports:
-      - "11434:11434"
-    volumes:
-      - ./data/ollama:/root/.ollama
-    # GPU 直通（Docker Desktop WSL2 + NVIDIA 驱动；CPU 兜底也可跑但 7B 慢）
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+  # ---------- Ollama 本地兜底（整机共享，不在本项目 compose 内） ----------
+  # Ollama 作为宿主级共享服务独立运行（多项目共用一份模型库），不在本 compose 内：
+  #   docker run -d --name ollama --gpus all -p 11434:11434 -v E:/OllamaModels:/root/.ollama --restart always ollama/ollama:latest
+  # 图形界面 Open WebUI：docker run -d -p 3001:8080 -e OLLAMA_BASE_URL=http://host.docker.internal:11434 -v open-webui:/app/backend/data --name open-webui --restart always ghcr.io/open-webui/open-webui:main
+  # 后端容器经 .env OLLAMA_BASE_URL=http://host.docker.internal:11434/v1 访问（见 .env.example）
 
   # ---------- 前端 ----------
   frontend:

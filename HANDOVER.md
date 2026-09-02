@@ -2,7 +2,7 @@
 
 > 最后更新：2026-09-02
 > 当前 commit：`90afc1b`（Ollama 真实联调 — Docker ollama 服务 + RTX 4060 GPU 直通）
-> 阶段：D 四期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标）+ Ollama 本地兜底（五期灾备，E2E 验证：Docker ollama 服务 + RTX 4060 GPU 直通），准备进入五期剩余项（多 Provider / 多租户）
+> 阶段：D 四期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标）+ Ollama 本地兜底（五期灾备，整机共享独立容器 + RTX 4060 GPU 直通 + Open WebUI 图形界面，E2E 验证通过），准备进入五期剩余项（多 Provider / 多租户）
 
 ---
 
@@ -373,9 +373,9 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 4. **Ollama 本地兜底** ✅（2026-09-02，断网/降本灾备方案已落地）：
    - **兜底链**：百炼 cloud → Ollama 本地（`ollama_base_url` 非空时启用）→ 节点级硬编码话术。Ollama 仅在 cloud 异常**或**空回复（quota/思考链耗尽）时介入；未配置（`base_url` 空）则保持原 cloud-only 行为，零行为变更。
    - **实现**：[llm.py](backend/app/core/llm.py) 抽出 `_chat_once`/`_stream_once` helper（单次调用不重试不兜底）。`chat()` 捕获 cloud 异常 → 若启用 Ollama 则转本地，cloud 正常返回则不碰 Ollama；双失败返回 `""`（节点级话术兜底）。`stream()` 仅在**未 yield 任何 token**（起始即失败）时切 Ollama，已部分输出则不切（避免拼接错乱）并上抛由 SSE error 事件处理。Ollama 走 OpenAI 兼容端点 `/v1`（`AsyncOpenAI` 复用），`api_key` 填占位非空值（Ollama 不鉴权）。
-   - **配置**：[config.py](backend/app/core/config.py) 新增 `ollama_base_url`（空=禁用）/`ollama_model`（默认 `qwen2.5:7b`）；.env.example/.env 加 `OLLAMA_BASE_URL`/`OLLAMA_MODEL`。容器连宿主机用 `http://host.docker.internal:11434/v1`，连 compose 的 ollama 服务用 `http://ollama:11434/v1`。
+   - **配置**：[config.py](backend/app/core/config.py) 新增 `ollama_base_url`（空=禁用）/`ollama_model`（默认 `qwen2.5:7b`）；.env.example/.env 加 `OLLAMA_BASE_URL`/`OLLAMA_MODEL`。**架构：整机共享独立容器**（不挂任何项目 compose，多项目共用一份模型库）：`docker run -d --name ollama --gpus all -p 11434:11434 -v E:/OllamaModels:/root/.ollama --restart always ollama/ollama:latest`；图形界面 Open WebUI：`docker run -d -p 3001:8080 -e OLLAMA_BASE_URL=http://host.docker.internal:11434 -v open-webui:/app/backend/data --name open-webui --restart always ghcr.io/open-webui/open-webui:main`（浏览器 `http://localhost:3001` 注册本地账号即可可视化管理/聊天）。各项目后端容器经 `OLLAMA_BASE_URL=http://host.docker.internal:11434/v1` 访问。
    - **测试**：[test_llm.py](backend/tests/test_llm.py) +10 例（`TestChatOllamaFallback` 6 + `TestStreamOllamaFallback` 4），全 mock 不依赖真实 Ollama：cloud 异常/空回复→ollama、未启用原样上抛、cloud 正常不碰 ollama、双失败返回空、stream 起始即失败切流、已输出中途断流不切、cloud 正常不碰 ollama、未启用原样上抛。全量 **199 passed / 1 skipped**（+10）。
-   - **真实联调** ✅（Docker ollama 服务 + GPU 直通，2026-09-02）：沙箱拦截原生安装器（exit 4，`%LOCALAPPDATA%\Programs\Ollama` 受限），改走 Docker 路线绕开沙箱。[docker-compose.yml](docker-compose.yml) 新增 `ollama` 服务（image `ollama/ollama:latest`、`./data/ollama` 持久化卷、`deploy.resources.reservations.devices` NVIDIA 直通）。模型导入：aria2c 16 连接从 hf-mirror.com（`bartowski/Qwen2.5-7B-Instruct-GGUF` 的 `Q4_K_M`，4.36GB，35MiB/s）下载 GGUF → `docker cp` 进容器 → `ollama create qwen2.5:7b -f Modelfile`（blob 落卷，重建不丢）。验证：`nvidia-smi -L` 见 RTX 4060 Laptop、`ollama ps` 显示 `qwen2.5:7b 100% GPU`、`/v1/chat/completions` 返回干净中文。`.env` 设 `OLLAMA_BASE_URL=http://ollama:11434/v1`，重启 backend 后 E2E 兜底：临时把 intake 模型名换成 `__nonexistent_model_xyz__` 逼 cloud 404 → `provider.chat` 自动转 ollama 返回非空中文（"你好，我叫Qwen，是由阿里云开发的AI助手…"，`FALLBACK_OK`）。原生安装仍为可选（双击 `OllamaSetup.exe`，`.env` 改 `http://host.docker.internal:11434/v1`）。
+   - **真实联调** ✅（整机共享 Ollama + GPU 直通 + Open WebUI，2026-09-02）：沙箱拦截原生安装器（exit 4，`%LOCALAPPDATA%\Programs\Ollama` 受限），故 Ollama 走 Docker 路线；又为多项目共享 + 模型不占 C 盘，升级为**整机共享独立容器**（从项目 compose 解耦）。模型库迁至 `E:\OllamaModels`（沙箱拦 PowerShell 写，用 `docker run --rm -v ... alpine cp -a` 中转拷贝，原项目 `./data/ollama` 8.7GB 已清）。共享容器 `ollama`（`--gpus all` + `-v E:/OllamaModels:/root/.ollama` + `--restart always`）开机随 Docker Desktop 自启；图形界面 `open-webui`（端口 3001，healthy，`OLLAMA_BASE_URL=http://host.docker.internal:11434`）。验证：`nvidia-smi -L` 见 RTX 4060 Laptop、`ollama list` 见 `qwen2.5:7b`（Q4_K_M，ctx 32768）、`http://localhost:3001` 注册账号后可视化管理/聊天。`.env` 设 `OLLAMA_BASE_URL=http://host.docker.internal:11434/v1`，重启 backend 后 E2E 兜底：临时把 intake 模型名换成 `__nonexistent_model_xyz__` 逼 cloud 404 → `provider.chat` 自动转 ollama 返回非空中文（"你好，我叫Qwen，是来自阿里云的大规模语言模型…"，`FALLBACK_OK`）。以后新项目只需 `.env` 设同一 `OLLAMA_BASE_URL` 即可复用，无需再下/导入模型。
 5. **多 Provider 切换**：硅基流动等备用 Provider
 6. **多租户支持**：按学校/区域隔离数据
 
@@ -384,6 +384,7 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 ## 9. Git 提交历史
 
 ```
+<new> feat: Ollama 升级为整机共享独立容器 — 模型库迁 E:\OllamaModels + Open WebUI 图形界面（多项目复用）
 90afc1b feat: Ollama 真实联调 — Docker ollama 服务 + RTX 4060 GPU 直通，qwen2.5:7b 导入，E2E 兜底验证通过
 29999db feat: Ollama 本地兜底 — cloud 异常/空回复时回退本地 LLM（llm.py _chat_once/_stream_once + 10 单测）
 fd86fae feat: 合规加固深化 (b)(c) — 容器非 root + SQLite 0600 + 备份 AES 加密
