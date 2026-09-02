@@ -104,7 +104,7 @@ async def stream_intervention(
     messages = prebuilt_messages or (await build_intervention_messages(state))[0]
     collected: list[str] = []
     try:
-        # 流式用 dialog_stream 角色（无思考链模型，首 token 快）；非流式 intervention_node 仍用 dialog（deepseek 高质量）
+        # 流式用 dialog_stream 角色（qwen3.8-max 关思考链，首 token 快）；非流式 intervention_node 仍用 dialog（deepseek 高质量）
         async for token in provider.stream(
             role="dialog_stream",
             messages=messages,

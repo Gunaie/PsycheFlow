@@ -15,9 +15,9 @@ class Settings(BaseSettings):
 
     # 5 个百炼模型（各司其职）
     model_intake: str = "qwen3.8-2.4t-a95b"       # 结构化提取/计分辅助（有思考链）
-    model_triage: str = "qwen-plus"              # 意图分类（无思考链，4 类标签输出快）
+    model_triage: str = "qwen3.8-27b"             # 意图分类（关思考链，4 类标签输出快；首 token 0.38s）
     model_dialog: str = "deepseek-v4-pro-0813"    # 开放对话/共情（有 reasoning_content 思考链）
-    model_dialog_stream: str = "qwen-plus"  # 流式干预专用（无思考链，首 content ~0.5s）
+    model_dialog_stream: str = "qwen3.8-max"      # 流式干预专用（关思考链，首 content ~0.58s，NFR-5）
     model_report: str = "deepseek-v4-flash-0731" # 高频/兜底（有 reasoning_content 思考链）
     model_embed: str = "text-embedding-v3"       # RAG 向量化
 

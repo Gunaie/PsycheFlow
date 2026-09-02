@@ -37,7 +37,7 @@ async def triage_node(state: AgentState) -> dict:
             "agent_trace": trace,
         }
 
-    # 2. LLM 意图分类（role=triage 用 qwen-plus 无思考链，首 token 快；4 类标签 max_tokens 50 足够）
+    # 2. LLM 意图分类（role=triage 用 qwen3.8-27b 关思考链，首 token 快；4 类标签 max_tokens 50 足够）
     try:
         user_prompt = TRIAGE_USER_TEMPLATE.format(message=message)
         reply = await provider.chat(

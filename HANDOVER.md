@@ -1,7 +1,7 @@
 # PsycheFlow 项目交接文档
 
-> 最后更新：2026-09-01
-> 当前 commit：`fe1a595`（SSE 首 token 优化，main 分支）
+> 最后更新：2026-09-02
+> 当前 commit：`fe1a595`（SSE 首 token 优化）→ 本次替换 qwen-plus（无额度）为 qwen3.8-27b(triage)+qwen3.8-max(dialog_stream)，均关思考链
 > 阶段：D 四期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标），准备进入五期优化（合规深化/部署）
 
 ---
@@ -44,12 +44,12 @@ DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 # ============ 模型配置（百炼模型） ============
 # 结构化提取/计分辅助（MoE 架构，分类精准）
 MODEL_INTAKE=qwen3.8-2.4t-a95b
-# 意图分类（无思考链，4 类标签输出快；triage 节点专用）
-MODEL_TRIAGE=qwen-plus
+# 意图分类（关思考链 enable_thinking=False，4 类标签输出快；triage 节点专用，首 token 0.38s）
+MODEL_TRIAGE=qwen3.8-27b
 # 开放对话/共情（deepseek-v4 有 reasoning_content 思考链，max_tokens 须够大）
 MODEL_DIALOG=deepseek-v4-pro-0813
-# 流式干预专用（无思考链，首 token 快；SSE /api/chat/stream 用此角色）
-MODEL_DIALOG_STREAM=qwen-plus
+# 流式干预专用（关思考链 enable_thinking=False，首 token ~0.58s；SSE /api/chat/stream 用此角色）
+MODEL_DIALOG_STREAM=qwen3.8-max
 # 高频/兜底/报告辅助（deepseek-v4 有 reasoning_content 思考链）
 MODEL_REPORT=deepseek-v4-flash-0731
 # RAG 向量化
@@ -83,7 +83,8 @@ CRISIS_HOTLINE_12355=12355
 | 模型 | 角色 | 注意 |
 |---|---|---|
 | `qwen3.8-2.4t-a95b` | intake | MoE 架构，分类精准。**有思考链**，max_tokens 须够。**不支持 `enable_thinking=False`**（百炼报 400 restricted to True）。如果配额耗尽，次选 `qwen3.8-27b` |
-| `qwen-plus` | triage / dialog_stream | **无思考链**，首 content ~0.5s（实测），满足 NFR-5「首 token < 2s」。triage 意图分类 + SSE 流式干预专用 |
+| `qwen3.8-27b` | triage | 关思考链后无 reasoning_content，首 content 0.38s。triage 意图分类专用（9/9 准确，与 qwen-plus 持平）|
+| `qwen3.8-max` | dialog_stream | 关思考链后首 content 0.58s。SSE 流式干预专用（共情质量优先）|
 | `deepseek-v4-pro-0813` | dialog | **有 `reasoning_content` 思考链**，max_tokens 须 ≥3000，否则 content 为空 |
 | `deepseek-v4-flash-0731` | report | 同上，max_tokens 须 ≥4000 |
 | `qwen-audio-3.0-asr-flash` | ASR | DashScope 原生 multimodal-generation HTTP，**不走** OpenAI 兼容协议 |
@@ -200,15 +201,15 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 | Role | 模型 | 用途 | 温度 | max_tokens | 状态 |
 |---|---|---|---|---|---|
 | intake | `qwen3.8-2.4t-a95b` | 结构化提取/计分辅助（有思考链） | 0.1 | 2048 | ✅ |
-| triage | `qwen-plus` | triage 意图分类（**无思考链，首 token 快**） | 0.1 | 50 | ✅ |
+| triage | `qwen3.8-27b` | triage 意图分类（**关思考链，首 token 0.38s**） | 0.1 | 50 | ✅ |
 | dialog | `deepseek-v4-pro-0813` | intervention 非流式共情对话（有思考链） | 0.35 | 3000 | ✅ |
-| dialog_stream | `qwen-plus` | intervention **SSE 流式**共情对话（无思考链） | 0.35 | 3000 | ✅ |
+| dialog_stream | `qwen3.8-max` | intervention **SSE 流式**共情对话（关思考链，首 token 0.58s） | 0.35 | 3000 | ✅ |
 | report | `deepseek-v4-flash-0731` | 报告生成（有思考链） | 0.1 | 4000 | ✅ |
 | embed | `text-embedding-v3` | Chroma RAG 向量化 | — | — | ✅ |
 | asr | `qwen-audio-3.0-asr-flash` | 语音识别（DashScope HTTP） | — | — | ✅ |
 | tts | `qwen-audio-3.0-tts-flash` | 语音合成（DashScope HTTP） | — | — | ✅ |
 
-> **triage 角色分工演进**：原 intake（qwen3.8）承担 triage 意图分类 + 结构化提取两职，但 qwen3.8 有思考链阻塞 SSE 首 token。commit `fe1a595` 拆分出独立 `triage` 角色配 qwen-plus（无思考链），intake 仍保留 qwen3.8 给结构化提取/计分辅助。
+> **triage 角色分工演进**：原 intake（qwen3.8）承担 triage 意图分类 + 结构化提取两职，但 qwen3.8 有思考链阻塞 SSE 首 token。commit `fe1a595` 拆分出独立 `triage` 角色配 qwen-plus（无思考链），intake 仍保留 qwen3.8 给结构化提取/计分辅助。后续 qwen-plus 无额度，本次替换为 qwen3.8-27b(triage)+qwen3.8-max(dialog_stream)，两者均经 `_extra_body_for` 关 `enable_thinking=False`（qwen3.8-2.4t-a95b 不可关），实测首 token 1.75s、triage 9/9 准确，NFR-5 仍达标。
 
 ---
 
@@ -335,6 +336,7 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
   - 时序分解（1.72s）：triage 0.65s + RAG 0.16s + stream 首 token 0.32s
   - 浏览器实测 PASS：agent stepper 分诊→测评→干预实时更新，3 个知识卡片渲染，回复边生成边显示；危机消息红色 banner + 12355 + 无 token 流式
   - 187 passed / 1 skipped（+6 流式单测 test_api_chat_stream.py）
+- **模型替换**（2026-09-02，qwen-plus 无额度）：triage→`qwen3.8-27b`、dialog_stream→`qwen3.8-max`，均经 `llm.py._extra_body_for` 关 `enable_thinking=False`（qwen3.8-2.4t-a95b 不可关，max/27b 可关）。实测首 token **1.75s**、triage 准确率 9/9（无退化）、187 passed。NFR-5 仍达标
 
 ---
 
@@ -360,7 +362,7 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
      - 误判排查：qwen3.8 不支持 `enable_thinking=False`（百炼报 400 restricted to True）；4.80s 假象是 stream() 抛异常走 FALLBACK_REPLY
      - 解决：triage + dialog_stream 两角色都换 **qwen-plus**（无思考链，首 content ~0.5s）。详见 §4 P12 + §7「SSE 流式 + 首 token 优化」段
    - **测试**：187 passed / 1 skipped（+6 流式单测 [test_api_chat_stream.py](backend/tests/test_api_chat_stream.py)：正常 token 序列/危机不流式/空回复 fallback/异常 fallback/未知人格回退/RAG 空不推 sources）
-   - **非阻塞后续项**：triage 从 qwen3.8 换 qwen-plus 后，准确率需重测（之前 9/9）。sse 实测 1/1 正确，但样本少，建议跑一轮多消息采样确认不退化
+   - ~~**非阻塞后续项**：triage 从 qwen3.8 换 qwen-plus 后，准确率需重测（之前 9/9）。sse 实测 1/1 正确，但样本少，建议跑一轮多消息采样确认不退化~~ ✅ 已验证（2026-09-02）：换 `qwen3.8-27b`（关思考链）后 triage 抽样 9/9 全对（求助/倾诉/咨询各 3），无退化
 4. **Ollama 本地兜底**：断网/降本场景的灾备方案
 5. **多 Provider 切换**：硅基流动等备用 Provider
 6. **多租户支持**：按学校/区域隔离数据
@@ -398,7 +400,7 @@ dd853fb B 二期：LangGraph 四智能体编排 + RAG .md 修复 + ChatPage 阶�
 - [ ] 重建 RAG 索引：`docker exec psycheflow-backend uv run python -c "import asyncio; from app.rag.service import rag_service; print(asyncio.run(rag_service.build_index()))"` 输出 `{'indexed': 183, ...}`
 - [ ] 跑测试：`docker exec psycheflow-backend uv run pytest -q --no-header` → 187 passed / 1 skipped / 0 failed
 - [ ] 遗留项验证：`docker exec psycheflow-backend uv run python scripts/verify_leftovers.py` → has_assessment PASS + triage 9/9
-- [ ] **SSE 首 token 验证（NFR-5）**：`docker exec psycheflow-backend uv run python scripts/sse_first_token.py` → 首 token < 2s（实测 1.72s），事件序列 agent(triage)→agent(assessment)→agent(intervention)→sources→token×N→done
+- [ ] **SSE 首 token 验证（NFR-5）**：`docker exec psycheflow-backend uv run python scripts/sse_first_token.py` → 首 token < 2s（实测 1.75s，triage=qwen3.8-27b/dialog_stream=qwen3.8-max 关思考链），事件序列 agent(triage)→agent(assessment)→agent(intervention)→sources→token×N→done
 - [ ] **SSE 危机验证**：`docker exec psycheflow-backend uv run python scripts/sse_first_token.py --message "我想自杀"` → 首 token N/A（危机不流式），crisis 事件含 12355
 - [ ] 浏览器访问 http://localhost:5174/chat → 看到 StageStepper「1 分诊 2 测评 3 干预 4 升级」
 - [ ] 输入「我最近压力大」→ 回复是共情内容（呼吸/放松建议），**不是**含 12355 的危机话术；**文字应逐字出现**（SSE 流式），非一次性出现

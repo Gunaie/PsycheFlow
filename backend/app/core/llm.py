@@ -60,6 +60,16 @@ class LLMProvider:
         }
         return mapping.get(role, 0.7)
 
+    # 低延迟流式角色关闭思考链以保证首 token 速度。
+    # qwen3.x 系列（max/27b 等）支持 enable_thinking=False；qwen3.8-2.4t-a95b 例外（强制开启）。
+    _NO_THINKING_ROLES = frozenset({"triage", "dialog_stream"})
+
+    def _extra_body_for(self, role: str) -> dict:
+        """triage/dialog_stream 关闭思考链；其余角色不传（deepseek 走 reasoning_content 提质量）。"""
+        if role in self._NO_THINKING_ROLES:
+            return {"enable_thinking": False}
+        return {}
+
     async def chat(
         self,
         role: str,
@@ -69,12 +79,16 @@ class LLMProvider:
     ) -> str:
         """调用 chat completion，返回 assistant 文本。"""
         temp = self.temp_for(role) if temperature is None else temperature
-        resp = await self.client.chat.completions.create(
+        kwargs = dict(
             model=self.model_for(role),
             messages=messages,
             temperature=temp,
             max_tokens=max_tokens,
         )
+        extra = self._extra_body_for(role)
+        if extra:
+            kwargs["extra_body"] = extra
+        resp = await self.client.chat.completions.create(**kwargs)
         return resp.choices[0].message.content or ""
 
     async def stream(
@@ -90,18 +104,22 @@ class LLMProvider:
         delta 可能同时含 reasoning_content 和 content；此处只 yield content（最终
         回复），思考链不推给用户。
 
-        模型选择：dialog_stream 角色配 qwen-plus（无思考链），实测首 content
-        ~0.5s 满足 NFR-5（首 token < 2s）。qwen3.8 系列不支持 enable_thinking=False
-        （百炼报 400 restricted to True），故用无思考链模型而非关思考。
+        首 token 速度：triage/dialog_stream 两角色经 _extra_body_for 关闭
+        enable_thinking（qwen3.x 的 max/27b 支持关闭），保证首 content < 2s（NFR-5）。
+        qwen3.8-2.4t-a95b 强制开启思考（不可关），故不用于这两个角色。
         """
         temp = self.temp_for(role) if temperature is None else temperature
-        stream = await self.client.chat.completions.create(
+        kwargs = dict(
             model=self.model_for(role),
             messages=messages,
             temperature=temp,
             max_tokens=max_tokens,
             stream=True,
         )
+        extra = self._extra_body_for(role)
+        if extra:
+            kwargs["extra_body"] = extra
+        stream = await self.client.chat.completions.create(**kwargs)
         async for chunk in stream:
             if not chunk.choices:
                 continue
