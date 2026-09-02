@@ -3,6 +3,8 @@
 services:
   # ---------- 后端（生产） ----------
   backend:
+    # 合规：生产以非 root（uid 1000）运行。部署前须 chown -R 1000:1000 ./data ./logs
+    user: "1000:1000"
     # 生产模式：用镜像内置代码，不挂载宿主机源码
     volumes:
       - ./data:/app/data        # 保留数据持久化

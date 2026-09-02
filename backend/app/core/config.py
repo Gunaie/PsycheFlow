@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     # 安全（青少年合规）
     enable_audit_log: bool = True
     crisis_hotline_12355: str = "12355"
+    # 备份加密（合规 c：SQLite 备份 AES-256-CBC 口令，从 .env 注入，勿入库；空则拒绝备份）
+    backup_passphrase: str = ""
 
     # LLM 温度：计分场景确定性优先，对话场景放宽
     temp_intake: float = 0.1

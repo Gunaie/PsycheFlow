@@ -1,9 +1,12 @@
 """DB 模型与持久化单测：建表幂等、CRUD、JSON 字段、级联删除。"""
+import os
+import stat
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.db import Base
+from app.db import Base, restrict_db_file_perms
 import app.models  # noqa: F401
 from app.models import AssessmentRecord, Session as SessionModel
 
@@ -86,3 +89,18 @@ class TestDB:
         Base.metadata.create_all(engine)  # 幂等
         assert "sessions" in Base.metadata.tables
         assert "assessment_records" in Base.metadata.tables
+
+
+class TestDbFilePerms:
+    """合规：SQLite 文件权限收紧为 0600。"""
+
+    def test_restrict_sets_600(self, tmp_path):
+        p = tmp_path / "test.db"
+        p.write_text("")  # 默认权限通常 644
+        restrict_db_file_perms(str(p))
+        mode = stat.S_IMODE(os.stat(str(p)).st_mode)
+        assert mode == 0o600
+
+    def test_restrict_missing_file_noop(self, tmp_path):
+        """文件不存在时不抛异常。"""
+        restrict_db_file_perms(str(tmp_path / "nonexistent.db"))

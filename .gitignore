@@ -37,6 +37,7 @@ data/psycheflow.db
 data/chroma/
 data/*.db-journal
 data/*.mp3
+data/backups/
 
 # IDE
 .vscode/

@@ -2,10 +2,10 @@
 # 规避 Windows 本地装 WeasyPrint 的系统库地狱
 FROM python:3.11-slim
 
-# apt 换清华源（加速系统库安装；兼容 bookworm DEB822 与旧格式）
-RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; s|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' \
+# apt 换阿里云源（加速系统库安装；清华源曾对 trixie 限流 403；兼容 DEB822 与旧格式）
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' \
         /etc/apt/sources.list.d/debian.sources 2>/dev/null \
-    || sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; s|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' \
+    || sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' \
         /etc/apt/sources.list
 
 # WeasyPrint 运行期系统依赖（cairo/pango/gdk-pixbuf + 中文字体，否则 PDF 中文变方块）
@@ -27,6 +27,11 @@ ENV PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 
 # 用 pip 从清华源安装 uv（避免从 ghcr.io 拉镜像，国内访问不稳定）
 RUN pip install --no-cache-dir uv
+
+# 创建非 root 用户 appuser(uid 1000)，生产通过 compose user:"1000:1000" 启用；
+# 开发期仍以 root 运行（仅测试数据）。HOME 供 uv/uvicorn 以 uid 1000 运行时有可写缓存目录。
+RUN groupadd -r appuser && useradd -r -g appuser -u 1000 -m -d /home/appuser appuser
+ENV HOME=/home/appuser
 
 WORKDIR /app
 

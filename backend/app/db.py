@@ -37,6 +37,9 @@ def init_db() -> None:
     # —— SQLite 列迁移：pragma 表结构无列则 ALTER TABLE ADD（列不存在才加，幂等）
     _migrate_sqlite_columns(engine)
 
+    # —— 合规：SQLite 文件权限收紧为 0600（Linux 生产生效，Windows no-op）
+    restrict_db_file_perms()
+
 
 def _col_exists(engine, table: str, column: str) -> bool:
     with engine.connect() as conn:
@@ -72,6 +75,21 @@ def _migrate_sqlite_columns(engine) -> None:
     except Exception:
         import logging
         logging.getLogger("psycheflow.db").warning("users.password_hash 迁移失败，忽略", exc_info=True)
+
+
+def restrict_db_file_perms(db_path: str | None = None) -> None:
+    """合规：SQLite 文件权限收紧为 0600（仅属主可读写）。
+
+    Windows bind mount 下 chmod 为 no-op（权限由 NTFS ACL 管控），Linux 生产环境生效。
+    文件不存在或无属主权限时静默跳过，绝不阻断启动。
+    """
+    path = db_path or settings.sqlite_path
+    try:
+        if path and os.path.exists(path):
+            os.chmod(path, 0o600)
+    except OSError:
+        # Windows / 无属主权限时忽略，不阻断主流程
+        pass
 
 
 def get_db():

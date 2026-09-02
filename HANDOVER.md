@@ -347,13 +347,13 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 1. ~~**性能压测**~~ ✅（2026-09-01 跑通，commit 待补）：脚本 [backend/scripts/perf_bench.py](backend/scripts/perf_bench.py)，命令 `docker exec psycheflow-backend uv run python scripts/perf_bench.py`。验收数据：
    - `/api/health` x50 并发：50/50 (100%)，总耗时 138ms，平均 123.6ms，P50 123.4ms，P95 127.9ms，QPS 361.2 ✅ 满足 NFR「接口 < 200ms」
    - `/api/chat` x10 并发：10/10 (100%)，全 `agent=intervention`/`crisis=False`，端到端整轮平均 20.9s，P50 20.2s，总耗时 26.8s。注：此处测的是 LangGraph 三节点串行（triage→assessment→intervention）+ deepseek-v4 reasoning_content 思考链的**完整响应时延**，非首 token；NFR-5「首 token < 2s」需流式接口（SSE/streaming）改造后单独测量，当前端到端 ~21s 属已知架构特征非 bug
-2. **合规加固深化** ✅（2026-09-01，字段级加密按评估结论暂缓）：
+2. **合规加固深化** ✅（2026-09-01 ~ 09-02，字段级加密按评估结论暂缓，访问层 (b)(c) 于 09-02 完成）：
    - ✅ **审计日志双写（文件 + DB）**：新增 `AuditLog` 表（[models.py](backend/app/models.py)），[audit.py](backend/app/core/audit.py) 的 `write_crisis_audit`/`write_report_audit` 落 JSON 文件后镜像写 DB 行（`_db_write_audit`，best-effort 失败仅 warning 不阻断主业务）。单测 `test_crisis_dual_writes_db` + `test_db_write_failure_does_not_block_endpoint` 验证双写一致性 + 不阻断
    - ✅ **授权链复检**：修复 [auth.py](backend/app/api/auth.py) `login_by_label` 教师绕密漏洞——教师账号 password_hash 非空却可凭 label 直接拿 token，绕过密码。现已一律 403（`teacher_requires_password`），必须走 `/login_by_password`。单测 `TestTeacherAuthHardening` 3 例覆盖（教师 label 拒、密码通、学生不受影响）
    - ⏳ **未成年人数据加密评估**（结论：暂不实施字段级加密，当前最优是传输层+访问层加固）：
      - 敏感数据盘点：`User.profile`(name/student_no/grade/klass/gender/age/guardian_phone/school/teacher_email)、`BatchEntry`(student_no/student_name)、`ConversationTurn.content`、`AssessmentRecord.answers/interpretation`
      - 现状保护：传输层 dev HTTP，prod nginx **已上 TLS1.2/1.3 + HSTS + CSP + 全套安全头**（[nginx.conf](frontend/nginx.conf)）；静态层 SQLite `./data/psycheflow.db` Docker volume 无加密；访问层 token=token_hex(32) 分离 + 教师 PBKDF2-SHA256 加盐 + login_by_label 漏洞已修 + 审计 DB 双写
-     - 结论：SQLite MVP 实施字段级加密（guardian_phone 走 Fernet/AES）需密钥管理（env 弱密钥 / KMS 过度工程）且破坏 SQL 查询，性价比低。**三步状态**：(a) ✅ 生产 nginx TLS+HSTS+CSP 已完成（2026-09-01，自签证书已生成验证，nginx -t + compose config 双绿）、(b) ⏳ `./data` volume 容器内非 root + 文件 600 权限、(c) ⏳ SQLite 备份文件加密；规模化迁 PostgreSQL 后对 guardian_phone/teacher_email 走 pgcrypto 列级加密
+     - 结论：SQLite MVP 实施字段级加密（guardian_phone 走 Fernet/AES）需密钥管理（env 弱密钥 / KMS 过度工程）且破坏 SQL 查询，性价比低。**三步状态**：(a) ✅ 生产 nginx TLS+HSTS+CSP 已完成（2026-09-01，自签证书已生成验证，nginx -t + compose config 双绿）、(b) ✅ `./data` volume 容器内非 root + 文件 600 权限（2026-09-02，[Dockerfile](backend/Dockerfile) 建 appuser uid 1000 + [docker-compose.prod.yml](docker-compose.prod.yml) `user:"1000:1000"`，dev 仍 root 仅测试数据；[db.py](backend/app/db.py) `restrict_db_file_perms` 启动时收紧 0600，实测 db 文件已变 `-rw-------`，单测 `TestDbFilePerms` 覆盖）、(c) ✅ SQLite 备份文件加密（2026-09-02，[backup_db.py](backend/scripts/backup_db.py) `sqlite3.backup` 一致性拷贝 + `openssl enc -aes-256-cbc -pbkdf2 -iter 100000` 加密，口令从 `BACKUP_PASSPHRASE` 注入空则拒备份；实测产出 .db.enc 且 round-trip 解密回 header=`SQLite format 3` size 一致）；规模化迁 PostgreSQL 后对 guardian_phone/teacher_email 走 pgcrypto 列级加密
 3. ~~**流式接口（首 token 验收前置）**~~ ✅（2026-09-01 SSE 骨架 + 首 token 优化完成，**NFR-5 达标**）：
    - **SSE 骨架**（commit 70d2917）：新增 [POST /api/chat/stream](backend/app/api/chat.py)（保留旧 `/api/chat` 向后兼容）。架构 Option C：手动跑 triage→assessment（同步等结果），再用 `provider.stream()` 边生成边推 token；危机路径不流式，推完整 crisis_message 后 close。[llm.py](backend/app/core/llm.py) 加 `stream()`（只 yield `delta.content`，过滤 `reasoning_content` 思考链）。[intervention.py](backend/app/agents/nodes/intervention.py) 重构出 `build_intervention_messages`+`stream_intervention`+`FALLBACK_REPLY`，流式与非流式复用同一套 prompt 拼接。SSE 事件：`agent`(节点切换)/`sources`(RAG 卡片提前推)/`token`(流式)/`crisis`(完整话术)/`error`/`done`
    - **前端**：[api.ts](frontend/src/api.ts) 加 `streamChat`（fetch+ReadableStream 解析 SSE，因 EventSource 不支持 POST+auth）；[ChatPage.tsx](frontend/src/pages/ChatPage.tsx) `send` 改用 `streamChat`，边收 token 边追加到 assistant 气泡，空 assistant turn 在 loading 时显示"思考中"
@@ -399,7 +399,7 @@ dd853fb B 二期：LangGraph 四智能体编排 + RAG .md 修复 + ChatPage 阶�
 
 - [ ] `docker ps` 显示 3 容器 Up（psycheflow-backend / psycheflow-frontend / psycheflow-chroma）
 - [ ] 重建 RAG 索引：`docker exec psycheflow-backend uv run python -c "import asyncio; from app.rag.service import rag_service; print(asyncio.run(rag_service.build_index()))"` 输出 `{'indexed': 183, ...}`
-- [ ] 跑测试：`docker exec psycheflow-backend uv run pytest -q --no-header` → 187 passed / 1 skipped / 0 failed
+- [ ] 跑测试：`docker exec psycheflow-backend uv run pytest -q --no-header` → 189 passed / 1 skipped / 0 failed
 - [ ] 遗留项验证：`docker exec psycheflow-backend uv run python scripts/verify_leftovers.py` → has_assessment PASS + triage 9/9
 - [ ] **SSE 首 token 验证（NFR-5）**：`docker exec psycheflow-backend uv run python scripts/sse_first_token.py` → 首 token < 2s（实测 1.75s，triage=qwen3.8-27b/dialog_stream=qwen3.8-max 关思考链），事件序列 agent(triage)→agent(assessment)→agent(intervention)→sources→token×N→done
 - [ ] **SSE 危机验证**：`docker exec psycheflow-backend uv run python scripts/sse_first_token.py --message "我想自杀"` → 首 token N/A（危机不流式），crisis 事件含 12355
@@ -415,3 +415,6 @@ dd853fb B 二期：LangGraph 四智能体编排 + RAG .md 修复 + ChatPage 阶�
 - [ ] compose 语法验证：`docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet` 无错误
 - [ ] 审计 DB 双写：`docker exec psycheflow-backend uv run pytest tests/test_audit.py::TestAudit::test_crisis_dual_writes_db -q` 通过
 - [ ] 授权链加固：`docker exec psycheflow-backend uv run pytest tests/test_auth.py::TestTeacherAuthHardening -q` 通过（教师凭 label 登录应 403）
+- [ ] 合规 b-文件权限：`docker exec psycheflow-backend ls -la /app/data/psycheflow.db` → `-rw-------`（0600，启动时 restrict_db_file_perms 收紧）；`docker exec psycheflow-backend uv run pytest tests/test_db.py::TestDbFilePerms -q` 通过
+- [ ] 合规 b-非 root：`docker exec psycheflow-backend id appuser` → uid=1000（镜像已建用户；生产经 docker-compose.prod.yml `user:"1000:1000"` 启用，部署前须 `chown -R 1000:1000 ./data ./logs`）
+- [ ] 合规 c-备份加密：`docker exec psycheflow-backend uv run python scripts/backup_db.py` → 产出 `/app/data/backups/psycheflow-*.db.enc`（空 BACKUP_PASSPHRASE 拒备份）；解密验证 `openssl enc -d -aes-256-cbc -salt -pbkdf2 -iter 100000 -pass pass:$BACKUP_PASSPHRASE -in <enc> -out restored.db` → header=`SQLite format 3`
