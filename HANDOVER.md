@@ -2,7 +2,7 @@
 
 > 最后更新：2026-09-02
 > 当前 commit：`29999db`（Ollama 本地兜底 — cloud 异常/空回复时回退本地 LLM）
-> 阶段：D 四期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标）+ Ollama 本地兜底（五期灾备），准备进入五期剩余项（多 Provider / 多租户）
+> 阶段：D 四期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标）+ Ollama 本地兜底（五期灾备，E2E 验证：Docker ollama 服务 + RTX 4060 GPU 直通），准备进入五期剩余项（多 Provider / 多租户）
 
 ---
 
@@ -375,7 +375,7 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
    - **实现**：[llm.py](backend/app/core/llm.py) 抽出 `_chat_once`/`_stream_once` helper（单次调用不重试不兜底）。`chat()` 捕获 cloud 异常 → 若启用 Ollama 则转本地，cloud 正常返回则不碰 Ollama；双失败返回 `""`（节点级话术兜底）。`stream()` 仅在**未 yield 任何 token**（起始即失败）时切 Ollama，已部分输出则不切（避免拼接错乱）并上抛由 SSE error 事件处理。Ollama 走 OpenAI 兼容端点 `/v1`（`AsyncOpenAI` 复用），`api_key` 填占位非空值（Ollama 不鉴权）。
    - **配置**：[config.py](backend/app/core/config.py) 新增 `ollama_base_url`（空=禁用）/`ollama_model`（默认 `qwen2.5:7b`）；.env.example/.env 加 `OLLAMA_BASE_URL`/`OLLAMA_MODEL`。容器连宿主机用 `http://host.docker.internal:11434/v1`，连 compose 的 ollama 服务用 `http://ollama:11434/v1`。
    - **测试**：[test_llm.py](backend/tests/test_llm.py) +10 例（`TestChatOllamaFallback` 6 + `TestStreamOllamaFallback` 4），全 mock 不依赖真实 Ollama：cloud 异常/空回复→ollama、未启用原样上抛、cloud 正常不碰 ollama、双失败返回空、stream 起始即失败切流、已输出中途断流不切、cloud 正常不碰 ollama、未启用原样上抛。全量 **199 passed / 1 skipped**（+10）。
-   - **真实联调**：宿主机未装 Ollama（`localhost:11434` 超时、`ollama` 命令不存在），未做端到端真实兜底。启用步骤：`ollama pull qwen2.5:7b` → 取消 `.env` 中 `OLLAMA_BASE_URL=http://host.docker.internal:11434/v1` 注释 → `docker compose up -d backend` 重建 → cloud 模型不可用时自动转本地。
+   - **真实联调** ✅（Docker ollama 服务 + GPU 直通，2026-09-02）：沙箱拦截原生安装器（exit 4，`%LOCALAPPDATA%\Programs\Ollama` 受限），改走 Docker 路线绕开沙箱。[docker-compose.yml](docker-compose.yml) 新增 `ollama` 服务（image `ollama/ollama:latest`、`./data/ollama` 持久化卷、`deploy.resources.reservations.devices` NVIDIA 直通）。模型导入：aria2c 16 连接从 hf-mirror.com（`bartowski/Qwen2.5-7B-Instruct-GGUF` 的 `Q4_K_M`，4.36GB，35MiB/s）下载 GGUF → `docker cp` 进容器 → `ollama create qwen2.5:7b -f Modelfile`（blob 落卷，重建不丢）。验证：`nvidia-smi -L` 见 RTX 4060 Laptop、`ollama ps` 显示 `qwen2.5:7b 100% GPU`、`/v1/chat/completions` 返回干净中文。`.env` 设 `OLLAMA_BASE_URL=http://ollama:11434/v1`，重启 backend 后 E2E 兜底：临时把 intake 模型名换成 `__nonexistent_model_xyz__` 逼 cloud 404 → `provider.chat` 自动转 ollama 返回非空中文（"你好，我叫Qwen，是由阿里云开发的AI助手…"，`FALLBACK_OK`）。原生安装仍为可选（双击 `OllamaSetup.exe`，`.env` 改 `http://host.docker.internal:11434/v1`）。
 5. **多 Provider 切换**：硅基流动等备用 Provider
 6. **多租户支持**：按学校/区域隔离数据
 
@@ -384,6 +384,7 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 ## 9. Git 提交历史
 
 ```
+<new> feat: Ollama 真实联调 — Docker ollama 服务 + RTX 4060 GPU 直通，qwen2.5:7b 导入，E2E 兜底验证通过
 29999db feat: Ollama 本地兜底 — cloud 异常/空回复时回退本地 LLM（llm.py _chat_once/_stream_once + 10 单测）
 fd86fae feat: 合规加固深化 (b)(c) — 容器非 root + SQLite 0600 + 备份 AES 加密
 09c271e fix: 替换无额度的 qwen-plus — triage=qwen3.8-27b + dialog_stream=qwen3.8-max 关思考链，NFR-5 仍达标(1.75s)

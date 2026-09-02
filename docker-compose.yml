@@ -39,6 +39,28 @@ services:
       - chroma
     command: uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
+  # ---------- Ollama 本地兜底模型（五期灾备） ----------
+  # 首次需导入模型（一次性，blob 落 ./data/ollama 持久化）：
+  #   docker cp <gguf> psycheflow-ollama:/tmp/qwen.gguf
+  #   docker exec psycheflow-ollama sh -c 'printf "FROM /tmp/qwen.gguf\n" > /tmp/Modelfile && ollama create qwen2.5:7b -f /tmp/Modelfile'
+  # 宿主机访问 http://localhost:11434；后端容器经 compose 网络访问 http://ollama:11434/v1
+  ollama:
+    image: ollama/ollama:latest
+    container_name: psycheflow-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./data/ollama:/root/.ollama
+    # GPU 直通（Docker Desktop WSL2 + NVIDIA 驱动；CPU 兜底也可跑但 7B 慢）
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
   # ---------- 前端 ----------
   frontend:
     build:
