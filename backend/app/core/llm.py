@@ -14,19 +14,27 @@
 max_tokens 须足够容纳 reasoning + content（否则 content 为空、finish_reason=length）。
 温度按角色自动取用：计分场景确定性优先（0.1），对话场景放宽（0.35）。
 """
+import logging
 from typing import Optional
 
 from openai import AsyncOpenAI
 
 from app.core.config import settings
 
+logger = logging.getLogger("psycheflow.llm")
+
 
 class LLMProvider:
-    """百炼 LLM/Embedding 调用封装，按角色路由模型。"""
+    """百炼 LLM/Embedding 调用封装，按角色路由模型。
+
+    兜底链：百炼 cloud → Ollama 本地（ollama_base_url 配置时）→ 节点级硬编码话术。
+    Ollama 仅在 cloud 异常或空回复时介入；未配置（base_url 空）则保持原 cloud-only 行为。
+    """
 
     def __init__(self, settings_obj=None):
         self._settings = settings_obj or settings
         self._client: Optional[AsyncOpenAI] = None
+        self._ollama_client: Optional[AsyncOpenAI] = None
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -36,6 +44,21 @@ class LLMProvider:
                 api_key=self._settings.dashscope_api_key,
             )
         return self._client
+
+    @property
+    def ollama_client(self) -> AsyncOpenAI:
+        """本地 Ollama 客户端（OpenAI 兼容端点）。Ollama 不需鉴权，api_key 填占位非空值。"""
+        if self._ollama_client is None:
+            self._ollama_client = AsyncOpenAI(
+                base_url=self._settings.ollama_base_url,
+                api_key="ollama",
+            )
+        return self._ollama_client
+
+    @property
+    def ollama_enabled(self) -> bool:
+        """是否启用 Ollama 兜底（ollama_base_url 非空即启用）。"""
+        return bool(self._settings.ollama_base_url)
 
     def model_for(self, role: str) -> str:
         mapping = {
@@ -70,6 +93,21 @@ class LLMProvider:
             return {"enable_thinking": False}
         return {}
 
+    async def _chat_once(
+        self, client, model, messages, temp, max_tokens, extra_body
+    ) -> str:
+        """单次 chat completion（不重试、不兜底），返回 content 或 ""。"""
+        kwargs = dict(
+            model=model,
+            messages=messages,
+            temperature=temp,
+            max_tokens=max_tokens,
+        )
+        if extra_body:
+            kwargs["extra_body"] = extra_body
+        resp = await client.chat.completions.create(**kwargs)
+        return resp.choices[0].message.content or ""
+
     async def chat(
         self,
         role: str,
@@ -77,19 +115,57 @@ class LLMProvider:
         temperature: Optional[float] = None,
         max_tokens: int = 2048,
     ) -> str:
-        """调用 chat completion，返回 assistant 文本。"""
+        """调用 chat completion，返回 assistant 文本。
+
+        兜底：cloud 异常或空回复时，若启用 Ollama 则转本地模型；
+        cloud 异常且 Ollama 未启用时保持原行为（异常上抛，由节点级硬编码话术兜底）。
+        """
         temp = self.temp_for(role) if temperature is None else temperature
+        cloud_extra = self._extra_body_for(role)
+        try:
+            content = await self._chat_once(
+                self.client, self.model_for(role), messages, temp, max_tokens, cloud_extra
+            )
+        except Exception as e:
+            if not self.ollama_enabled:
+                raise
+            logger.warning("cloud chat 失败，转 Ollama 兜底: %s", e)
+            content = ""
+        if content:
+            return content
+        # cloud 空回复（quota/思考链耗尽）或异常 → Ollama 兜底
+        if self.ollama_enabled:
+            try:
+                content = await self._chat_once(
+                    self.ollama_client, self._settings.ollama_model,
+                    messages, temp, max_tokens, {},
+                )
+                if content:
+                    return content
+            except Exception as e:
+                logger.warning("Ollama 兜底也失败: %s", e)
+        return ""
+
+    async def _stream_once(self, client, model, messages, temp, max_tokens, extra_body):
+        """单次流式 chat completion（不重试、不兜底），async yield content token。"""
         kwargs = dict(
-            model=self.model_for(role),
+            model=model,
             messages=messages,
             temperature=temp,
             max_tokens=max_tokens,
+            stream=True,
         )
-        extra = self._extra_body_for(role)
-        if extra:
-            kwargs["extra_body"] = extra
-        resp = await self.client.chat.completions.create(**kwargs)
-        return resp.choices[0].message.content or ""
+        if extra_body:
+            kwargs["extra_body"] = extra_body
+        stream = await client.chat.completions.create(**kwargs)
+        async for chunk in stream:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            # 只取 content（最终回复），reasoning_content 思考链不外推
+            content = getattr(delta, "content", None)
+            if content:
+                yield content
 
     async def stream(
         self,
@@ -107,27 +183,28 @@ class LLMProvider:
         首 token 速度：triage/dialog_stream 两角色经 _extra_body_for 关闭
         enable_thinking（qwen3.x 的 max/27b 支持关闭），保证首 content < 2s（NFR-5）。
         qwen3.8-2.4t-a95b 强制开启思考（不可关），故不用于这两个角色。
+
+        兜底：cloud 流起始即失败（未 yield 任何 token）时，若启用 Ollama 则转本地流式；
+        已部分输出则不再切（避免拼接错乱），异常上抛由 SSE error 事件处理。
         """
         temp = self.temp_for(role) if temperature is None else temperature
-        kwargs = dict(
-            model=self.model_for(role),
-            messages=messages,
-            temperature=temp,
-            max_tokens=max_tokens,
-            stream=True,
-        )
-        extra = self._extra_body_for(role)
-        if extra:
-            kwargs["extra_body"] = extra
-        stream = await self.client.chat.completions.create(**kwargs)
-        async for chunk in stream:
-            if not chunk.choices:
-                continue
-            delta = chunk.choices[0].delta
-            # 只取 content（最终回复），reasoning_content 思考链不外推
-            content = getattr(delta, "content", None)
-            if content:
-                yield content
+        cloud_extra = self._extra_body_for(role)
+        yielded = False
+        try:
+            async for tok in self._stream_once(
+                self.client, self.model_for(role), messages, temp, max_tokens, cloud_extra
+            ):
+                yielded = True
+                yield tok
+        except Exception as e:
+            if yielded or not self.ollama_enabled:
+                raise
+            logger.warning("cloud stream 起始即失败，转 Ollama 兜底: %s", e)
+            async for tok in self._stream_once(
+                self.ollama_client, self._settings.ollama_model,
+                messages, temp, max_tokens, {},
+            ):
+                yield tok
 
     async def embed(self, texts: list) -> list:
         """调用 embedding，返回向量列表。

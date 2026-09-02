@@ -2,7 +2,7 @@
 
 > 最后更新：2026-09-02
 > 当前 commit：`fd86fae`（合规加固深化 (b)(c) — 容器非 root + SQLite 0600 + 备份 AES 加密）
-> 阶段：D 四期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标），准备进入五期优化（合规深化/部署）
+> 阶段：D 四期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标）+ Ollama 本地兜底（五期灾备），准备进入五期剩余项（多 Provider / 多租户）
 
 ---
 
@@ -76,6 +76,13 @@ FRONTEND_ORIGIN=http://localhost:5173
 # ============ 安全（青少年合规） ============
 ENABLE_AUDIT_LOG=true
 CRISIS_HOTLINE_12355=12355
+# SQLite 备份加密口令（合规 c；空则 backup_db.py 拒备份）
+BACKUP_PASSPHRASE=
+
+# ============ Ollama 本地兜底（五期；空=禁用保持 cloud-only） ============
+# 容器连宿主机：http://host.docker.internal:11434/v1；连 compose ollama 服务：http://ollama:11434/v1
+OLLAMA_BASE_URL=
+OLLAMA_MODEL=qwen2.5:7b
 ```
 
 ### 关键模型注意事项
@@ -363,7 +370,12 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
      - 解决：triage + dialog_stream 两角色都换 **qwen-plus**（无思考链，首 content ~0.5s）。详见 §4 P12 + §7「SSE 流式 + 首 token 优化」段
    - **测试**：187 passed / 1 skipped（+6 流式单测 [test_api_chat_stream.py](backend/tests/test_api_chat_stream.py)：正常 token 序列/危机不流式/空回复 fallback/异常 fallback/未知人格回退/RAG 空不推 sources）
    - ~~**非阻塞后续项**：triage 从 qwen3.8 换 qwen-plus 后，准确率需重测（之前 9/9）。sse 实测 1/1 正确，但样本少，建议跑一轮多消息采样确认不退化~~ ✅ 已验证（2026-09-02）：换 `qwen3.8-27b`（关思考链）后 triage 抽样 9/9 全对（求助/倾诉/咨询各 3），无退化
-4. **Ollama 本地兜底**：断网/降本场景的灾备方案
+4. **Ollama 本地兜底** ✅（2026-09-02，断网/降本灾备方案已落地）：
+   - **兜底链**：百炼 cloud → Ollama 本地（`ollama_base_url` 非空时启用）→ 节点级硬编码话术。Ollama 仅在 cloud 异常**或**空回复（quota/思考链耗尽）时介入；未配置（`base_url` 空）则保持原 cloud-only 行为，零行为变更。
+   - **实现**：[llm.py](backend/app/core/llm.py) 抽出 `_chat_once`/`_stream_once` helper（单次调用不重试不兜底）。`chat()` 捕获 cloud 异常 → 若启用 Ollama 则转本地，cloud 正常返回则不碰 Ollama；双失败返回 `""`（节点级话术兜底）。`stream()` 仅在**未 yield 任何 token**（起始即失败）时切 Ollama，已部分输出则不切（避免拼接错乱）并上抛由 SSE error 事件处理。Ollama 走 OpenAI 兼容端点 `/v1`（`AsyncOpenAI` 复用），`api_key` 填占位非空值（Ollama 不鉴权）。
+   - **配置**：[config.py](backend/app/core/config.py) 新增 `ollama_base_url`（空=禁用）/`ollama_model`（默认 `qwen2.5:7b`）；.env.example/.env 加 `OLLAMA_BASE_URL`/`OLLAMA_MODEL`。容器连宿主机用 `http://host.docker.internal:11434/v1`，连 compose 的 ollama 服务用 `http://ollama:11434/v1`。
+   - **测试**：[test_llm.py](backend/tests/test_llm.py) +10 例（`TestChatOllamaFallback` 6 + `TestStreamOllamaFallback` 4），全 mock 不依赖真实 Ollama：cloud 异常/空回复→ollama、未启用原样上抛、cloud 正常不碰 ollama、双失败返回空、stream 起始即失败切流、已输出中途断流不切、cloud 正常不碰 ollama、未启用原样上抛。全量 **199 passed / 1 skipped**（+10）。
+   - **真实联调**：宿主机未装 Ollama（`localhost:11434` 超时、`ollama` 命令不存在），未做端到端真实兜底。启用步骤：`ollama pull qwen2.5:7b` → 取消 `.env` 中 `OLLAMA_BASE_URL=http://host.docker.internal:11434/v1` 注释 → `docker compose up -d backend` 重建 → cloud 模型不可用时自动转本地。
 5. **多 Provider 切换**：硅基流动等备用 Provider
 6. **多租户支持**：按学校/区域隔离数据
 
@@ -372,6 +384,7 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 ## 9. Git 提交历史
 
 ```
+<new> feat: Ollama 本地兜底 — cloud 异常/空回复时回退本地 LLM（llm.py _chat_once/_stream_once + 10 单测）
 fd86fae feat: 合规加固深化 (b)(c) — 容器非 root + SQLite 0600 + 备份 AES 加密
 09c271e fix: 替换无额度的 qwen-plus — triage=qwen3.8-27b + dialog_stream=qwen3.8-max 关思考链，NFR-5 仍达标(1.75s)
 fe1a595 feat: SSE 首 token 优化 18s→1.7s（NFR-5 达标）— triage+dialog_stream 换 qwen-plus 无思考链
@@ -419,3 +432,4 @@ dd853fb B 二期：LangGraph 四智能体编排 + RAG .md 修复 + ChatPage 阶�
 - [ ] 合规 b-文件权限：`docker exec psycheflow-backend ls -la /app/data/psycheflow.db` → `-rw-------`（0600，启动时 restrict_db_file_perms 收紧）；`docker exec psycheflow-backend uv run pytest tests/test_db.py::TestDbFilePerms -q` 通过
 - [ ] 合规 b-非 root：`docker exec psycheflow-backend id appuser` → uid=1000（镜像已建用户；生产经 docker-compose.prod.yml `user:"1000:1000"` 启用，部署前须 `chown -R 1000:1000 ./data ./logs`）
 - [ ] 合规 c-备份加密：`docker exec psycheflow-backend uv run python scripts/backup_db.py` → 产出 `/app/data/backups/psycheflow-*.db.enc`（空 BACKUP_PASSPHRASE 拒备份）；解密验证 `openssl enc -d -aes-256-cbc -salt -pbkdf2 -iter 100000 -pass pass:$BACKUP_PASSPHRASE -in <enc> -out restored.db` → header=`SQLite format 3`
+- [ ] Ollama 兜底单测：`docker exec psycheflow-backend uv run pytest tests/test_llm.py::TestChatOllamaFallback tests/test_llm.py::TestStreamOllamaFallback -q` → 10 passed。默认 `OLLAMA_BASE_URL=` 空 = 禁用（cloud-only 行为不变）；启用需宿主机先 `ollama pull qwen2.5:7b` 再取消 `.env` 中 `OLLAMA_BASE_URL=http://host.docker.internal:11434/v1` 注释 + `docker compose up -d backend` 重建

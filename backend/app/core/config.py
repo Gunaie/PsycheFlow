@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     crisis_hotline_12355: str = "12355"
     # 备份加密（合规 c：SQLite 备份 AES-256-CBC 口令，从 .env 注入，勿入库；空则拒绝备份）
     backup_passphrase: str = ""
+    # Ollama 本地兜底（五期：百炼失败/离线时回退本地 LLM；空 base_url = 禁用，保持原 cloud-only 行为）
+    # 容器内连宿主机 Ollama 用 http://host.docker.internal:11434/v1；连 compose 的 ollama 服务用 http://ollama:11434/v1
+    ollama_base_url: str = ""
+    ollama_model: str = "qwen2.5:7b"
 
     # LLM 温度：计分场景确定性优先，对话场景放宽
     temp_intake: float = 0.1
