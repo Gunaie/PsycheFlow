@@ -1,7 +1,7 @@
 # PsycheFlow 项目交接文档
 
 > 最后更新：2026-09-02
-> 当前 commit：`09c271e`（替换无额度的 qwen-plus — triage=qwen3.8-27b + dialog_stream=qwen3.8-max，均关思考链）
+> 当前 commit：`fd86fae`（合规加固深化 (b)(c) — 容器非 root + SQLite 0600 + 备份 AES 加密）
 > 阶段：D 四期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标），准备进入五期优化（合规深化/部署）
 
 ---
@@ -372,6 +372,7 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 ## 9. Git 提交历史
 
 ```
+fd86fae feat: 合规加固深化 (b)(c) — 容器非 root + SQLite 0600 + 备份 AES 加密
 09c271e fix: 替换无额度的 qwen-plus — triage=qwen3.8-27b + dialog_stream=qwen3.8-max 关思考链，NFR-5 仍达标(1.75s)
 fe1a595 feat: SSE 首 token 优化 18s→1.7s（NFR-5 达标）— triage+dialog_stream 换 qwen-plus 无思考链
 70d2917 feat: SSE 流式对话 — POST /api/chat/stream 边生成边推 token
