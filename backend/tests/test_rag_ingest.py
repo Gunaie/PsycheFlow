@@ -36,6 +36,11 @@ async def test_ingest_then_search_sources(rag_ns):
     if len(mds) < 3:
         pytest.skip(f"语料不足，期望 ≥ 3 实际 {mds}")
 
+    from app.core.config import settings
+    if not settings.dashscope_api_key:
+        # do_ingest 会逐文件吞错返回 count=0 而不抛异常，须在凭据边界前置 skip（CI 无 .env）
+        pytest.skip("未配置 DASHSCOPE_API_KEY，跳过依赖真实 embedding 的集成测试")
+
     from app.rag.cli_ingest import do_ingest
     try:
         count = await do_ingest(dir=KNOWLEDGE_DIR, chunk=200, overlap=30, reset=True, namespace=rag_ns)
