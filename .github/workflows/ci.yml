@@ -45,7 +45,18 @@ jobs:
         run: uv sync --frozen
 
       - name: Run pytest
-        run: uv run pytest -q --no-header
+        run: set -o pipefail && uv run pytest -q --no-header 2>&1 | tee pytest-output.txt
+
+      # 失败时把日志尾部开成 Issue（匿名可读），便于无认证环境下远程排障；稳定后可移除
+      - name: Report failure as issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create \
+            --title "CI failed @ ${{ github.sha }}" \
+            --body "$(tail -120 pytest-output.txt)" \
+            --repo "$GITHUB_REPOSITORY" || true
 
   frontend-check:
     name: Frontend typecheck + build
