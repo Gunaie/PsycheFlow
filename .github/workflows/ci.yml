@@ -27,6 +27,9 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.11"
+          # 与本地生成/校验 uv.lock 的版本一致：新版 uv 可能要求升级锁格式，
+          # 导致 --frozen 判定过期而失败
+          version: "0.11.5"
 
       # WeasyPrint 导入需要 pango 系系统库（容器外环境补齐）
       - name: Install WeasyPrint system deps
