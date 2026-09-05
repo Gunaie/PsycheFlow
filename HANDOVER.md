@@ -1,8 +1,8 @@
 # PsycheFlow 项目交接文档
 
 > 最后更新：2026-09-05
-> 当前 commit：`b43994e`（feat: 测评纠偏与前端体验批次 — 一量表一报告 + 报告增强 + PDF 下载交互分化）
-> 阶段：D 四期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标）+ Ollama 本地兜底（五期灾备，整机共享独立容器 + RTX 4060 GPU 直通 + Open WebUI 图形界面，E2E 验证通过）+ 生产验收/打包交付（E2E 7/7、prod compose 复检、部署文档）+ 测评纠偏与前端体验批次（已提交，199 passed/1 skipped 基线），五期待办仅剩 #5 多 Provider（待注册硅基流动）与 #6 多租户
+> 当前 commit：`2cf193c`（feat: 前端视觉丰富 — 门户横幅+双端卡配图+对话空状态插画+ public 测试残留迁移）
+> 阶段：D 四期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标）+ Ollama 本地兜底（五期灾备，整机共享独立容器 + RTX 4060 GPU 直通 + Open WebUI 图形界面，E2E 验证通过）+ 生产验收/打包交付（E2E 7/7、prod compose 复检、部署文档）+ 测评纠偏与前端体验批次 + 文档同步 + 试点合规材料 + 路由重构与三态门户（双端零交叉隔离）+ 前端视觉丰富（已提交，199 passed/1 skipped 基线），五期待办仅剩 #5 多 Provider（待注册硅基流动）与 #6 多租户
 
 ---
 
@@ -25,7 +25,7 @@ docker exec psycheflow-backend uv run pytest -q --no-header
 # 期望：199 passed, 1 skipped, 0 failed
 
 # 5. 浏览器打开
-# 前端：http://localhost:5174/chat
+# 前端：http://localhost:5174/（三态门户：未登录选学生端/教师端，已登录自动进对应端）
 # 后端健康检查：http://localhost:8000/docs
 ```
 
@@ -258,15 +258,17 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 
 | 路径 | 作用 |
 |---|---|
-| [App.tsx](frontend/src/App.tsx) | React Router 入口（学生端 + /admin 教师端；导航按 role 显隐「管理后台」） |
+| [App.tsx](frontend/src/App.tsx) | React Router 入口：`/` 三态门户（未登录选身份/按角色自动跳转）+ 学生端 `/home /assess*` + 教师端 `/admin/*`；RequireTeacher/登录守卫 + 旧路径重定向；导航按 role 分化 |
 | [api.ts](frontend/src/api.ts) | fetch 封装（含 SSE streamChat / apiGetBlob / clearToken 清全部用户态 localStorage） |
-| [pages/ChatPage.tsx](frontend/src/pages/ChatPage.tsx) | 对话页（SSE 流式 + 🎤 录音 + 🔊 朗读 + 人格切换 + 全宽布局） |
-| [pages/ScaleSelectPage.tsx](frontend/src/pages/ScaleSelectPage.tsx) | 量表选择页（/scale 入口，四量表卡片） |
-| [pages/ScalePage.tsx](frontend/src/pages/ScalePage.tsx) | 测评页（/scales/:scaleId 单量表每次新建独立 session；/scale/combined 合并双量表） |
-| [pages/HistoryPage.tsx](frontend/src/pages/HistoryPage.tsx) | 历史报告列表 + 详情弹窗 + PDF 真实下载（blob + `<a download>`，非新标签预览） |
-| [pages/HomePage.tsx](frontend/src/pages/HomePage.tsx) | 首页（三步引导卡 + 进度指示 + 动态 CTA） |
-| [pages/ScreeningPage.tsx](frontend/src/pages/ScreeningPage.tsx) | 学生筛查入口 |
-| [pages/admin/](frontend/src/pages/admin/) | 管理后台三页（登录/批次列表/批次详情） |
+| [pages/PortalPage.tsx](frontend/src/pages/PortalPage.tsx) | 系统门户（独立全屏布局：横幅插画 + 学生端/教师端双卡；已登录按角色重定向） |
+| [pages/ChatPage.tsx](frontend/src/pages/ChatPage.tsx) | 对话页（SSE 流式 + 🎤 录音 + 🔊 朗读 + 人格切换 + 全宽布局；空状态插画缺图降级 💬） |
+| [pages/ScaleSelectPage.tsx](frontend/src/pages/ScaleSelectPage.tsx) | 量表选择页（/assess 入口，四量表卡片 + 合并筛查推荐位） |
+| [pages/ScalePage.tsx](frontend/src/pages/ScalePage.tsx) | 测评页（/assess/:scaleId 单量表每次新建独立 session；/assess/combined 合并双量表） |
+| [pages/HistoryPage.tsx](frontend/src/pages/HistoryPage.tsx) | 历史报告列表 + 详情弹窗 + PDF 真实下载（blob + `<a download>`，非新标签预览；挂登录守卫） |
+| [pages/HomePage.tsx](frontend/src/pages/HomePage.tsx) | 学生首页 /home（三步引导卡 + 进度指示 + 动态 CTA） |
+| [pages/ScreeningPage.tsx](frontend/src/pages/ScreeningPage.tsx) | 学生筛查入口（/screening 凭码匿名作答，印制材料稳定 URL） |
+| [pages/admin/AdminShell.tsx](frontend/src/pages/admin/AdminShell.tsx) | 管理后台统一布局（深色顶栏：品牌 + action 插槽 + clearToken 退出；登录页不用） |
+| [pages/admin/](frontend/src/pages/admin/) | 管理后台三页（登录/批次列表/批次详情，均挂 RequireTeacher 守卫） |
 | [lib/recorder.ts](frontend/src/lib/recorder.ts) | D3：浏览器 WAV 录音器（16kHz PCM） |
 | [components/CrisisBanner.tsx](frontend/src/components/CrisisBanner.tsx) | 危机横幅组件 |
 
@@ -282,6 +284,9 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 | [scripts/voice_probe.py](backend/scripts/voice_probe.py) | D3 语音 API 单点探测 |
 | [scripts/tts_http_diag.py](backend/scripts/tts_http_diag.py) | TTS HTTP API 诊断（DashScope 原生端点） |
 | [scripts/diag_deepseek.py](backend/scripts/diag_deepseek.py) | deepseek-v4 reasoning_content 思考链诊断 |
+| [scripts/reset_teacher_password.py](backend/scripts/reset_teacher_password.py) | **运维**：教师忘记密码重置（`docker exec -it psycheflow-backend uv run python scripts/reset_teacher_password.py --label 账号名 [--password 新密码]`；省略密码则自动生成 12 位并打印；仅限 role=teacher；E2E 实测新密码 200/旧密码 401） |
+| [scripts/backup_db.py](backend/scripts/backup_db.py) | **运维**：SQLite 一致性备份 + AES-256-CBC 加密（需 BACKUP_PASSPHRASE） |
+| [scripts/e2e_acceptance.py](backend/scripts/e2e_acceptance.py) | **验收**：端到端 7 步验收（健康→登录→对话→危机→报告→审计），7/7 PASS |
 
 ### 部署文件
 
@@ -357,6 +362,18 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 - **测试修正**：[test_auth.py](backend/tests/test_auth.py) `test_bearer_token_links_session_to_account` 过期——list_sessions 已改为只返回有测评记录的 session（排除纯对话），测试补挂一条全 0 PHQ-A 后通过
 - **验证**：`tsc --noEmit` 0 错误；pytest **199 passed / 1 skipped / 0 failed**（工作区实测 2026-09-05）
 
+### 路由重构与双端门户批次 ✅（2026-09-05，commit `884e7fa` → `2cf193c`）
+
+- **试点合规材料**（884e7fa，[docs/](docs/)）：监护人知情同意书模板（与系统注册页四项同意逐条对应 + 回执联）、教师操作手册（建批次/发码/看报告/危机处置 SOP + 每日巡检命令 + FAQ + 学生作答指引附录）；README 相关文档区补链接
+- **路由重构**（5a12ac4，[App.tsx](frontend/src/App.tsx)）：学生测评统一 `/assess` 前缀（`/assess` 选择、`/assess/:scaleId` 单量表、`/assess/combined` 合并），旧路径 `/scale`、`/scale/combined`、`/scales/:scaleId` 全部 `<Navigate replace>` 兼容重定向（参数转发需自写 LegacyScaleRedirect 组件，Navigate 不支持参数插值）；`/screening` 与 `/admin` 系、`/login`、`/register` 保持不变（印制材料 URL 稳定）
+- **AdminShell 统一布局**（[AdminShell.tsx](frontend/src/pages/admin/AdminShell.tsx)）：管理后台深色顶栏（品牌 + action 插槽 + 退出），批次列表/详情两页接入；退出改用 `clearToken()` 清全部 5 个用户态 key（原手动删 3 个会漏 session id 有串号风险）
+- **守卫**：`/admin`、`/admin/batches/:id` 挂 RequireTeacher（无 token/非 teacher → /admin/login，服务端 API 鉴权仍兜底）；`/history` 挂登录守卫 → /login；`/chat` 保持匿名可用
+- **三态门户**（[PortalPage.tsx](frontend/src/pages/PortalPage.tsx)）：`/` = 系统大门（独立全屏布局不套学生 Shell）——未登录显示 🎓学生端/🏫教师端双卡；学生登录态自动跳 `/home`；教师登录态自动跳 `/admin`。学生首页 `/` → `/home`，顶栏品牌/首页同步；登录成功直达 `/home`；退出登录统一回 `/` 门户。**分发口径：学校只发根地址，各走各的门**
+- **双端零交叉隔离**：教师端 AdminShell 无"返回学生端"链接、`/admin/login` 加「← 返回首页」防迷路；学生页零教师痕迹（教师登录态下学生顶栏隐藏测评/对话/历史，仅剩管理后台；手输学生 URL 可用但无导航暴露）；教师登录态访问 `/` 直接重定向 `/admin`——教师世界里不存在学生首页
+- **前端视觉丰富**（2cf193c）：门户横幅 + 双端卡配图 + 对话空状态插画（`frontend/public/images/` 四张 AI 生成扁平插画风 PNG，深蓝 #1e3a5f 主色统一风格；缺图 onError 自动降级 emoji/隐藏，不出现破图）；`public/` 里 15 个报告测试残留迁 `tests/report-samples/`（git mv 零引用确认）
+- **运维脚本**：[scripts/reset_teacher_password.py](backend/scripts/reset_teacher_password.py) 教师忘记密码重置（--label 必填、--password 可省自动生成 12 位无易混字符；仅 role=teacher；复用 `_hash_password` PBKDF2 格式）。容器内 E2E 实测：注册临时教师 → 重置 → 新密码 login_by_password 200、旧密码 401
+- **验证**：`tsc --noEmit` 0 错误（每批次均过）；浏览器目检（Playwright）：门户横幅/双卡图/对话插画全部渲染、退出落门户、教师访问 `/` 自动跳工作台；pytest 基线不变（后端仅加脚本无 API 改动）
+
 ---
 
 ## 8. 待做事项（五期优化）
@@ -401,6 +418,10 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 ## 9. Git 提交历史
 
 ```
+2cf193c feat: 前端视觉丰富 — 门户横幅+双端卡配图+对话空状态插画（缺图自动降级）+ public 测试残留迁移 tests/report-samples
+5a12ac4 feat: 路由重构与双端门户 — /assess 前缀统一 + 旧路径重定向 + AdminShell 统一布局 + 路由守卫 + 三态门户 /（未登录选身份/按角色自动跳转）+ 双端零交叉入口
+884e7fa docs: 试点合规与操作材料 — 监护人知情同意书模板 + 教师操作手册（建批次/看报告/危机处置 SOP）
+15ca1d4 docs: 同步配置与文档至实际代码 — README 重写 + 开发计划/HANDOVER 更新
 b43994e feat: 测评纠偏与前端体验批次 — 一量表一报告 + 报告增强 + PDF 下载交互分化
 c529bb9 feat: 生产验收/打包交付 — E2E 7/7 验收脚本 + prod compose 复检 + DEPLOY.md 部署文档
 dd30704 feat: Ollama 升级为整机共享独立容器 — 模型库迁 E:\OllamaModels + Open WebUI 图形界面（多项目复用）
