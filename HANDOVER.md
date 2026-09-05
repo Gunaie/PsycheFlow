@@ -1,8 +1,8 @@
 # PsycheFlow 项目交接文档
 
 > 最后更新：2026-09-05
-> 当前 commit：`11ffa38`（feat: README 开源级打磨 — Mermaid 架构图 + 8 张页面截图 + 可复现截图脚本）
-> 阶段：D 四期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标）+ Ollama 本地兜底 + 生产验收/打包交付 + 测评纠偏与前端体验批次 + 文档同步 + 试点合规材料 + 路由重构与三态门户 + 前端视觉丰富 + GitHub CI（全绿）+ LLM 输出评估体系 + README 开源级打磨（求职三步 P1/P2/P3 完成；真实用户试点待部署决策）
+> 当前 commit：`df68bd0`（feat: 双端隔离补强 + 门户身份换乘站 + 统一返回导航与按钮美化）
+> 阶段：D 四期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标）+ Ollama 本地兜底 + 生产验收/打包交付 + 测评纠偏与前端体验批次 + 文档同步 + 试点合规材料 + 路由重构与三态门户 + 前端视觉丰富 + GitHub CI（全绿）+ LLM 输出评估体系 + README 开源级打磨 + 匿名安全加固 + 双端隔离补强与交互导航（求职三步 P1/P2/P3 完成；真实用户试点待部署决策）
 
 ---
 
@@ -25,7 +25,7 @@ docker exec psycheflow-backend uv run pytest -q --no-header
 # 期望：199 passed, 1 skipped, 0 failed
 
 # 5. 浏览器打开
-# 前端：http://localhost:5174/（三态门户：未登录选学生端/教师端，已登录自动进对应端）
+# 前端：http://localhost:5174/（三态门户：未登录选学生端/教师端，已登录显示身份条一键进工作台/切端确认）
 # 后端健康检查：http://localhost:8000/docs
 ```
 
@@ -258,18 +258,19 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 
 | 路径 | 作用 |
 |---|---|
-| [App.tsx](frontend/src/App.tsx) | React Router 入口：`/` 三态门户（未登录选身份/按角色自动跳转）+ 学生端 `/home /assess*` + 教师端 `/admin/*`；RequireTeacher/登录守卫 + 旧路径重定向；导航按 role 分化 |
+| [App.tsx](frontend/src/App.tsx) | React Router 入口：`/` 三态门户 + 学生端 `/home /assess*` + 教师端 `/admin/*`；RequireTeacher/RequireStudent/RedirectIfAuthed 三守卫（教师手输学生路由弹回后台；已登录访问登录注册页按角色回首页）+ 旧路径重定向 |
 | [api.ts](frontend/src/api.ts) | fetch 封装（含 SSE streamChat / apiGetBlob / clearToken 清全部用户态 localStorage） |
-| [pages/PortalPage.tsx](frontend/src/pages/PortalPage.tsx) | 系统门户（独立全屏布局：横幅插画 + 学生端/教师端双卡；已登录按角色重定向） |
+| [pages/PortalPage.tsx](frontend/src/pages/PortalPage.tsx) | 系统门户 + 身份换乘站（独立全屏布局：横幅插画 + 双端卡；已登录显示身份条与「进入我的工作台」，教师切学生端确认退出、学生切教师端走教师登录页） |
 | [pages/ChatPage.tsx](frontend/src/pages/ChatPage.tsx) | 对话页（SSE 流式 + 🎤 录音 + 🔊 朗读 + 人格切换 + 全宽布局；空状态插画缺图降级 💬） |
-| [pages/ScaleSelectPage.tsx](frontend/src/pages/ScaleSelectPage.tsx) | 量表选择页（/assess 入口，四量表卡片 + 合并筛查推荐位） |
-| [pages/ScalePage.tsx](frontend/src/pages/ScalePage.tsx) | 测评页（/assess/:scaleId 单量表每次新建独立 session；/assess/combined 合并双量表） |
+| [pages/ScaleSelectPage.tsx](frontend/src/pages/ScaleSelectPage.tsx) | 量表选择页（/assess 入口，四量表卡片 + 合并筛查推荐位；免登录文案纠偏） |
+| [pages/ScalePage.tsx](frontend/src/pages/ScalePage.tsx) | 测评页（/assess/:scaleId 单量表每次新建独立 session；/assess/combined 合并双量表；返回测评选择带未提交作答确认） |
 | [pages/HistoryPage.tsx](frontend/src/pages/HistoryPage.tsx) | 历史报告列表 + 详情弹窗 + PDF 真实下载（blob + `<a download>`，非新标签预览；挂登录守卫） |
-| [pages/HomePage.tsx](frontend/src/pages/HomePage.tsx) | 学生首页 /home（三步引导卡 + 进度指示 + 动态 CTA） |
+| [pages/HomePage.tsx](frontend/src/pages/HomePage.tsx) | 学生首页 /home（返回门户 + 三步引导卡 + 四功能卡含筛查码入口 + 动态 CTA） |
 | [pages/ScreeningPage.tsx](frontend/src/pages/ScreeningPage.tsx) | 学生筛查入口（/screening 凭码匿名作答，印制材料稳定 URL） |
 | [pages/admin/AdminShell.tsx](frontend/src/pages/admin/AdminShell.tsx) | 管理后台统一布局（深色顶栏：品牌 + action 插槽 + clearToken 退出；登录页不用） |
-| [pages/admin/](frontend/src/pages/admin/) | 管理后台三页（登录/批次列表/批次详情，均挂 RequireTeacher 守卫） |
+| [pages/admin/](frontend/src/pages/admin/) | 管理后台三页（登录/批次列表/批次详情，均挂 RequireTeacher 守卫；批次详情含返回批次列表 + 胶囊操作按钮） |
 | [lib/recorder.ts](frontend/src/lib/recorder.ts) | D3：浏览器 WAV 录音器（16kHz PCM） |
+| [components/BackLink.tsx](frontend/src/components/BackLink.tsx) | 统一胶囊返回按钮（light/dark 双 variant；首页/登录/注册/筛查/批次详情/管理登录接入） |
 | [components/CrisisBanner.tsx](frontend/src/components/CrisisBanner.tsx) | 危机横幅组件 |
 
 ### 诊断/验证脚本（backend/scripts/，容器内 /app/scripts/）
@@ -397,6 +398,22 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
   - 已知小瑕疵：作答页脚本点击选项未生效（进度 0/9，截图仍可展示界面）；首页欢迎语显示账号 label 而非昵称（真实系统行为）
 - **验证**：8 图逐一目检通过；README 嵌入「界面速览」表格
 
+### 安全加固与演示材料批次 ✅（2026-09-05，commit `f1da7af` → `9d06a9b`）
+
+- **匿名 LLM 接口 IP 限流**：[api/ratelimit.py](backend/app/api/ratelimit.py) 滑动窗口内存限流（对话端点 10 次/分、报告生成 3 次/分），key=端点组+客户端 IP（支持 X-Forwarded-For 反代场景）；已登录用户按成功解析的账号豁免（无效 token 一律视为匿名，伪造 header 绕不过）。单测 [test_ratelimit.py](backend/tests/test_ratelimit.py)（含进程级 bucket 测试基建修正）
+- **匿名测评不存档提示**：ScalePage 匿名用户顶部警示「匿名测评不存档：报告仅当前页面可见，请及时下载 PDF 留存；登录后测评将进入「历史」记录」
+- **演示视频录制脚本**：[docs/演示视频录制脚本.md](docs/演示视频录制脚本.md)（OBS 分镜 + 旁白词 + 录前清单）
+- **验证**：pytest 199 passed / 1 skipped 基线不变；CI 全绿
+
+### 双端隔离补强与交互导航批次 ✅（2026-09-05，commit `df68bd0`）
+
+- **RequireStudent 守卫**（[App.tsx](frontend/src/App.tsx)）：教师登录态访问学生路由（/home /assess* /chat /history /screening）一律弹回 /admin——补上路由重构批次遗留的「教师手输学生 URL 可进入」缺口；/history 的登录守卫嵌套在 RequireStudent 内
+- **RedirectIfAuthed**：已登录访问 /login /register 按角色回各自首页，防两端交叉与重复登录
+- **门户身份换乘站**（[PortalPage.tsx](frontend/src/pages/PortalPage.tsx)）：自动重定向改为可视换乘——已登录显示身份条（label + 角色 + 「进入我的工作台 →」）；教师点学生端卡 confirm 后 clearToken 再进 /home（明确的换身份动作，卡片显示「切换将退出当前教师账号」）；学生点教师端卡进 /admin/login 校验角色；双卡由 Link 改 button 语义
+- **统一返回导航**：新增 [BackLink](frontend/src/components/BackLink.tsx) 组件（胶囊描边 + 箭头 + hover 反馈，light/dark 双 variant），接入学生首页「返回门户」、登录/注册页「返回首页」（dark）、筛查码页「返回首页」、批次详情「返回批次列表」（dark）；批次详情「导出汇总 CSV」「关闭批次」与管理顶栏「退出」按钮统一胶囊风格；作答页「返回测评选择」带未提交作答 confirm 防误触丢答案
+- **入口补齐**：学生首页新增「班级筛查作答」卡（/screening 筛查码入口，功能卡 3→4 改 2×2 网格）；量表选择页免登录文案纠偏（原文案误写「登录后即可开始测评」，实为免登录可测）
+- **验证**：`tsc --noEmit` 0 错误 + `vite build` 通过；前端容器重启后浏览器目检各页返回按钮、守卫弹回与门户换乘行为
+
 ---
 
 ## 8. 待做事项（五期优化）
@@ -441,6 +458,9 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 ## 9. Git 提交历史
 
 ```
+df68bd0 feat: 双端隔离补强 + 门户身份换乘站 + 统一返回导航与按钮美化 — RequireStudent/RedirectIfAuthed 守卫 + 门户身份条与切端确认 + BackLink 统一接入 + 筛查码入口卡 + 作答返回确认 + 免登录文案纠偏
+9d06a9b docs: 演示视频录制脚本（OBS 分镜 + 旁白词 + 录前清单）
+f1da7af feat(security): 匿名 LLM 接口 IP 限流 + 匿名测评不存档提示
 11ffa38 feat: README 开源级打磨（P3）— Mermaid 系统架构图 + 8 张核心页面截图 + 可复现截图脚本
 9c49626 feat: LLM 输出评估体系（P2）— triage 评测 43 样本 97.7%（危机 8/8）+ 报告合规评测 76/76 100%，基线快照入库 + README 指标表
 d7d9418 fix(test): RAG 集成测试在无 DASHSCOPE_API_KEY 环境前置 skip — do_ingest 逐文件吞错导致 CI 误报断言失败
