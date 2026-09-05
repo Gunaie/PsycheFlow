@@ -12,8 +12,7 @@ env/
 .mypy_cache/
 .ruff_cache/
 
-# uv
-uv.lock
+# uv（应用工程提交 uv.lock 以保证 CI/部署可复现构建）
 
 # Node
 node_modules/
