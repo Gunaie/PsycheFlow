@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiPost, setToken } from '../api';
+import BackLink from '../components/BackLink';
 import FooterDisclaimer from '../components/FooterDisclaimer';
 
 type TabKey = 'token' | 'label';
@@ -34,7 +35,7 @@ export default function LoginPage() {
         token: tokenInput.trim(),
       });
       setToken(res.token, res.label, res.role);
-      navigate('/home');
+      navigate(res.role === 'teacher' ? '/admin' : '/home');
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -51,7 +52,7 @@ export default function LoginPage() {
         label: labelInput.trim(),
       });
       setToken(res.token, res.label, res.role);
-      navigate('/home');
+      navigate(res.role === 'teacher' ? '/admin' : '/home');
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -62,11 +63,14 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen bg-slate-50">
       <header className="bg-[#1e3a5f] text-white">
-        <div className="max-w-3xl mx-auto px-6 py-5">
-          <h1 className="text-2xl font-bold">PsycheFlow · 登录</h1>
-          <p className="text-sm text-slate-200 mt-1">
-            使用注册时获得的 Token 或 Label 登录
-          </p>
+        <div className="max-w-3xl mx-auto px-6 py-5 flex items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold">PsycheFlow · 登录</h1>
+            <p className="text-sm text-slate-200 mt-1">
+              使用注册时获得的 Token 或 Label 登录
+            </p>
+          </div>
+          <BackLink to="/home" variant="dark">返回首页</BackLink>
         </div>
       </header>
 

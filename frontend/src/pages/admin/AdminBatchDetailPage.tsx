@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { apiGet, apiGetBlob, apiPost } from '../../api';
 import AdminShell from './AdminShell';
+import BackLink from '../../components/BackLink';
 
 interface EntryAssessment {
   scale_id: string;
@@ -148,16 +149,17 @@ export default function AdminBatchDetailPage() {
       }
       action={
         <>
+          <BackLink to="/admin" variant="dark">返回批次列表</BackLink>
           <button
             onClick={exportCsv}
-            className="rounded-md border border-white/30 px-3 py-1.5 text-sm hover:bg-white/10"
+            className="rounded-full border border-white/30 bg-white/5 px-3.5 py-1.5 text-xs text-white/80 backdrop-blur-sm hover:bg-white/15 hover:text-white hover:border-white/50 transition cursor-pointer"
           >
             导出汇总 CSV
           </button>
           {detail.status === 'active' && (
             <button
               onClick={closeBatch}
-              className="rounded-md bg-red-500/80 px-3 py-1.5 text-sm hover:bg-red-500"
+              className="rounded-full bg-red-500/80 px-3.5 py-1.5 text-xs text-white hover:bg-red-500 transition cursor-pointer"
             >
               关闭批次
             </button>

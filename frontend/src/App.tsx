@@ -26,6 +26,18 @@ function RequireTeacher({ children }: { children: ReactNode }) {
   return <>{children}</>
 }
 
+/** 路由守卫：学生世界禁止教师会话进入——教师手动访问学生路由一律弹回管理后台。 */
+function RequireStudent({ children }: { children: ReactNode }) {
+  if (getToken() && getRole() === 'teacher') return <Navigate to="/admin" replace />
+  return <>{children}</>
+}
+
+/** 已登录用户访问登录/注册页 → 按角色送回各自首页，防止两端交叉。 */
+function RedirectIfAuthed({ children }: { children: ReactNode }) {
+  if (getToken()) return <Navigate to={getRole() === 'teacher' ? '/admin' : '/home'} replace />
+  return <>{children}</>
+}
+
 /** C 端公共布局：顶栏 + 内容容器 + 免责 footer。 */
 function Shell({ children }: { children: ReactNode }) {
   const location = useLocation()
@@ -80,15 +92,22 @@ function StudentPages() {
   return (
     <div className={`${wide ? 'max-w-5xl' : 'max-w-3xl'} w-full mx-auto px-4 py-6`}>
       <Routes>
-        <Route path="/home" element={<HomePage />} />
-        <Route path="/assess" element={<ScaleSelectPage />} />
-        <Route path="/assess/combined" element={<ScalePage />} />
-        <Route path="/assess/:scaleId" element={<ScalePage />} />
-        <Route path="/chat" element={<ChatPage />} />
-        <Route path="/register" element={<RegisterPage />} />
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/history" element={getToken() ? <HistoryPage /> : <Navigate to="/login" replace />} />
-        <Route path="/screening" element={<ScreeningPage />} />
+        <Route path="/home" element={<RequireStudent><HomePage /></RequireStudent>} />
+        <Route path="/assess" element={<RequireStudent><ScaleSelectPage /></RequireStudent>} />
+        <Route path="/assess/combined" element={<RequireStudent><ScalePage /></RequireStudent>} />
+        <Route path="/assess/:scaleId" element={<RequireStudent><ScalePage /></RequireStudent>} />
+        <Route path="/chat" element={<RequireStudent><ChatPage /></RequireStudent>} />
+        <Route path="/register" element={<RedirectIfAuthed><RegisterPage /></RedirectIfAuthed>} />
+        <Route path="/login" element={<RedirectIfAuthed><LoginPage /></RedirectIfAuthed>} />
+        <Route
+          path="/history"
+          element={
+            <RequireStudent>
+              {getToken() ? <HistoryPage /> : <Navigate to="/login" replace />}
+            </RequireStudent>
+          }
+        />
+        <Route path="/screening" element={<RequireStudent><ScreeningPage /></RequireStudent>} />
         {/* 旧路径兼容重定向 */}
         <Route path="/scale/combined" element={<Navigate to="/assess/combined" replace />} />
         <Route path="/scale" element={<Navigate to="/assess" replace />} />

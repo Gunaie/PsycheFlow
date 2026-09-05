@@ -1,13 +1,14 @@
 import { useNavigate } from 'react-router-dom'
 import { Link } from 'react-router-dom'
 import { getToken, getLabel, clearToken } from '../api'
+import BackLink from '../components/BackLink'
 import FooterDisclaimer from '../components/FooterDisclaimer'
 
 const HERO_IMG = '/index.png'
 
 const FEATURES = [
   {
-    to: '/scale',
+    to: '/assess',
     icon: '📋',
     title: '量表测评',
     desc: 'PHQ-A · SCARED · SDQ · MHT 四套专业量表，在线作答即时出分',
@@ -27,6 +28,13 @@ const FEATURES = [
     desc: '查看历次测评记录与分数趋势，一键下载 PDF 报告',
     cta: '查看报告',
   },
+  {
+    to: '/screening',
+    icon: '🎫',
+    title: '班级筛查作答',
+    desc: '输入老师发放的 6 位筛查码，免注册匿名完成班级批次测评',
+    cta: '输入筛查码',
+  },
 ]
 
 export default function HomePage() {
@@ -36,6 +44,11 @@ export default function HomePage() {
 
   return (
     <div className="space-y-10">
+      {/* 返回系统门户（门户是总大门：换端/切换身份从这里走） */}
+      <div>
+        <BackLink to="/">返回门户</BackLink>
+      </div>
+
       {/* Hero 区 */}
       <section className="relative overflow-hidden rounded-3xl shadow-lg">
         <img
@@ -102,7 +115,7 @@ export default function HomePage() {
 
       {/* 功能卡片 */}
       <section>
-        <div className="grid gap-5 sm:grid-cols-3">
+        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
           {FEATURES.map((f) => (
             <Link
               key={f.to}

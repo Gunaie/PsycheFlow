@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiPost, setToken } from '../api';
+import BackLink from '../components/BackLink';
 import FooterDisclaimer from '../components/FooterDisclaimer';
 
 interface Consents {
@@ -109,11 +110,14 @@ export default function RegisterPage() {
   return (
     <div className="min-h-screen bg-slate-50">
       <header className="bg-[#1e3a5f] text-white">
-        <div className="max-w-3xl mx-auto px-6 py-5">
-          <h1 className="text-2xl font-bold">PsycheFlow · 注册与知情同意</h1>
-          <p className="text-sm text-slate-200 mt-1">
-            本系统面向未成年人校园心理筛查，请完成以下知情同意后使用
-          </p>
+        <div className="max-w-3xl mx-auto px-6 py-5 flex items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold">PsycheFlow · 注册与知情同意</h1>
+            <p className="text-sm text-slate-200 mt-1">
+              本系统面向未成年人校园心理筛查，请完成以下知情同意后使用
+            </p>
+          </div>
+          <BackLink to="/home" variant="dark">返回首页</BackLink>
         </div>
       </header>
 

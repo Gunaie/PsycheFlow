@@ -35,7 +35,9 @@ export default function ScaleSelectPage() {
       <div>
         <h1 className="text-2xl font-bold text-slate-800">选择测评量表</h1>
         <p className="text-sm text-slate-500 mt-1">
-          {token ? '选择一份量表开始测评，完成后可查看结果并下载报告' : '登录后即可开始测评'}
+          {token
+            ? '选择一份量表开始测评，完成后可查看结果并下载报告'
+            : '无需登录，点击下方卡片即可直接开始测评；登录后报告将存入「历史」记录'}
         </p>
       </div>
 

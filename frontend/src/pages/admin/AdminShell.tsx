@@ -34,7 +34,7 @@ export default function AdminShell({
                 clearToken();
                 navigate('/');
               }}
-              className="rounded-md border border-white/30 px-3 py-1.5 text-sm hover:bg-white/10"
+              className="rounded-full border border-white/30 bg-white/5 px-3.5 py-1.5 text-xs text-white/80 backdrop-blur-sm hover:bg-white/15 hover:text-white hover:border-white/50 transition cursor-pointer"
             >
               退出
             </button>

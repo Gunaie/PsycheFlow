@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { apiGet, apiPost, apiPostBlob, getToken } from '../api'
 import CrisisBanner from '../components/CrisisBanner'
 import FooterDisclaimer from '../components/FooterDisclaimer'
@@ -44,6 +44,7 @@ type CombinedAnswers = Record<string, Record<number, number>> // { phqa: {1:3,..
 
 export default function ScalePage() {
   const { scaleId } = useParams<{ scaleId: string }>()
+  const navigate = useNavigate()
   const isCombined = !scaleId
 
   // ======== 单量表状态（/scales/:scaleId） ========
@@ -281,6 +282,25 @@ export default function ScalePage() {
 
   return (
     <div className="space-y-5">
+      {/* 返回测评选择：有未提交作答时先确认，防误触丢答案 */}
+      <div>
+        <button
+          type="button"
+          onClick={() => {
+            const answered = isCombined
+              ? Object.values(combinedAnswers).some(a => Object.keys(a).length > 0)
+              : Object.keys(answers).length > 0
+            const submitted = isCombined ? Object.keys(combinedResults).length > 0 : !!result
+            if (answered && !submitted && !confirm('退出将丢失未提交的作答，确定返回？')) return
+            navigate('/assess')
+          }}
+          className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 py-1.5 text-sm text-slate-600 shadow-sm hover:border-[#1e3a5f] hover:text-[#1e3a5f] hover:shadow transition cursor-pointer"
+        >
+          <span aria-hidden className="text-base leading-none">←</span>
+          返回测评选择
+        </button>
+      </div>
+
       {!isCombined && meta && (
         <div>
           <h1 className="text-xl font-bold text-slate-800">{meta.scale_name}</h1>

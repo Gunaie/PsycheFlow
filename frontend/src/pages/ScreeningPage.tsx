@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { apiGet, apiPost } from '../api'
 import CrisisBanner from '../components/CrisisBanner'
 import FooterDisclaimer from '../components/FooterDisclaimer'
+import BackLink from '../components/BackLink'
 
 interface ScaleMeta {
   scale_id: string
@@ -125,7 +126,10 @@ export default function ScreeningPage() {
   if (!info) {
     return (
       <div className="max-w-md mx-auto space-y-5">
-        <div className="text-center pt-6">
+        <div className="pt-6">
+          <BackLink to="/home">返回首页</BackLink>
+        </div>
+        <div className="text-center">
           <h1 className="text-xl font-bold text-slate-800">批量心理筛查</h1>
           <p className="text-sm text-slate-500 mt-2">
             请输入学校心理老师发放的 6 位筛查码。作答匿名，结果仅同步给你的心理老师。

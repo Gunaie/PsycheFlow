@@ -1,10 +1,12 @@
 import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { apiPost, setToken } from '../../api';
+import BackLink from '../../components/BackLink';
 
 interface AuthResp {
   token: string;
   label: string;
+  role: string;
 }
 
 type TabKey = 'login' | 'register';
@@ -28,8 +30,11 @@ export default function AdminLoginPage() {
         label: label.trim(),
         password,
       });
-      setToken(res.token, res.label);
-      localStorage.setItem('psycheflow_role', 'teacher');
+      if (res.role !== 'teacher') {
+        setError('该账号不是教师账号，请从学生端登录');
+        return;
+      }
+      setToken(res.token, res.label, res.role);
       navigate('/admin');
     } catch (e) {
       setError((e as Error).message);
@@ -53,8 +58,7 @@ export default function AdminLoginPage() {
         label: label.trim(),
         password,
       });
-      setToken(res.token, res.label);
-      localStorage.setItem('psycheflow_role', 'teacher');
+      setToken(res.token, res.label, res.role);
       navigate('/admin');
     } catch (e) {
       setError((e as Error).message);
@@ -76,12 +80,7 @@ export default function AdminLoginPage() {
             <h1 className="text-2xl font-bold">PsycheFlow · 学校心理筛查管理后台</h1>
             <p className="text-sm text-slate-200 mt-1">教师账号登录 / 注册</p>
           </div>
-          <Link
-            to="/"
-            className="text-xs text-white/70 hover:text-white border border-white/30 rounded-md px-2.5 py-1.5 shrink-0"
-          >
-            ← 返回首页
-          </Link>
+          <BackLink to="/" variant="dark">返回首页</BackLink>
         </div>
       </header>
 
