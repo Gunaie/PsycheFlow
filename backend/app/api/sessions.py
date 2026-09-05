@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_account
+from app.api.ratelimit import rate_limit
 from app.db import get_db
 from app.models import AssessmentRecord, Session as SessionModel, User
 from app.reports.service import generate_report_pdf
@@ -99,7 +100,7 @@ async def submit_assessment(session_id: str, req: AssessmentSubmit, db: Session 
 #       功能由下方 get_session_detail 覆盖。=====
 
 
-@router.post("/{session_id}/report")
+@router.post("/{session_id}/report", dependencies=[Depends(rate_limit("report", limit=3, window_sec=60))])
 async def generate_report(session_id: str, db: Session = Depends(get_db)):
     session = db.get(SessionModel, session_id)
     if not session:

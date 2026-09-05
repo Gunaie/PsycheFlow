@@ -6,6 +6,16 @@ from sqlalchemy.pool import StaticPool
 
 from app.db import Base, get_db
 import app.models  # noqa: F401  注册表到 metadata
+import app.api.ratelimit as _ratelimit
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limit_buckets():
+    """限流桶是进程级全局，测试间必须清零，否则套件内匿名 chat 调用
+    累计同一桶导致 audit 等模块随机撞 429。"""
+    _ratelimit._BUCKETS.clear()
+    yield
+    _ratelimit._BUCKETS.clear()
 
 
 @pytest.fixture

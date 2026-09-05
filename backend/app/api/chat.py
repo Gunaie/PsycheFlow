@@ -25,6 +25,7 @@ from app.agents.nodes.intervention import (
 from app.agents.nodes.triage import triage_node
 from app.agents.personas import get_persona
 from app.api.deps import get_current_account, get_db_session
+from app.api.ratelimit import rate_limit
 from app.core.llm import provider
 from app.core.safety import crisis_message
 from app.models import ConversationTurn, User
@@ -55,7 +56,7 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-@router.post("")
+@router.post("", dependencies=[Depends(rate_limit("chat", limit=10, window_sec=60))])
 async def chat(
     req: ChatRequest,
     db: Session = Depends(get_db_session),
@@ -154,7 +155,7 @@ async def chat(
     }
 
 
-@router.post("/stream")
+@router.post("/stream", dependencies=[Depends(rate_limit("chat", limit=10, window_sec=60))])
 async def chat_stream(
     req: ChatRequest,
     db: Session = Depends(get_db_session),

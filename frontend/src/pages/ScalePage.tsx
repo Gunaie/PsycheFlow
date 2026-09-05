@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { apiGet, apiPost, apiPostBlob } from '../api'
+import { apiGet, apiPost, apiPostBlob, getToken } from '../api'
 import CrisisBanner from '../components/CrisisBanner'
 import FooterDisclaimer from '../components/FooterDisclaimer'
 
@@ -340,13 +340,20 @@ export default function ScalePage() {
         return (
           <>
             {hasResults && (
-              <button
-                onClick={onGenerate}
-                disabled={reportLoading}
-                className="w-full py-2.5 rounded-xl text-sm font-semibold border border-[#1e3a5f] text-[#1e3a5f] hover:bg-blue-50 disabled:opacity-50 transition"
-              >
-                {reportLoading ? '报告生成中…（约 30-60 秒，勿关闭）' : '生成 PDF 报告'}
-              </button>
+              <>
+                {!getToken() && (
+                  <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                    匿名测评不存档：报告仅当前页面可见，请及时下载 PDF 留存；登录后测评将进入「历史」记录。
+                  </p>
+                )}
+                <button
+                  onClick={onGenerate}
+                  disabled={reportLoading}
+                  className="w-full py-2.5 rounded-xl text-sm font-semibold border border-[#1e3a5f] text-[#1e3a5f] hover:bg-blue-50 disabled:opacity-50 transition"
+                >
+                  {reportLoading ? '报告生成中…（约 30-60 秒，勿关闭）' : '生成 PDF 报告'}
+                </button>
+              </>
             )}
             <button
               onClick={onSubmit}
