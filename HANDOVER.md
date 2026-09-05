@@ -1,8 +1,8 @@
 # PsycheFlow 项目交接文档
 
 > 最后更新：2026-09-05
-> 当前 commit：`2cf193c`（feat: 前端视觉丰富 — 门户横幅+双端卡配图+对话空状态插画+ public 测试残留迁移）
-> 阶段：D 四期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标）+ Ollama 本地兜底（五期灾备，整机共享独立容器 + RTX 4060 GPU 直通 + Open WebUI 图形界面，E2E 验证通过）+ 生产验收/打包交付（E2E 7/7、prod compose 复检、部署文档）+ 测评纠偏与前端体验批次 + 文档同步 + 试点合规材料 + 路由重构与三态门户（双端零交叉隔离）+ 前端视觉丰富（已提交，199 passed/1 skipped 基线），五期待办仅剩 #5 多 Provider（待注册硅基流动）与 #6 多租户
+> 当前 commit：`9c49626`（feat: LLM 输出评估体系 — triage 评测 97.7% + 报告合规评测 100% + README 指标表）
+> 阶段：D 四期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标）+ Ollama 本地兜底 + 生产验收/打包交付 + 测评纠偏与前端体验批次 + 文档同步 + 试点合规材料 + 路由重构与三态门户 + 前端视觉丰富 + GitHub CI（全绿）+ LLM 输出评估体系（五期待办仅剩 #5 多 Provider（待注册硅基流动）与 #6 多租户；真实用户试点待部署决策）
 
 ---
 
@@ -287,6 +287,9 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 | [scripts/reset_teacher_password.py](backend/scripts/reset_teacher_password.py) | **运维**：教师忘记密码重置（`docker exec -it psycheflow-backend uv run python scripts/reset_teacher_password.py --label 账号名 [--password 新密码]`；省略密码则自动生成 12 位并打印；仅限 role=teacher；E2E 实测新密码 200/旧密码 401） |
 | [scripts/backup_db.py](backend/scripts/backup_db.py) | **运维**：SQLite 一致性备份 + AES-256-CBC 加密（需 BACKUP_PASSPHRASE） |
 | [scripts/e2e_acceptance.py](backend/scripts/e2e_acceptance.py) | **验收**：端到端 7 步验收（健康→登录→对话→危机→报告→审计），7/7 PASS |
+| [scripts/eval_triage.py](backend/scripts/eval_triage.py) + [scripts/eval/triage_dataset.json](backend/scripts/eval/triage_dataset.json) | **P2 评测**：triage 意图分诊评测（43 条标注样本，总体 97.7%，危机硬编码 8/8=100% 安全回归）；容器内 `uv run python scripts/eval_triage.py [--limit N] [--verbose]` |
+| [scripts/eval_report.py](backend/scripts/eval_report.py) | **P2 评测**：报告结构合规评测（5 场景×15 断言：六章节/个人信息/测评用时/雷达图/PDF 完整性/危机红框双向/建议无危机话术，100%）；复用计分引擎+真实 LLM 叙事，合成数据自动清理；容器内 `uv run python scripts/eval_report.py [--only key]` |
+| [scripts/eval/results/](backend/scripts/eval/results/) | 评测基线快照（`*_eval_latest.json` 入库，带时间戳明细 gitignore） |
 
 ### 部署文件
 
@@ -374,6 +377,17 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 - **运维脚本**：[scripts/reset_teacher_password.py](backend/scripts/reset_teacher_password.py) 教师忘记密码重置（--label 必填、--password 可省自动生成 12 位无易混字符；仅 role=teacher；复用 `_hash_password` PBKDF2 格式）。容器内 E2E 实测：注册临时教师 → 重置 → 新密码 login_by_password 200、旧密码 401
 - **验证**：`tsc --noEmit` 0 错误（每批次均过）；浏览器目检（Playwright）：门户横幅/双卡图/对话插画全部渲染、退出落门户、教师访问 `/` 自动跳工作台；pytest 基线不变（后端仅加脚本无 API 改动）
 
+### GitHub CI 与 LLM 输出评估批次 ✅（2026-09-05，commit `7f65806` → `9c49626`）
+
+- **GitHub Actions CI**（[.github/workflows/ci.yml](.github/workflows/ci.yml)）：`backend-test`（uv 0.11.5 钉版本 + `--frozen` 锁同步 + wqy-zenhei 字体 + pytest）/ `frontend-check`（npm ci + tsc -b + vite build）/ `docker-build`（仅 main push，buildx GHA 缓存，backend + frontend prod target）。无 .env 可跑（config 全默认值 + LLM 全 mock + `SQLITE_PATH`/`LOGS_DIR` 重定向规避 /app/data 无权限）。**排障四连**：① `.gitignore` 排除了 `uv.lock` → 取消忽略入库（可复现构建）；② CI 缺中文字体 → PDF 体积断言（≥100KB）因 `.notdef` 缩水失败 → 补 `fonts-wqy-zenhei`（与生产镜像对齐）；③ `test_rag_ingest` 真调百炼 embedding，无凭据时 `do_ingest` 逐文件吞错返回 0 未触发 skip → 测试前置 `dashscope_api_key` 空判断 skip；④ 新仓库 GITHUB_TOKEN 默认只读 → workflow 声明 `issues: write`，失败自动开 Issue 上报日志尾部（远程排障用，稳定后可移除）
+- **本地复现 CI 的自伤雷（已记入项目记忆）**：把 `backend/` bind mount 进临时容器跑 `uv sync` 会在**宿主机**生成 Linux venv，遮蔽 psycheflow-backend 容器内 `/app/.venv`（python 符号链接失效 → `uv run` spawn 失败）——清理：`docker run --rm -v <backend>:/src alpine rm -rf /src/.venv`
+- **LLM 输出评估体系（P2）**：
+  - [eval_triage.py](backend/scripts/eval_triage.py) + [triage_dataset.json](backend/scripts/eval/triage_dataset.json)：43 条标注样本（危机 8/求助 11/倾诉 12/咨询 11 + 4 边界），总体 **97.7%**（42/43）；危机类 8/8=100%（硬编码词表安全回归，准确率下降即阻断发布）；唯一误判为边界样本且判定合理（"被安排来咨询"→求助）。运行 ~18s
+  - [eval_report.py](backend/scripts/eval_report.py)：5 场景（4 量表 + 合并）×15 断言 **76/76=100%**。断言含六章节/姓名学号来自 profile/测评用时/雷达图 SVG/PDF 完整性（≥30KB）/**危机红框双向**（预期危机须有框+12355——MHT 85/97 全 1 会正确触发；预期安全须无框）/**安全场景建议无危机话术**（LLM 曾在非危机报告建议里泄漏红框文案，此断言专盯该回归）。运行 ~80s
+  - 基线快照：[eval/results/](backend/scripts/eval/results/)（latest 入库，时间戳明细 gitignore）
+- **README 指标表**：新增「质量与性能指标」章节（eval 数字 + 首 token 1.72s + QPS 361 + 测试/验收 + CI 徽章）
+- **验证**：CI 全绿（https://github.com/Gunaie/PsycheFlow/actions）；容器内实测 RAG 集成测试 skip 行为正常
+
 ---
 
 ## 8. 待做事项（五期优化）
@@ -418,6 +432,14 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 ## 9. Git 提交历史
 
 ```
+9c49626 feat: LLM 输出评估体系（P2）— triage 评测 43 样本 97.7%（危机 8/8）+ 报告合规评测 76/76 100%，基线快照入库 + README 指标表
+d7d9418 fix(test): RAG 集成测试在无 DASHSCOPE_API_KEY 环境前置 skip — do_ingest 逐文件吞错导致 CI 误报断言失败
+83da14a ci: workflow 声明 issues:write 权限 — 失败排障 Issue 才能创建
+6649bc0 ci: pytest 失败时自动开 Issue 上报日志尾部（远程排障用，稳定后移除）
+0ee95e4 fix(ci): 补装 fonts-wqy-zenhei 中文字体 — 与生产镜像对齐，修复 PDF 体积断言因缺字 .notdef 缩水
+d5a91e7 fix(ci): 提交 uv.lock 并取消 gitignore — --frozen 同步需要锁文件入库（可复现构建）
+33aa441 fix(ci): 钉住 uv 0.11.5 — 新版 uv 判定旧锁格式过期导致 --frozen 同步失败
+7f65806 ci: GitHub Actions — backend pytest + frontend typecheck/build + main 分支镜像构建验证
 2cf193c feat: 前端视觉丰富 — 门户横幅+双端卡配图+对话空状态插画（缺图自动降级）+ public 测试残留迁移 tests/report-samples
 5a12ac4 feat: 路由重构与双端门户 — /assess 前缀统一 + 旧路径重定向 + AdminShell 统一布局 + 路由守卫 + 三态门户 /（未登录选身份/按角色自动跳转）+ 双端零交叉入口
 884e7fa docs: 试点合规与操作材料 — 监护人知情同意书模板 + 教师操作手册（建批次/看报告/危机处置 SOP）
