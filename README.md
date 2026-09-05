@@ -74,3 +74,5 @@ PsycheFlow/
 - [DEPLOY.md](./DEPLOY.md)：新机器从零部署（开发/生产/TLS/Ollama/验收/运维）
 - [HANDOVER.md](./HANDOVER.md)：交接文档（模块索引、已知坑清单、验证 Checklist）
 - [开发计划.md](./开发计划.md)：完整开发计划与方案
+- [docs/监护人知情同意书模板.md](./docs/监护人知情同意书模板.md)：试点合规材料（与系统四项同意逐条对应）
+- [docs/教师操作手册.md](./docs/教师操作手册.md)：建批次/看报告/危机处置 SOP
