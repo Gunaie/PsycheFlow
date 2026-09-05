@@ -1,8 +1,8 @@
 # PsycheFlow 项目交接文档
 
-> 最后更新：2026-09-02
-> 当前 commit：`c529bb9`（生产验收/打包交付 — E2E 7/7 + prod compose 复检 + DEPLOY.md）
-> 阶段：D 四期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标）+ Ollama 本地兜底（五期灾备，整机共享独立容器 + RTX 4060 GPU 直通 + Open WebUI 图形界面，E2E 验证通过）+ 生产验收/打包交付（E2E 7/7、prod compose 复检、部署文档），五期待办仅剩 #5 多 Provider（待注册硅基流动）与 #6 多租户
+> 最后更新：2026-09-05
+> 当前 commit：`b43994e`（feat: 测评纠偏与前端体验批次 — 一量表一报告 + 报告增强 + PDF 下载交互分化）
+> 阶段：D 四期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标）+ Ollama 本地兜底（五期灾备，整机共享独立容器 + RTX 4060 GPU 直通 + Open WebUI 图形界面，E2E 验证通过）+ 生产验收/打包交付（E2E 7/7、prod compose 复检、部署文档）+ 测评纠偏与前端体验批次（已提交，199 passed/1 skipped 基线），五期待办仅剩 #5 多 Provider（待注册硅基流动）与 #6 多租户
 
 ---
 
@@ -22,7 +22,7 @@ docker exec psycheflow-backend uv run python -c "import asyncio; from app.rag.se
 
 # 4. 跑测试（验证全绿）
 docker exec psycheflow-backend uv run pytest -q --no-header
-# 期望：187 passed, 1 skipped, 0 failed
+# 期望：199 passed, 1 skipped, 0 failed
 
 # 5. 浏览器打开
 # 前端：http://localhost:5174/chat
@@ -97,9 +97,9 @@ OLLAMA_MODEL=qwen2.5:7b
 | `qwen-audio-3.0-asr-flash` | ASR | DashScope 原生 multimodal-generation HTTP，**不走** OpenAI 兼容协议 |
 | `qwen-audio-3.0-tts-flash` | TTS | DashScope 原生 audio/tts HTTP，**不走** SDK WebSocket（SDK 会崩） |
 
-> **deepseek-v4 reasoning_content 坑**：deepseek-v4 系列有思考链字段，会先"思考"再输出 content。max_tokens 太小时被思考链用完，content 为空、`finish_reason=length`。**不是**配额耗尽（已验证两个 deepseek 模型仍有额度）。各节点 max_tokens：triage=50（qwen-plus 无思考链）, intervention=3000, reports=4000, llm 默认=2048。
+> **deepseek-v4 reasoning_content 坑**：deepseek-v4 系列有思考链字段，会先"思考"再输出 content。max_tokens 太小时被思考链用完，content 为空、`finish_reason=length`。**不是**配额耗尽（已验证两个 deepseek 模型仍有额度）。各节点 max_tokens：triage=50（qwen3.8-27b 关思考链，4 类标签足够）, intervention=3000, reports=4000, llm 默认=2048。
 >
-> **qwen3.8 思考链无法关闭坑**：qwen3.8-2.4t-a95b 强制 `enable_thinking=True`（百炼报 400 restricted to True），关不掉。流式场景下思考链阻塞首 content token 5-6s，**不能用**于 SSE 流式。已改用 `qwen-plus`（无思考链）承担 triage 和 dialog_stream 两个角色（commit `fe1a595`）。
+> **qwen3.8 思考链无法关闭坑**：qwen3.8-2.4t-a95b 强制 `enable_thinking=True`（百炼报 400 restricted to True），关不掉。流式场景下思考链阻塞首 content token 5-6s，**不能用**于 SSE 流式。commit `fe1a595` 曾改用 qwen-plus（无思考链）承担 triage/dialog_stream；qwen-plus 无额度后 commit `09c271e` 换为 `qwen3.8-27b`(triage) + `qwen3.8-max`(dialog_stream)——**qwen3.8 系列中 max/27b 可关思考链**，仅 2.4t-a95b 不可关（`llm.py _extra_body_for` 按 role 注入）。
 
 ---
 
@@ -110,7 +110,7 @@ OLLAMA_MODEL=qwen2.5:7b
 | 启动/重启 | `docker compose up -d --build` | **重建 chroma 容器会清空向量索引**，之后必须 build_index() |
 | 重启单服务 | `docker restart psycheflow-backend` | 仅重启进程，**不会重新读 .env**。改 .env 必须用 `docker compose up -d backend` |
 | 看后端日志 | `docker logs psycheflow-backend --tail 50` | 或加 `--since 10m` 看最近 10 分钟 |
-| 跑 pytest | `docker exec psycheflow-backend uv run pytest -q --no-header` | 187 passed + 1 skipped |
+| 跑 pytest | `docker exec psycheflow-backend uv run pytest -q --no-header` | 199 passed + 1 skipped |
 | 重建 RAG 索引 | `docker exec psycheflow-backend uv run python -c "import asyncio; from app.rag.service import rag_service; print(asyncio.run(rag_service.build_index()))"` | chroma 被重建后必跑 |
 | 跑验证脚本 | `docker exec psycheflow-backend uv run python scripts/verify_leftovers.py` | has_assessment + triage 抽样 |
 | 跑性能压测 | `docker exec psycheflow-backend uv run python scripts/perf_bench.py` | 50 并发 health + 10 并发 chat（脚本位于 `backend/scripts/`，容器内 `/app/scripts/`） |
@@ -232,7 +232,8 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 | [api/admin.py](backend/app/api/admin.py) | C 三期：批次管理（CSV/筛查码/导出） |
 | [api/screening.py](backend/app/api/screening.py) | C 三期：学生凭筛查码匿名作答 |
 | [api/personas.py](backend/app/api/personas.py) | D2：人格元数据端点 |
-| [api/auth.py](backend/app/api/auth.py) | 注册/登录（token=secrets.token_hex(32)） |
+| [api/auth.py](backend/app/api/auth.py) | 注册/登录（token=secrets.token_hex(32)；AuthResp 含 role 控制前端菜单可见性） |
+| [api/sessions.py](backend/app/api/sessions.py) | 会话与报告端点：GET /api/sessions 列表（只含有测评记录的 session）/ POST assessments / PDF 生成（inline）与下载（attachment） |
 | [agents/graph.py](backend/app/agents/graph.py) | StateGraph 四节点拓扑 |
 | [agents/state.py](backend/app/agents/state.py) | AgentState TypedDict |
 | [agents/nodes/triage.py](backend/app/agents/nodes/triage.py) | 分诊（detect_crisis 前置 + LLM） |
@@ -247,7 +248,7 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 | [core/safety.py](backend/app/core/safety.py) | detect_crisis_with_words / crisis_message |
 | [core/audit.py](backend/app/core/audit.py) | write_crisis_audit / write_report_audit |
 | [rag/service.py](backend/app/rag/service.py) | RAG build_index / search |
-| [reports/service.py](backend/app/reports/service.py) | MHT 报告生成（6 章节 + LLM 发展建议） |
+| [reports/service.py](backend/app/reports/service.py) | 单页报告生成（MHT 六章节风格 + 全量表子维度计算 `_compute_subdims` + 雷达图数据 + 测评用时 + LLM 发展建议空回复兜底） |
 | [reports/templates/report.html](backend/app/reports/templates/report.html) | MHT 报告 HTML 模板 |
 | [scales/](backend/app/scales/) | 量表库：PHQ-A / SCARED / SDQ / MHT |
 | [db.py](backend/app/db.py) | SQLAlchemy engine + Base |
@@ -257,11 +258,13 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 
 | 路径 | 作用 |
 |---|---|
-| [App.tsx](frontend/src/App.tsx) | React Router 入口 |
-| [api.ts](frontend/src/api.ts) | fetch 封装（含 apiPostForm/apiPostBlob） |
-| [pages/ChatPage.tsx](frontend/src/pages/ChatPage.tsx) | 对话页（含 🎤 录音 + 🔊 朗读 + 人格切换） |
-| [pages/ScalePage.tsx](frontend/src/pages/ScalePage.tsx) | 量表选择（PHQ-A/SCARED/SDQ/MHT） |
-| [pages/HistoryPage.tsx](frontend/src/pages/HistoryPage.tsx) | 历史报告列表 + PDF 下载 |
+| [App.tsx](frontend/src/App.tsx) | React Router 入口（学生端 + /admin 教师端；导航按 role 显隐「管理后台」） |
+| [api.ts](frontend/src/api.ts) | fetch 封装（含 SSE streamChat / apiGetBlob / clearToken 清全部用户态 localStorage） |
+| [pages/ChatPage.tsx](frontend/src/pages/ChatPage.tsx) | 对话页（SSE 流式 + 🎤 录音 + 🔊 朗读 + 人格切换 + 全宽布局） |
+| [pages/ScaleSelectPage.tsx](frontend/src/pages/ScaleSelectPage.tsx) | 量表选择页（/scale 入口，四量表卡片） |
+| [pages/ScalePage.tsx](frontend/src/pages/ScalePage.tsx) | 测评页（/scales/:scaleId 单量表每次新建独立 session；/scale/combined 合并双量表） |
+| [pages/HistoryPage.tsx](frontend/src/pages/HistoryPage.tsx) | 历史报告列表 + 详情弹窗 + PDF 真实下载（blob + `<a download>`，非新标签预览） |
+| [pages/HomePage.tsx](frontend/src/pages/HomePage.tsx) | 首页（三步引导卡 + 进度指示 + 动态 CTA） |
 | [pages/ScreeningPage.tsx](frontend/src/pages/ScreeningPage.tsx) | 学生筛查入口 |
 | [pages/admin/](frontend/src/pages/admin/) | 管理后台三页（登录/批次列表/批次详情） |
 | [lib/recorder.ts](frontend/src/lib/recorder.ts) | D3：浏览器 WAV 录音器（16kHz PCM） |
@@ -345,6 +348,15 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
   - 187 passed / 1 skipped（+6 流式单测 test_api_chat_stream.py）
 - **模型替换**（2026-09-02，qwen-plus 无额度）：triage→`qwen3.8-27b`、dialog_stream→`qwen3.8-max`，均经 `llm.py._extra_body_for` 关 `enable_thinking=False`（qwen3.8-2.4t-a95b 不可关，max/27b 可关）。实测首 token **1.75s**、triage 准确率 9/9（无退化）、187 passed。NFR-5 仍达标
 
+### 测评纠偏与前端体验批次 ✅（2026-09-02 ~ 09-05，commit `b43994e`）
+
+- **一量表一报告纠偏**：单量表路由每次新建独立 session 只挂一条 assessment（禁止跨量表复用）；合并双量表（PHQ-A+SCARED）一个 session 挂两条。根因修复跨用户串号 + 多量表报告内容重复两 bug 同源问题——`clearToken` 漏清 `psycheflow_active_session_id`/`chat_session_id`，用户 B 复用 A 的 session 导致报告显示 A 的姓名、单量表累积历史量表。对话用独立 chat session key 与测评 session 解耦
+- **报告增强**（[reports/service.py](backend/app/reports/service.py)）：`_compute_subdims` 扩展支持 SDQ（5 因子，7/11/14/21/25 反向计分，亲社会行为维度用 1-pct 反转映射）与 MHT（8 因子，冲动倾向含 85/97 自杀相关条目仅展示维度分、危机走顶部 crisis_message）；雷达图对 3+ 子维度量表启用；SCALE_INTRO 补 SDQ/MHT 测评工具介绍；测评用时 = session.created_at 与最新 assessment.created_at 差值（X分Y秒）；报告个人信息（姓名/性别/年龄/学号/年级）从 `session.account.profile` 真实读取
+- **前端体验**：App.tsx 导航加「测评/历史」链接 + role 显隐管理后台（AuthResp 新增 role 字段）；HomePage 三步引导卡 + 动态 CTA；ChatPage 空状态推荐话题 + 全宽布局滚动；对话知识卡片默认折叠、LLM 不复述知识库原文；SCARED 每题选项框按本量表 optionKeys 渲染（修复错用 PHQ-A 4 选项导致空白）；SDQ/MHT 去重复标题（showHeader 参数）；MHT 26/28 题保持原表述
+- **PDF 下载交互分化**：ScalePage「生成 PDF 报告」= 新标签页预览（window.open('') + blob location.href，同步开空标签避弹窗拦截）；HistoryPage「下载 PDF」= **真实磁盘下载**（apiGetBlob + 动态 `<a download>` 程序化点击，2026-09-05 修复——blob 新标签页会被 Chrome 内置 PDF 查看器内联打开成"预览"，且带 `downloadingId` 生成中状态）
+- **测试修正**：[test_auth.py](backend/tests/test_auth.py) `test_bearer_token_links_session_to_account` 过期——list_sessions 已改为只返回有测评记录的 session（排除纯对话），测试补挂一条全 0 PHQ-A 后通过
+- **验证**：`tsc --noEmit` 0 错误；pytest **199 passed / 1 skipped / 0 failed**（工作区实测 2026-09-05）
+
 ---
 
 ## 8. 待做事项（五期优化）
@@ -389,6 +401,7 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 ## 9. Git 提交历史
 
 ```
+b43994e feat: 测评纠偏与前端体验批次 — 一量表一报告 + 报告增强 + PDF 下载交互分化
 c529bb9 feat: 生产验收/打包交付 — E2E 7/7 验收脚本 + prod compose 复检 + DEPLOY.md 部署文档
 dd30704 feat: Ollama 升级为整机共享独立容器 — 模型库迁 E:\OllamaModels + Open WebUI 图形界面（多项目复用）
 90afc1b feat: Ollama 真实联调 — Docker ollama 服务 + RTX 4060 GPU 直通，qwen2.5:7b 导入，E2E 兜底验证通过
@@ -421,7 +434,7 @@ dd853fb B 二期：LangGraph 四智能体编排 + RAG .md 修复 + ChatPage 阶�
 
 - [ ] `docker ps` 显示 3 容器 Up（psycheflow-backend / psycheflow-frontend / psycheflow-chroma）
 - [ ] 重建 RAG 索引：`docker exec psycheflow-backend uv run python -c "import asyncio; from app.rag.service import rag_service; print(asyncio.run(rag_service.build_index()))"` 输出 `{'indexed': 183, ...}`
-- [ ] 跑测试：`docker exec psycheflow-backend uv run pytest -q --no-header` → 189 passed / 1 skipped / 0 failed
+- [ ] 跑测试：`docker exec psycheflow-backend uv run pytest -q --no-header` → 199 passed / 1 skipped / 0 failed
 - [ ] 遗留项验证：`docker exec psycheflow-backend uv run python scripts/verify_leftovers.py` → has_assessment PASS + triage 9/9
 - [ ] **SSE 首 token 验证（NFR-5）**：`docker exec psycheflow-backend uv run python scripts/sse_first_token.py` → 首 token < 2s（实测 1.75s，triage=qwen3.8-27b/dialog_stream=qwen3.8-max 关思考链），事件序列 agent(triage)→agent(assessment)→agent(intervention)→sources→token×N→done
 - [ ] **SSE 危机验证**：`docker exec psycheflow-backend uv run python scripts/sse_first_token.py --message "我想自杀"` → 首 token N/A（危机不流式），crisis 事件含 12355
