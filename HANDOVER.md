@@ -1,8 +1,8 @@
 # PsycheFlow 项目交接文档
 
 > 最后更新：2026-09-05
-> 当前 commit：`9c49626`（feat: LLM 输出评估体系 — triage 评测 97.7% + 报告合规评测 100% + README 指标表）
-> 阶段：D 四期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标）+ Ollama 本地兜底 + 生产验收/打包交付 + 测评纠偏与前端体验批次 + 文档同步 + 试点合规材料 + 路由重构与三态门户 + 前端视觉丰富 + GitHub CI（全绿）+ LLM 输出评估体系（五期待办仅剩 #5 多 Provider（待注册硅基流动）与 #6 多租户；真实用户试点待部署决策）
+> 当前 commit：`11ffa38`（feat: README 开源级打磨 — Mermaid 架构图 + 8 张页面截图 + 可复现截图脚本）
+> 阶段：D 四期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标）+ Ollama 本地兜底 + 生产验收/打包交付 + 测评纠偏与前端体验批次 + 文档同步 + 试点合规材料 + 路由重构与三态门户 + 前端视觉丰富 + GitHub CI（全绿）+ LLM 输出评估体系 + README 开源级打磨（求职三步 P1/P2/P3 完成；真实用户试点待部署决策）
 
 ---
 
@@ -388,6 +388,15 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 - **README 指标表**：新增「质量与性能指标」章节（eval 数字 + 首 token 1.72s + QPS 361 + 测试/验收 + CI 徽章）
 - **验证**：CI 全绿（https://github.com/Gunaie/PsycheFlow/actions）；容器内实测 RAG 集成测试 skip 行为正常
 
+### README 开源级打磨批次 ✅（2026-09-05，commit `11ffa38`）
+
+- **Mermaid 系统架构图**（README）：客户端三角色 → Nginx → 三态门户 → FastAPI（API/多智能体链/危机前置层/RAG/报告引擎）→ LLM 三级降级链（百炼→Ollama→硬编码话术）→ 数据层（SQLite 0600/Chroma/危机留痕）
+- **8 张核心页面截图**（[docs/screenshots/](docs/screenshots/)）：门户/学生首页/量表选择/作答/对话（人设+四阶段条+吉祥物）/历史/教师批次列表/批次详情（统计卡+进度条+危机红名单含触发词+严重度分布+班级进度）
+- **可复现截图脚本**（[backend/scripts/screenshots.py](backend/scripts/screenshots.py)）：PEP 723 内联依赖（playwright+httpx，不污染项目 deps）；API 造数（演示教师+5 人批次完成 4 份其中 1-2 份触发危机+演示学生+已提交 PHQ-A）→ Playwright 按三角色截 8 图到 docs/screenshots/
+  - 运行前置：`$env:PLAYWRIGHT_BROWSERS_PATH='C:\Users\gunaie\.cache\ms-playwright'`（Trae 沙箱禁写默认 `%LOCALAPPDATA%\ms-playwright`）+ `PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright`（国内镜像，否则下载 130MB 极慢）
+  - 已知小瑕疵：作答页脚本点击选项未生效（进度 0/9，截图仍可展示界面）；首页欢迎语显示账号 label 而非昵称（真实系统行为）
+- **验证**：8 图逐一目检通过；README 嵌入「界面速览」表格
+
 ---
 
 ## 8. 待做事项（五期优化）
@@ -432,6 +441,7 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 ## 9. Git 提交历史
 
 ```
+11ffa38 feat: README 开源级打磨（P3）— Mermaid 系统架构图 + 8 张核心页面截图 + 可复现截图脚本
 9c49626 feat: LLM 输出评估体系（P2）— triage 评测 43 样本 97.7%（危机 8/8）+ 报告合规评测 76/76 100%，基线快照入库 + README 指标表
 d7d9418 fix(test): RAG 集成测试在无 DASHSCOPE_API_KEY 环境前置 skip — do_ingest 逐文件吞错导致 CI 误报断言失败
 83da14a ci: workflow 声明 issues:write 权限 — 失败排障 Issue 才能创建
