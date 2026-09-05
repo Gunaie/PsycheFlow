@@ -124,6 +124,28 @@ export async function apiPostBlob(path: string, body: unknown): Promise<Blob> {
   return r.blob()
 }
 
+export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
+  const r = await fetch(path, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify(body),
+  })
+  if (!r.ok) throw await toError(r)
+  return r.json() as Promise<T>
+}
+
+export async function apiDelete<T>(path: string): Promise<T> {
+  const r = await fetch(path, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  })
+  if (!r.ok) throw await toError(r)
+  return r.json() as Promise<T>
+}
+
 /** multipart 文件上传（语音转写等场景）。 */
 export async function apiPostForm<T>(path: string, form: FormData): Promise<T> {
   const r = await fetch(path, {

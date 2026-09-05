@@ -336,6 +336,63 @@ async def close_batch(
 
 
 # ---------------------------------------------------------------------------
+# 重新打开批次（与 close 对称：关闭后可再激活，筛查码恢复有效）
+# ---------------------------------------------------------------------------
+
+@router.post("/batches/{batch_id}/reopen")
+async def reopen_batch(
+    batch_id: str,
+    db: Session = Depends(get_db),
+    teacher: User = Depends(get_current_teacher),
+):
+    batch = _load_own_batch(db, teacher, batch_id)
+    if batch.status != "closed":
+        raise HTTPException(status_code=400, detail="批次当前非关闭状态，无需重新打开")
+    batch.status = "active"
+    db.commit()
+    return {"batch_id": batch.id, "status": "active"}
+
+
+# ---------------------------------------------------------------------------
+# 重命名批次（PATCH name）
+# ---------------------------------------------------------------------------
+
+class BatchUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+
+
+@router.patch("/batches/{batch_id}")
+async def update_batch(
+    batch_id: str,
+    req: BatchUpdate,
+    db: Session = Depends(get_db),
+    teacher: User = Depends(get_current_teacher),
+):
+    batch = _load_own_batch(db, teacher, batch_id)
+    batch.name = req.name.strip()
+    db.commit()
+    return {"batch_id": batch.id, "name": batch.name}
+
+
+# ---------------------------------------------------------------------------
+# 删除批次（级联删除学生条目；BatchEntry.session_id 为 SET NULL，
+# 学生已完成的测评 session 不会被删，但会脱离批次关联）
+# ---------------------------------------------------------------------------
+
+@router.delete("/batches/{batch_id}")
+async def delete_batch(
+    batch_id: str,
+    db: Session = Depends(get_db),
+    teacher: User = Depends(get_current_teacher),
+):
+    batch = _load_own_batch(db, teacher, batch_id)
+    entries_count = len(batch.entries)
+    db.delete(batch)  # cascade="all, delete-orphan" 自动删 entries
+    db.commit()
+    return {"batch_id": batch_id, "deleted_entries": entries_count}
+
+
+# ---------------------------------------------------------------------------
 # 批次汇总 CSV 导出
 # ---------------------------------------------------------------------------
 

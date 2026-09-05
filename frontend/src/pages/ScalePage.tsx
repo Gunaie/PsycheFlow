@@ -128,19 +128,26 @@ export default function ScalePage() {
   const hasCrisis = (result?.needs_crisis_escalation || combinedCrisis)
 
   // ========== 单量表 submit ==========
+  // 测评完成即存档：调 submit_assessment 端点计分 + 持久化 assessment，
+  // 不依赖后续"生成PDF报告"按钮（用户可能不点PDF，但测评记录应入历史）
   const submit = async () => {
     if (isCombined || !scaleId || !allAnswered) return
     setLoading(true); setError(null); setResult(null)
     try {
-      const res = await apiPost<ScoreResult>(`/api/scales/${scaleId}/score`, { answers })
+      let sid = sessionId
+      if (!sid) {
+        const s = await apiPost<{ session_id: string }>('/api/sessions', { label: '心理测评' })
+        sid = s.session_id
+        setSessionId(sid)
+      }
+      const res = await apiPost<ScoreResult>(`/api/sessions/${sid}/assessments`, { scale_id: scaleId, answers })
       setResult(res)
     } catch (e) { setError((e as Error).message) }
     finally { setLoading(false) }
   }
 
   // ========== 单量表 generateReport ==========
-  // 一量表一报告。使用开始答题时创建的 session（sessionId），使报告能正确计算测评用时。
-  // 若 sessionId 为 null（创建失败），兜底新建（此时用时可能为 0，属降级场景）
+  // assessment 已在 submit 时写入，此处仅按需生成 PDF（新标签页预览）
   const generateSingleReport = async () => {
     if (isCombined || !scaleId || !allAnswered) return
     setReportLoading(true); setError(null)
@@ -150,7 +157,6 @@ export default function ScalePage() {
         const s = await apiPost<{ session_id: string }>('/api/sessions', { label: '心理测评' })
         sid = s.session_id
       }
-      await apiPost(`/api/sessions/${sid}/assessments`, { scale_id: scaleId, answers })
       // 新标签页预览 PDF（先同步开空标签避开弹窗拦截，原页面定格不跳转）
       const win = window.open('', '_blank')
       if (!win) { setError('浏览器拦截了新窗口，请允许本站弹窗后重试'); return }
@@ -164,13 +170,21 @@ export default function ScalePage() {
     finally { setReportLoading(false) }
   }
 
-  // ========== 合并双量表 submit（仅计分并展示结果，与单量表统一） ==========
+  // ========== 合并双量表 submit（计分 + 持久化，与单量表统一） ==========
+  // 双量表：两条 assessment 挂同一 session（合并双量表的合法累积）
+  // 测评完成即存档，不依赖后续"生成PDF报告"按钮
   const submitCombined = async () => {
     if (!isCombined || !allAnswered) return
     setLoading(true); setError(null); setCombinedResults({})
     try {
-      const scoreJobs = COMBINED_SCALES.map(sid =>
-        apiPost<ScoreResult>(`/api/scales/${sid}/score`, { answers: combinedAnswers[sid] || {} })
+      let sid = combinedSessionId
+      if (!sid) {
+        const s = await apiPost<{ session_id: string }>('/api/sessions', { label: '心理测评' })
+        sid = s.session_id
+        setCombinedSessionId(sid)
+      }
+      const scoreJobs = COMBINED_SCALES.map(s2 =>
+        apiPost<ScoreResult>(`/api/sessions/${sid}/assessments`, { scale_id: s2, answers: combinedAnswers[s2] || {} })
       )
       const scores = await Promise.all(scoreJobs)
       const resMap: Record<string, ScoreResult> = {}
@@ -180,19 +194,15 @@ export default function ScalePage() {
     finally { setLoading(false) }
   }
 
-  // ========== 合并双量表 generateReport（结果已展示后，创建 assessment + 生成 PDF） ==========
+  // ========== 合并双量表 generateReport（assessment 已在 submitCombined 写入，仅生成 PDF） ==========
   const generateCombinedReport = async () => {
     if (!isCombined || !allAnswered) return
     setReportLoading(true); setError(null)
     try {
-      // 使用开始答题时创建的 session（合并双量表的合法累积：两条 assessment 挂同一 session）
       let sid = combinedSessionId
       if (!sid) {
         const s = await apiPost<{ session_id: string }>('/api/sessions', { label: '心理测评' })
         sid = s.session_id
-      }
-      for (const s of COMBINED_SCALES) {
-        await apiPost(`/api/sessions/${sid}/assessments`, { scale_id: s, answers: combinedAnswers[s] || {} })
       }
       // 新标签页预览 PDF（先同步开空标签避开弹窗拦截，原页面定格不跳转）
       const win = window.open('', '_blank')

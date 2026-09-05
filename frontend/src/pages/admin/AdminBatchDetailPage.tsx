@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { apiGet, apiGetBlob, apiPost } from '../../api';
+import { apiGet, apiGetBlob, apiPost, apiPatch, apiDelete } from '../../api';
 import AdminShell from './AdminShell';
 import BackLink from '../../components/BackLink';
 
@@ -97,6 +97,46 @@ export default function AdminBatchDetailPage() {
     }
   };
 
+  const reopenBatch = async () => {
+    if (!batchId || !confirm('重新打开后筛查码将恢复有效，确定重新打开该批次？')) return;
+    try {
+      await apiPost(`/api/admin/batches/${batchId}/reopen`, {});
+      fetchDetail();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const renameBatch = async () => {
+    if (!batchId || !detail) return;
+    const newName = window.prompt('请输入新的批次名称', detail.name);
+    if (!newName || !newName.trim() || newName.trim() === detail.name) return;
+    try {
+      await apiPatch(`/api/admin/batches/${batchId}`, { name: newName.trim() });
+      fetchDetail();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const deleteBatch = async () => {
+    if (!batchId || !detail) return;
+    const msg =
+      `确定删除批次「${detail.name}」？\n\n` +
+      `将一并删除 ${detail.total} 名学生条目记录。` +
+      (detail.completed > 0
+        ? `\n其中 ${detail.completed} 人已完成测评，其测评数据不会被删除，但会脱离本批次关联。`
+        : '') +
+      '\n\n此操作不可撤销！';
+    if (!confirm(msg)) return;
+    try {
+      await apiDelete(`/api/admin/batches/${batchId}`);
+      navigate('/admin');
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
   const exportCsv = async () => {
     if (!batchId) return;
     try {
@@ -156,14 +196,33 @@ export default function AdminBatchDetailPage() {
           >
             导出汇总 CSV
           </button>
-          {detail.status === 'active' && (
+          <button
+            onClick={renameBatch}
+            className="rounded-full border border-white/30 bg-white/5 px-3.5 py-1.5 text-xs text-white/80 backdrop-blur-sm hover:bg-white/15 hover:text-white hover:border-white/50 transition cursor-pointer"
+          >
+            重命名
+          </button>
+          {detail.status === 'active' ? (
             <button
               onClick={closeBatch}
               className="rounded-full bg-red-500/80 px-3.5 py-1.5 text-xs text-white hover:bg-red-500 transition cursor-pointer"
             >
               关闭批次
             </button>
+          ) : (
+            <button
+              onClick={reopenBatch}
+              className="rounded-full bg-emerald-500/80 px-3.5 py-1.5 text-xs text-white hover:bg-emerald-500 transition cursor-pointer"
+            >
+              重新打开
+            </button>
           )}
+          <button
+            onClick={deleteBatch}
+            className="rounded-full bg-red-600 px-3.5 py-1.5 text-xs text-white hover:bg-red-700 transition cursor-pointer"
+          >
+            删除批次
+          </button>
         </>
       }
     >

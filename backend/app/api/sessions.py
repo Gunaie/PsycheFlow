@@ -248,6 +248,11 @@ async def get_session_detail(
             "scale_id": a.scale_id,
             "scale_name": a.scale_name,
             "score": a.total_score,
+            "max_score": (
+                getattr(SCALES_REGISTRY[a.scale_id], 'max_score', 0)
+                if a.scale_id in SCALES_REGISTRY
+                else 0
+            ),
             "severity": a.severity,
             "crisis_level": a.crisis_level,
             "crisis_triggers": a.crisis_triggers,

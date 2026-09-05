@@ -322,6 +322,57 @@ class TestBatchManage:
         assert r.headers["content-type"] == "application/pdf"
         assert r.content.startswith(b"%PDF")
 
+    def test_rename_batch(self, client):
+        t, batch = self._make_batch(client, "teacher1", n=1)
+        bid = batch["batch_id"]
+
+        r = client.patch(f"/api/admin/batches/{bid}", headers=_auth(t["token"]),
+                         json={"name": "新批次名"})
+        assert r.status_code == 200
+        assert r.json()["name"] == "新批次名"
+
+        detail = client.get(f"/api/admin/batches/{bid}", headers=_auth(t["token"])).json()
+        assert detail["name"] == "新批次名"
+
+        # 空名 → 422
+        assert client.patch(f"/api/admin/batches/{bid}", headers=_auth(t["token"]),
+                            json={"name": ""}).status_code == 422
+
+    def test_reopen_batch(self, client):
+        t, batch = self._make_batch(client, "teacher1", n=1)
+        bid = batch["batch_id"]
+
+        client.post(f"/api/admin/batches/{bid}/close", headers=_auth(t["token"]))
+        r = client.post(f"/api/admin/batches/{bid}/reopen", headers=_auth(t["token"]))
+        assert r.status_code == 200
+        assert r.json()["status"] == "active"
+
+        # active 状态再 reopen → 400
+        assert client.post(f"/api/admin/batches/{bid}/reopen",
+                           headers=_auth(t["token"])).status_code == 400
+
+    def test_delete_batch(self, client):
+        t, batch = self._make_batch(client, "teacher1", n=2)
+        bid = batch["batch_id"]
+
+        r = client.delete(f"/api/admin/batches/{bid}", headers=_auth(t["token"]))
+        assert r.status_code == 200
+        assert r.json()["deleted_entries"] == 2
+
+        # 列表不再有
+        items = client.get("/api/admin/batches", headers=_auth(t["token"])).json()["items"]
+        assert all(it["batch_id"] != bid for it in items)
+
+        # 详情 404
+        assert client.get(f"/api/admin/batches/{bid}",
+                          headers=_auth(t["token"])).status_code == 404
+
+        # 他人删除 → 404（不泄露存在性）
+        t2, batch2 = self._make_batch(client, "teacher2", n=1)
+        t_other, _ = self._make_batch(client, "teacher3", n=1)
+        assert client.delete(f"/api/admin/batches/{batch2['batch_id']}",
+                             headers=_auth(t_other["token"])).status_code == 404
+
 
 # ---------------------------------------------------------------------------
 # 旧库迁移：users.password_hash 列补齐

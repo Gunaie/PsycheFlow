@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { apiGet, apiPost, getToken } from '../../api';
+import { apiGet, apiPost, apiPatch, apiDelete, getToken } from '../../api';
 import AdminShell from './AdminShell';
 
 interface BatchItem {
@@ -137,6 +137,35 @@ export default function AdminBatchesPage() {
     }
   };
 
+  const renameBatch = async (b: BatchItem) => {
+    const newName = window.prompt('请输入新的批次名称', b.name);
+    if (!newName || !newName.trim() || newName.trim() === b.name) return;
+    try {
+      await apiPatch(`/api/admin/batches/${b.batch_id}`, { name: newName.trim() });
+      fetchBatches();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const deleteBatch = async (b: BatchItem) => {
+    const msg =
+      `确定删除批次「${b.name}」？\n\n` +
+      `将一并删除 ${b.total} 名学生条目记录。` +
+      (b.completed > 0
+        ? `\n其中 ${b.completed} 人已完成测评，其测评数据不会被删除，但会脱离本批次关联。`
+        : '') +
+      '\n\n此操作不可撤销！';
+    if (!window.confirm(msg)) return;
+    try {
+      await apiDelete(`/api/admin/batches/${b.batch_id}`);
+      if (created?.batch_id === b.batch_id) setCreated(null);
+      fetchBatches();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
   return (
     <AdminShell
       title="筛查批次管理"
@@ -262,20 +291,24 @@ export default function AdminBatchesPage() {
         {/* 批次列表 */}
         {loading ? (
           <p className="text-center text-slate-500 py-10">加载中...</p>
-        ) : batches.length === 0 ? (
+        ) : batches.length === 0 && !showCreate ? (
           <div className="mt-16 text-center">
             <p className="text-slate-700 text-lg font-semibold mb-2">暂无筛查批次</p>
             <p className="text-slate-500 mb-6">点击右上角「创建批次」开始第一次批量筛查</p>
+          </div>
+        ) : batches.length === 0 ? (
+          <div className="mt-8 text-center text-sm text-slate-400">
+            填写上方表单后点击「创建批次并生成筛查码」
           </div>
         ) : (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {batches.map((b) => {
               const pct = b.total > 0 ? Math.round((b.completed / b.total) * 100) : 0;
               return (
-                <button
+                <div
                   key={b.batch_id}
                   onClick={() => navigate(`/admin/batches/${b.batch_id}`)}
-                  className="text-left bg-white rounded-lg border border-slate-200 p-4 shadow-sm hover:shadow-md hover:border-[#1e3a5f]/40 transition"
+                  className="text-left bg-white rounded-lg border border-slate-200 p-4 shadow-sm hover:shadow-md hover:border-[#1e3a5f]/40 transition cursor-pointer"
                 >
                   <div className="flex justify-between items-start mb-2">
                     <h3 className="font-bold text-slate-800">{b.name}</h3>
@@ -294,10 +327,25 @@ export default function AdminBatchesPage() {
                     <span>完成 {b.completed}/{b.total}</span>
                     <span>{pct}%</span>
                   </div>
-                  <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+                  <div className="h-2 rounded-full bg-slate-100 overflow-hidden mb-3">
                     <div className="h-full bg-[#1e3a5f]" style={{ width: `${pct}%` }} />
                   </div>
-                </button>
+                  {/* 操作按钮：阻止冒泡，避免触发卡片跳转 */}
+                  <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      onClick={() => renameBatch(b)}
+                      className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 font-medium hover:bg-slate-50 transition"
+                    >
+                      ✎ 重命名
+                    </button>
+                    <button
+                      onClick={() => deleteBatch(b)}
+                      className="flex-1 rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs text-red-600 font-medium hover:bg-red-50 transition"
+                    >
+                      🗑 删除
+                    </button>
+                  </div>
+                </div>
               );
             })}
           </div>

@@ -51,7 +51,11 @@ const SEV_CN: Record<string, string> = {
 
 function formatDate(iso: string): string {
   try {
-    const d = new Date(iso)
+    // 后端 created_at 用 datetime.utcnow 存储但 isoformat() 不带时区标记，
+    // 浏览器 new Date() 会把无时区字符串当本地时间，导致显示比真实本地时间差 8 小时。
+    // 这里显式按 UTC 解析（无时区标记则补 'Z'），由 Date 自动转本地时区显示。
+    const normalized = /Z$|[+-]\d{2}:\d{2}$/.test(iso) ? iso : iso + 'Z'
+    const d = new Date(normalized)
     const pad = (n: number) => String(n).padStart(2, '0')
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
   } catch {
@@ -61,7 +65,8 @@ function formatDate(iso: string): string {
 
 function formatTime(iso: string): string {
   try {
-    const d = new Date(iso)
+    const normalized = /Z$|[+-]\d{2}:\d{2}$/.test(iso) ? iso : iso + 'Z'
+    const d = new Date(normalized)
     const pad = (n: number) => String(n).padStart(2, '0')
     return `${pad(d.getHours())}:${pad(d.getMinutes())}`
   } catch {
@@ -77,6 +82,7 @@ export default function HistoryPage() {
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [detailItem, setDetailItem] = useState<SessionItem | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
   const [showAnswers, setShowAnswers] = useState<Record<string, boolean>>({})
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
 
@@ -126,7 +132,19 @@ export default function HistoryPage() {
     }
   }
 
-  const viewDetail = (item: SessionItem) => setDetailItem(item)
+  // 查看详情：列表精简数据先快速弹窗，异步拉取详情接口补全 interpretation/answers/crisis 等字段
+  const viewDetail = async (item: SessionItem) => {
+    setDetailItem(item)
+    setDetailLoading(true)
+    try {
+      const full = await apiGet<SessionItem>(`/api/sessions/${item.session_id}`)
+      setDetailItem(full)
+    } catch {
+      // 失败时保留列表精简数据，不阻断查看
+    } finally {
+      setDetailLoading(false)
+    }
+  }
   const close = () => { setDetailItem(null); setShowAnswers({}) }
 
   return (
@@ -287,6 +305,11 @@ export default function HistoryPage() {
             </div>
 
             <div className="space-y-4">
+              {detailLoading && (
+                <div className="text-center text-sm text-slate-400 py-2">
+                  报告内容加载中…
+                </div>
+              )}
               {detailItem.assessments.map((a) => {
                 const key = `answers-${detailItem.session_id}-${a.scale_id}`
                 const open = showAnswers[key]

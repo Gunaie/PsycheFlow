@@ -435,7 +435,7 @@ async def _build_narrative(assessments: list, all_dims: list) -> str:
         return result
     except Exception:
         return (
-            "## 发展建议（通用兜底）\n\n"
+            "## 发展建议\n\n"
             "### 一、家庭端\n\n"
             "1. **倾听与陪伴优先**：请家长以非评判性的语气先承接情绪，避免立刻劝慰、"
             "评判或讲道理；每天留出 10-15 分钟「无手机一对一时间」，让孩子感受到被看见。\n"
