@@ -26,6 +26,21 @@
 - **报告 PDF**：WeasyPrint + Jinja2
 - **部署**：Docker Compose（chroma + backend + frontend；prod 叠加非 root + 4 worker + nginx TLS）
 
+## 质量与性能指标
+
+> 由 `backend/scripts/eval_triage.py` / `eval_report.py` / `perf_bench.py` / `e2e_acceptance.py` 实测产出，基线快照见 `backend/scripts/eval/results/`。
+
+| 维度 | 指标 | 数值 |
+|---|---|---|
+| **LLM 输出评估** | Triage 意图分诊准确率（43 条标注样本，qwen3.8-27b） | **97.7%**（42/43） |
+| | └ 危机类命中（硬编码词表，安全回归） | **100%**（8/8） |
+| | 报告结构合规率（5 场景 × 15 项断言，deepseek-v4-flash） | **100%**（76/76） |
+| **性能（NFR）** | SSE 对话首 token 延迟（P12 思考链优化后） | **1.72s**（目标 < 2s） |
+| | `/api/health` 50 并发 | QPS 361，P95 128ms |
+| **测试** | 后端 pytest | 199 passed / 1 skipped |
+| | 端到端验收（登录→对话→危机→报告→审计） | **7/7 PASS** |
+| **CI** | GitHub Actions（pytest + 前端构建 + 镜像构建） | ![CI](https://github.com/Gunaie/PsycheFlow/actions/workflows/ci.yml/badge.svg) |
+
 ## 快速开始
 
 ### 1. 配置密钥

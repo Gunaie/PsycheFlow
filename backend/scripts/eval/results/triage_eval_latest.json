@@ -1,0 +1,40 @@
+{
+  "timestamp": "2026-09-05 05:45:14",
+  "model": "qwen3.8-27b",
+  "dataset": "triage_dataset.json",
+  "total": 43,
+  "correct": 42,
+  "accuracy": 0.9767,
+  "per_intent": {
+    "危机": {
+      "total": 8,
+      "correct": 8,
+      "accuracy": 1.0
+    },
+    "求助": {
+      "total": 11,
+      "correct": 11,
+      "accuracy": 1.0
+    },
+    "倾诉": {
+      "total": 12,
+      "correct": 12,
+      "accuracy": 1.0
+    },
+    "咨询": {
+      "total": 12,
+      "correct": 11,
+      "accuracy": 0.9167
+    }
+  },
+  "failures": [
+    {
+      "index": 40,
+      "note": "边界·被安排来聊",
+      "expected": "咨询",
+      "got": "求助",
+      "message": "我妈让我来咨询，我觉得我没病，来都来了，你这里都能做什么"
+    }
+  ],
+  "elapsed_sec": 17.7
+}
