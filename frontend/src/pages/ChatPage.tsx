@@ -330,7 +330,18 @@ export default function ChatPage() {
         <div className="flex-1 space-y-3 p-4 overflow-y-auto min-h-0">
           {turns.length === 0 && !loading && (
             <div className="flex flex-col items-center gap-4 py-10">
-              <div className="text-4xl">💬</div>
+              <img
+                src="/images/chat-empty.png"
+                alt="AI 陪伴助手插画"
+                className="w-36 h-36 rounded-2xl object-cover"
+                onError={e => {
+                  const el = e.currentTarget
+                  el.style.display = 'none'
+                  const fb = el.nextElementSibling as HTMLElement | null
+                  if (fb) fb.classList.remove('hidden')
+                }}
+              />
+              <div className="text-4xl hidden">💬</div>
               <p className="text-sm text-slate-500 text-center max-w-md">
                 您好！我是 PsycheFlow 陪伴助手。您可以和我聊聊最近的状况，
                 或者点击下方话题快速开始：
