@@ -41,6 +41,68 @@
 | | 端到端验收（登录→对话→危机→报告→审计） | **7/7 PASS** |
 | **CI** | GitHub Actions（pytest + 前端构建 + 镜像构建） | ![CI](https://github.com/Gunaie/PsycheFlow/actions/workflows/ci.yml/badge.svg) |
 
+## 系统架构
+
+```mermaid
+flowchart TB
+    subgraph clients["客户端"]
+        STU["🎓 学生端<br/>测评 / 对话 / 历史"]
+        TEA["🏫 教师端<br/>批次筛查管理"]
+        VIS["👤 匿名用户<br/>凭码作答"]
+    end
+
+    NGINX["Nginx<br/>TLS · HSTS · CSP · 静态资源"]
+
+    subgraph fe["前端（React 18 + TypeScript + Vite）"]
+        PORTAL["三态门户路由<br/>学生/教师双端零交叉隔离"]
+    end
+
+    subgraph be["后端（FastAPI + LangGraph，uv 容器化）"]
+        API["REST API<br/>auth · scales · sessions · admin · screening"]
+        AGENT["多智能体对话链<br/>Triage → Assessment → Intervention（SSE 流式）"]
+        CRISIS["危机检测前置层<br/>硬编码词表 · 零 LLM · 12355 + 审计双写"]
+        RAG["RAG 检索"]
+        REPORT["报告引擎<br/>计分引擎 → LLM 叙事 → WeasyPrint PDF"]
+    end
+
+    subgraph llm["LLM 层（三级降级链）"]
+        CLOUD["云端：阿里云百炼<br/>8 模型按角色分配"]
+        LOCAL["本地：Ollama<br/>GPU 直通 qwen2.5:7b"]
+        FALLBACK["节点级硬编码话术"]
+    end
+
+    subgraph store["数据层"]
+        DB[("SQLite<br/>文件权限 0600")]
+        CHROMA[("ChromaDB<br/>知识向量库")]
+        AUDIT[("危机留痕<br/>crisis_*.json + AuditLog")]
+    end
+
+    STU & TEA & VIS --> NGINX --> PORTAL --> API
+    API --> AGENT
+    AGENT --> CRISIS
+    AGENT --> RAG --> CHROMA
+    API --> REPORT
+    AGENT --> CLOUD
+    CLOUD -. 异常/空回复 .-> LOCAL
+    LOCAL -. 未配置/失败 .-> FALLBACK
+    API --> DB
+    CRISIS --> AUDIT
+```
+
+## 界面速览
+
+| 门户 | 学生首页 |
+|---|---|
+| ![门户](docs/screenshots/01-portal.png) | ![学生首页](docs/screenshots/02-home.png) |
+| **量表选择** | **量表作答** |
+| ![量表选择](docs/screenshots/03-scale-select.png) | ![量表作答](docs/screenshots/04-assessment.png) |
+| **AI 陪伴对话（人设 + 四阶段流程）** | **历史报告** |
+| ![对话](docs/screenshots/05-chat.png) | ![历史报告](docs/screenshots/06-history.png) |
+| **教师端·批次列表** | **教师端·批次详情（危机名单 + 严重度分布）** |
+| ![批次列表](docs/screenshots/07-admin-batches.png) | ![批次详情](docs/screenshots/08-admin-batch-detail.png) |
+
+> 截图由 [backend/scripts/screenshots.py](backend/scripts/screenshots.py) 一键生成（自动造演示数据：批次、测评记录、危机名单），可复现。
+
 ## 快速开始
 
 ### 1. 配置密钥
