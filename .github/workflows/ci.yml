@@ -8,6 +8,11 @@ on:
     branches: [main]
   pull_request:
 
+# 失败排障 Issue 需要写权限（新仓库默认只读）
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   backend-test:
     name: Backend pytest (3.11)
