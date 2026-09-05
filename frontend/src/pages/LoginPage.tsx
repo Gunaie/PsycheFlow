@@ -8,11 +8,13 @@ type TabKey = 'token' | 'label';
 interface LoginTokenResponse {
   token: string;
   label: string;
+  role: string;
 }
 
 interface LoginLabelResponse {
   token: string;
   label: string;
+  role: string;
 }
 
 export default function LoginPage() {
@@ -31,7 +33,7 @@ export default function LoginPage() {
       const res = await apiPost<LoginTokenResponse>('/api/auth/login_by_token', {
         token: tokenInput.trim(),
       });
-      setToken(res.token, res.label);
+      setToken(res.token, res.label, res.role);
       navigate('/');
     } catch (e) {
       setError((e as Error).message);
@@ -48,7 +50,7 @@ export default function LoginPage() {
       const res = await apiPost<LoginLabelResponse>('/api/auth/login_by_label', {
         label: labelInput.trim(),
       });
-      setToken(res.token, res.label);
+      setToken(res.token, res.label, res.role);
       navigate('/');
     } catch (e) {
       setError((e as Error).message);

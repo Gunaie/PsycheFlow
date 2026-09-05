@@ -62,8 +62,15 @@ async def _dashscope_generate(payload: dict) -> dict:
         logger.warning("voice: ASR transport failed: %s", e)
         raise VoiceError(f"语音识别服务调用失败：{type(e).__name__}") from e
     if resp.status_code != 200:
-        logger.warning("voice: ASR http %s: %s", resp.status_code, resp.text[:200])
-        raise VoiceError(f"语音识别服务返回 {resp.status_code}")
+        # 尝试提取 DashScope 实际错误信息，方便定位（如模型未开通、额度耗尽等）
+        detail = ""
+        try:
+            err_body = resp.json()
+            detail = err_body.get("message") or err_body.get("errors") or ""
+        except Exception:
+            detail = resp.text[:300]
+        logger.warning("voice: ASR http %s: %s", resp.status_code, detail)
+        raise VoiceError(f"语音识别服务返回 {resp.status_code}：{detail}")
     return resp.json()
 
 

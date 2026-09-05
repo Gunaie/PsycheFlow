@@ -162,10 +162,12 @@ async def list_sessions(
         page_size = min(page_size, 50)
 
     # 基础查询：倒序 + eager load assessments
+    # 只返回有 assessment 记录的 session（排除纯对话 session，避免混入测评历史）
     stmt = (
         select(SessionModel)
         .order_by(desc(SessionModel.created_at))
         .options(selectinload(SessionModel.assessments))
+        .where(SessionModel.assessments.any())
     )
 
     # 权限过滤

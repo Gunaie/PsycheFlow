@@ -25,6 +25,7 @@ interface StudentProfile {
 interface RegisterResponse {
   token: string;
   label: string;
+  role: string;
 }
 
 export default function RegisterPage() {
@@ -101,7 +102,7 @@ export default function RegisterPage() {
 
   const handleGoScale = () => {
     if (!result) return;
-    setToken(result.token, result.label);
+    setToken(result.token, result.label, result.role);
     navigate('/scale');
   };
 

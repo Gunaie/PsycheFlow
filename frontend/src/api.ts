@@ -2,19 +2,42 @@
 
 const TOKEN_KEY = 'psycheflow_token';
 const LABEL_KEY = 'psycheflow_label';
+const ROLE_KEY = 'psycheflow_role';
+// 对话专用 session（与测评 session 解耦：测评每次新建不持久化，对话跨刷新保留连续性）
+const CHAT_SESSION_KEY = 'psycheflow_chat_session_id';
+// 兼容旧逻辑：活跃测评 session id（纠偏后不再写入，仅保留清理用）
+const ACTIVE_SESSION_KEY = 'psycheflow_active_session_id';
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
 
-export function setToken(token: string, label?: string): void {
+export function setToken(token: string, label?: string, role?: string): void {
   localStorage.setItem(TOKEN_KEY, token);
   if (label) localStorage.setItem(LABEL_KEY, label);
+  if (role) localStorage.setItem(ROLE_KEY, role);
 }
 
 export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(LABEL_KEY);
+  localStorage.removeItem(ROLE_KEY);
+  // 退出登录时一并清掉 session 残留，避免跨用户串号
+  localStorage.removeItem(ACTIVE_SESSION_KEY);
+  localStorage.removeItem(CHAT_SESSION_KEY);
+}
+
+// —— 对话 session（独立于测评，退出即清） ——
+export function getChatSessionId(): string | null {
+  return localStorage.getItem(CHAT_SESSION_KEY);
+}
+
+export function setChatSessionId(sid: string): void {
+  localStorage.setItem(CHAT_SESSION_KEY, sid);
+}
+
+export function getRole(): string | null {
+  return localStorage.getItem(ROLE_KEY);
 }
 
 export function getLabel(): string | null {

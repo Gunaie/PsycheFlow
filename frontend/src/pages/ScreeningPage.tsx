@@ -89,12 +89,6 @@ export default function ScreeningPage() {
     }
   }
 
-  const optionKeys = useMemo(() => {
-    const sample = Object.values(metas)[0]
-    if (!sample) return []
-    return Object.keys(sample.options).sort((a, b) => Number(a) - Number(b))
-  }, [metas])
-
   const hasCrisis = !!results && results.some((r) => r.needs_crisis_escalation)
   const totalItems = Object.values(metas).reduce((s, m) => s + m.items.length, 0)
 
@@ -188,6 +182,7 @@ export default function ScreeningPage() {
       {info.scale_ids.map((sid) => {
         const m = metas[sid]
         if (!m) return null
+        const localOptionKeys = Object.keys(m.options).sort((a, b) => Number(a) - Number(b))
         return (
           <div key={sid} className="space-y-3">
             <h2 className="text-lg font-bold text-slate-800 mt-2">{m.scale_name}</h2>
@@ -199,7 +194,7 @@ export default function ScreeningPage() {
                   {item.text}
                 </div>
                 <div className="flex flex-wrap gap-2 mt-3">
-                  {optionKeys.map((k) => {
+                  {localOptionKeys.map((k) => {
                     const v = Number(k)
                     const active = (answers[sid] || {})[item.id] === v
                     return (

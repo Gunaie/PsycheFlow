@@ -61,6 +61,7 @@ class AuthResp(BaseModel):
     account_id: str
     token: str
     label: str
+    role: str = "student"
 
 
 class LoginByToken(BaseModel):
@@ -176,7 +177,7 @@ async def register(req: RegisterReq, db: Session = Depends(get_db)):
         raise HTTPException(status_code=409, detail="账号信息冲突，请重试")
     db.refresh(user)
 
-    return AuthResp(account_id=account_id, token=token, label=label)
+    return AuthResp(account_id=account_id, token=token, label=label, role=req.role)
 
 
 @router.post("/login_by_token", response_model=AuthResp)
@@ -185,7 +186,7 @@ async def login_by_token(req: LoginByToken, db: Session = Depends(get_db)):
     user = db.execute(stmt).scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="token 无效或不存在")
-    return AuthResp(account_id=user.id, token=user.token, label=user.label)
+    return AuthResp(account_id=user.id, token=user.token, label=user.label, role=user.role)
 
 
 @router.post("/login_by_label", response_model=AuthResp)
@@ -204,7 +205,7 @@ async def login_by_label(req: LoginByLabel, db: Session = Depends(get_db)):
             status_code=403,
             detail={"code": "teacher_requires_password", "reason": "教师账号须使用密码登录"},
         )
-    return AuthResp(account_id=user.id, token=user.token, label=user.label)
+    return AuthResp(account_id=user.id, token=user.token, label=user.label, role=user.role)
 
 
 @router.post("/login_by_password", response_model=AuthResp)
@@ -215,4 +216,4 @@ async def login_by_password(req: LoginByPassword, db: Session = Depends(get_db))
     ).scalar_one_or_none()
     if not user or not user.password_hash or not _verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="账号名或密码错误")
-    return AuthResp(account_id=user.id, token=user.token, label=user.label)
+    return AuthResp(account_id=user.id, token=user.token, label=user.label, role=user.role)

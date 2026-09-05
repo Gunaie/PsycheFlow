@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { apiGet, apiPostBlob, apiPostForm, streamChat } from '../api'
+import { apiGet, apiPost, apiPostBlob, apiPostForm, getChatSessionId, setChatSessionId, streamChat } from '../api'
 import { WavRecorder } from '../lib/recorder'
 import CrisisBanner from '../components/CrisisBanner'
 import FooterDisclaimer from '../components/FooterDisclaimer'
@@ -23,15 +23,6 @@ interface PersonaOption {
   description: string
 }
 
-interface ChatResponse {
-  reply: string
-  sources: SourceRef[]
-  crisis: boolean
-  current_agent?: string  // 新增可选字段（向后兼容）
-  agent_trace?: string[]   // 新增可选字段
-  persona_id?: string      // 实际生效的人格（未知 id 回退 default）
-}
-
 // 4 智能体阶段定义
 const AGENT_STAGES = [
   { key: 'triage', label: '分诊', color: 'bg-blue-500', lightColor: 'bg-blue-50 text-blue-700 border-blue-300' },
@@ -43,6 +34,16 @@ const AGENT_STAGES = [
 function getStageIndex(agent: string | undefined): number {
   if (!agent) return -1
   return AGENT_STAGES.findIndex(s => s.key === agent)
+}
+
+// 对话独立 session：不复用测评的 active_session_id（避免跨用户串号 + 测评/对话解耦）。
+// 首次 send 时若无 chat session 则创建一个（label="对话"），跨刷新保留连续性，退出登录即清。
+async function ensureChatSessionId(): Promise<string> {
+  const existing = getChatSessionId()
+  if (existing) return existing
+  const session = await apiPost<{ session_id: string }>('/api/sessions', { label: '对话' })
+  setChatSessionId(session.session_id)
+  return session.session_id
 }
 
 function StageStepper({ currentAgent, crisis }: { currentAgent: string | undefined; crisis: boolean }) {
@@ -115,6 +116,7 @@ export default function ChatPage() {
   const [recording, setRecording] = useState(false)
   const [transcribing, setTranscribing] = useState(false)
   const [speakingIdx, setSpeakingIdx] = useState<number | null>(null)
+  const [sourcesCollapsed, setSourcesCollapsed] = useState(true)
   const recorderRef = useRef<WavRecorder | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -129,8 +131,8 @@ export default function ChatPage() {
 
   const activePersona = personas.find(p => p.persona_id === personaId)
 
-  const send = async () => {
-    const msg = input.trim()
+  const send = async (overrideMsg?: string) => {
+    const msg = (overrideMsg ?? input).trim()
     if (!msg || loading) return
     setInput('')
     setLoading(true)
@@ -149,11 +151,13 @@ export default function ChatPage() {
     setTurns(newTurns)
 
     try {
+      // 对话用独立 chat session（与测评解耦），首次 send 时按需创建
+      const chatSid = await ensureChatSessionId()
       await streamChat(
         {
           message: msg,
           history: prevTurns, // 历史不含当前轮 user msg
-          session_id: localStorage.getItem('psycheflow_active_session_id') || null,
+          session_id: chatSid,
           persona_id: personaId,
         },
         (evt) => {
@@ -285,7 +289,7 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="space-y-3 flex flex-col h-[calc(100vh-160px)]">
+    <div className="space-y-2 flex flex-col h-[calc(100vh-56px)]">
       <div>
         <h1 className="text-xl font-bold text-slate-800">开放对话</h1>
         <p className="text-sm text-slate-500 mt-1">
@@ -322,11 +326,32 @@ export default function ChatPage() {
 
       {crisis && <CrisisBanner />}
 
-      <div className="flex-1 bg-white rounded-xl border border-slate-200 flex flex-col overflow-hidden">
-        <div className="flex-1 space-y-3 p-4 overflow-y-auto">
+      <div className="flex-1 bg-white rounded-xl border border-slate-200 flex flex-col overflow-hidden min-h-0">
+        <div className="flex-1 space-y-3 p-4 overflow-y-auto min-h-0">
           {turns.length === 0 && !loading && (
-            <div className="text-sm text-slate-400 text-center py-12">
-              试试说"最近考试压力大"或"我和同学闹矛盾了"
+            <div className="flex flex-col items-center gap-4 py-10">
+              <div className="text-4xl">💬</div>
+              <p className="text-sm text-slate-500 text-center max-w-md">
+                您好！我是 PsycheFlow 陪伴助手。您可以和我聊聊最近的状况，
+                或者点击下方话题快速开始：
+              </p>
+              <div className="flex flex-wrap gap-2 justify-center max-w-md">
+                {[
+                  '我想做测评',
+                  '我最近压力大',
+                  '什么是焦虑',
+                  '我心情不好',
+                ].map(suggestion => (
+                  <button
+                    key={suggestion}
+                    type="button"
+                    onClick={() => send(suggestion)}
+                    className="px-3 py-1.5 rounded-full text-sm border border-slate-200 bg-white text-slate-600 hover:border-primary-400 hover:text-primary-700 transition"
+                  >
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
           {turns.map((t, i) => (
@@ -366,10 +391,17 @@ export default function ChatPage() {
         </div>
 
         {sources.length >= 1 && (
-          <div className="sources mt-3 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">
-            <div className="mb-1 text-xs font-semibold text-slate-500">知识参考（来自 PsycheFlow 心理知识库公开摘要）</div>
-            {sources.map((s, i) => (
-              <div key={i} className="mb-2 last:mb-0 rounded border border-slate-200 bg-white p-2">
+          <div className="sources mt-2 border-t border-slate-200 bg-slate-50 p-2 text-sm">
+            <button
+              type="button"
+              onClick={() => setSourcesCollapsed(c => !c)}
+              className="w-full flex items-center justify-between text-xs font-semibold text-slate-500 hover:text-slate-700"
+            >
+              <span>知识参考（{sources.length} 条，来自 PsycheFlow 心理知识库公开摘要）</span>
+              <span>{sourcesCollapsed ? '展开 ▸' : '收起 ▾'}</span>
+            </button>
+            {!sourcesCollapsed && sources.map((s, i) => (
+              <div key={i} className="mt-2 rounded border border-slate-200 bg-white p-2">
                 <p className="text-xs text-slate-500 mb-1">来源：《{s.source}》片段 #{(s.chunk_id ?? 0)+1}</p>
                 <p className="text-slate-700">{s.text}</p>
               </div>
@@ -407,7 +439,7 @@ export default function ChatPage() {
           className="flex-1 border border-slate-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-primary-500"
         />
         <button
-          onClick={send}
+          onClick={() => send()}
           disabled={loading}
           className="bg-primary-500 text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-primary-600 disabled:opacity-50"
         >

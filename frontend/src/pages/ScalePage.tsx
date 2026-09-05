@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { apiGet, apiPost, apiPostBlob } from '../api'
 import CrisisBanner from '../components/CrisisBanner'
 import FooterDisclaimer from '../components/FooterDisclaimer'
@@ -59,20 +59,31 @@ export default function ScalePage() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [reportLoading, setReportLoading] = useState(false)
+  const [reportGenerated, setReportGenerated] = useState(false)
+
+  // 测评开始时即创建 session，使 session.created_at 记录开始时间（用于报告计算测评用时）
+  const [sessionId, setSessionId] = useState<string | null>(null)
+  const [combinedSessionId, setCombinedSessionId] = useState<string | null>(null)
 
   // ========== 单量表 useEffect ==========
   useEffect(() => {
     if (isCombined) return
-    setMeta(null); setResult(null); setAnswers({}); setError(null)
+    setMeta(null); setResult(null); setAnswers({}); setError(null); setReportGenerated(false); setSessionId(null)
     apiGet<ScaleMeta>(`/api/scales/${scaleId}`)
-      .then(setMeta)
+      .then(meta => {
+        setMeta(meta)
+        // 量表加载后即创建 session，记录测评开始时间（用于报告"测评用时"）
+        apiPost<{ session_id: string }>('/api/sessions', { label: '心理测评' })
+          .then(s => setSessionId(s.session_id))
+          .catch(() => {})  // 失败不阻塞答题，report 生成时兜底新建
+      })
       .catch((e: Error) => setError(e.message))
   }, [isCombined, scaleId])
 
   // ========== 合并双量表 useEffect ==========
   useEffect(() => {
     if (!isCombined) return
-    setCombinedMetas({}); setCombinedAnswers({}); setCombinedResults({}); setError(null)
+    setCombinedMetas({}); setCombinedAnswers({}); setCombinedResults({}); setError(null); setReportGenerated(false); setCombinedSessionId(null)
     Promise.all(COMBINED_SCALES.map(sid => apiGet<ScaleMeta>(`/api/scales/${sid}`)))
       .then(metas => {
         const map: Record<string, ScaleMeta> = {}
@@ -80,16 +91,13 @@ export default function ScalePage() {
         for (const m of metas) { map[m.scale_id] = m; ans[m.scale_id] = {} }
         setCombinedMetas(map)
         setCombinedAnswers(ans)
+        // 量表加载后即创建 session，记录测评开始时间（用于报告"测评用时"）
+        apiPost<{ session_id: string }>('/api/sessions', { label: '心理测评' })
+          .then(s => setCombinedSessionId(s.session_id))
+          .catch(() => {})
       })
       .catch((e: Error) => setError(e.message))
   }, [isCombined])
-
-  // ========== 公共：optionKeys ==========
-  const optionKeys = useMemo(() => {
-    const sample = meta || Object.values(combinedMetas)[0]
-    if (!sample) return []
-    return Object.keys(sample.options).sort((a, b) => Number(a) - Number(b))
-  }, [meta, combinedMetas])
 
   // ========== 公共：全部题目都回答了？ ==========
   const allAnswered = useMemo(() => {
@@ -106,6 +114,15 @@ export default function ScalePage() {
     }
   }, [isCombined, meta, answers, combinedMetas, combinedAnswers])
 
+  // ========== 公共：答题进度 ==========
+  const totalItems = isCombined
+    ? Object.values(combinedMetas).reduce((s, m) => s + m.items.length, 0)
+    : meta?.items.length ?? 0
+  const answeredItems = isCombined
+    ? Object.values(combinedAnswers).reduce((s, ans) => s + Object.keys(ans).length, 0)
+    : Object.keys(answers).length
+  const progressPct = totalItems > 0 ? Math.round((answeredItems / totalItems) * 100) : 0
+
   const combinedCrisis = Object.values(combinedResults).some(r => r.needs_crisis_escalation)
   const hasCrisis = (result?.needs_crisis_escalation || combinedCrisis)
 
@@ -121,35 +138,36 @@ export default function ScalePage() {
   }
 
   // ========== 单量表 generateReport ==========
+  // 一量表一报告。使用开始答题时创建的 session（sessionId），使报告能正确计算测评用时。
+  // 若 sessionId 为 null（创建失败），兜底新建（此时用时可能为 0，属降级场景）
   const generateSingleReport = async () => {
     if (isCombined || !scaleId || !allAnswered) return
     setReportLoading(true); setError(null)
-    const win = window.open('', '_blank')
-    if (!win) { setError('浏览器拦截了新窗口，请允许本站弹窗后重试'); setReportLoading(false); return }
-    win.document.write('<p style="font-family:sans-serif;text-align:center;margin-top:40vh">报告生成中…</p>')
     try {
-      const session = await apiPost<{ session_id: string }>('/api/sessions', { label: `${scaleId} 测评` })
-      const sid = session.session_id
-      localStorage.setItem('psycheflow_active_session_id', sid)
+      let sid = sessionId
+      if (!sid) {
+        const s = await apiPost<{ session_id: string }>('/api/sessions', { label: '心理测评' })
+        sid = s.session_id
+      }
       await apiPost(`/api/sessions/${sid}/assessments`, { scale_id: scaleId, answers })
-      const blob = await apiPostBlob(`/api/sessions/${sid}/report`, { session_id: sid })
+      // 新标签页预览 PDF（先同步开空标签避开弹窗拦截，原页面定格不跳转）
+      const win = window.open('', '_blank')
+      if (!win) { setError('浏览器拦截了新窗口，请允许本站弹窗后重试'); return }
+      win.document.write('<p style="font-family:sans-serif;text-align:center;margin-top:40vh">报告生成中…</p>')
+      const blob = await apiPostBlob(`/api/sessions/${sid}/report`, {})
       const url = URL.createObjectURL(blob)
       win.location.href = url
+      setReportGenerated(true)
       setTimeout(() => URL.revokeObjectURL(url), 60000)
-    } catch (e) { win.close(); setError((e as Error).message) }
+    } catch (e) { setError((e as Error).message) }
     finally { setReportLoading(false) }
   }
 
-  // ========== 合并双量表：一步「生成报告」（submit 双量表 + assessment 双次 + report） ==========
-  const generateCombinedReport = async () => {
+  // ========== 合并双量表 submit（仅计分并展示结果，与单量表统一） ==========
+  const submitCombined = async () => {
     if (!isCombined || !allAnswered) return
-    setReportLoading(true); setError(null)
-    // 同步打开空窗保留用户手势
-    const win = window.open('', '_blank')
-    if (!win) { setError('浏览器拦截了新窗口，请允许本站弹窗后重试'); setReportLoading(false); return }
-    win.document.write('<p style="font-family:sans-serif;text-align:center;margin-top:40vh">报告生成中…双量表计分+渲染约需30-60秒</p>')
+    setLoading(true); setError(null); setCombinedResults({})
     try {
-      // Step 1: 先并行计分，若失败可直接报错
       const scoreJobs = COMBINED_SCALES.map(sid =>
         apiPost<ScoreResult>(`/api/scales/${sid}/score`, { answers: combinedAnswers[sid] || {} })
       )
@@ -157,21 +175,34 @@ export default function ScalePage() {
       const resMap: Record<string, ScoreResult> = {}
       for (const s of scores) resMap[s.scale_id] = s
       setCombinedResults(resMap)
+    } catch (e) { setError((e as Error).message) }
+    finally { setLoading(false) }
+  }
 
-      // Step 2: 创建会话 + 双 assessments
-      const session = await apiPost<{ session_id: string }>('/api/sessions', { label: 'PHQ-A + SCARED 合并测评' })
-      const sid = session.session_id
-      localStorage.setItem('psycheflow_active_session_id', sid)
+  // ========== 合并双量表 generateReport（结果已展示后，创建 assessment + 生成 PDF） ==========
+  const generateCombinedReport = async () => {
+    if (!isCombined || !allAnswered) return
+    setReportLoading(true); setError(null)
+    try {
+      // 使用开始答题时创建的 session（合并双量表的合法累积：两条 assessment 挂同一 session）
+      let sid = combinedSessionId
+      if (!sid) {
+        const s = await apiPost<{ session_id: string }>('/api/sessions', { label: '心理测评' })
+        sid = s.session_id
+      }
       for (const s of COMBINED_SCALES) {
         await apiPost(`/api/sessions/${sid}/assessments`, { scale_id: s, answers: combinedAnswers[s] || {} })
       }
-
-      // Step 3: 生成 PDF
-      const blob = await apiPostBlob(`/api/sessions/${sid}/report`, { session_id: sid })
+      // 新标签页预览 PDF（先同步开空标签避开弹窗拦截，原页面定格不跳转）
+      const win = window.open('', '_blank')
+      if (!win) { setError('浏览器拦截了新窗口，请允许本站弹窗后重试'); return }
+      win.document.write('<p style="font-family:sans-serif;text-align:center;margin-top:40vh">报告生成中…</p>')
+      const blob = await apiPostBlob(`/api/sessions/${sid}/report`, {})
       const url = URL.createObjectURL(blob)
       win.location.href = url
+      setReportGenerated(true)
       setTimeout(() => URL.revokeObjectURL(url), 60000)
-    } catch (e) { win.close(); setError((e as Error).message) }
+    } catch (e) { setError((e as Error).message) }
     finally { setReportLoading(false) }
   }
 
@@ -184,12 +215,17 @@ export default function ScalePage() {
   }
 
   // ========== 量表题目渲染 Block ==========
-  const renderScaleItems = (m: ScaleMeta, ans: Record<number, number>, onChange: (qid: number, v: number) => void) => {
-    const disabled = isCombined ? reportLoading : !!result
+  const renderScaleItems = (m: ScaleMeta, ans: Record<number, number>, onChange: (qid: number, v: number) => void, showHeader = true) => {
+    const disabled = isCombined ? (reportLoading || Object.keys(combinedResults).length > 0) : !!result
+    const localOptionKeys = Object.keys(m.options).sort((a, b) => Number(a) - Number(b))
     return (
       <div key={m.scale_id} className="space-y-3">
-        <h2 className="text-lg font-bold text-slate-800 mt-2">{m.scale_name}</h2>
-        {m.description && <p className="text-sm text-slate-500">{m.description}</p>}
+        {showHeader && (
+          <>
+            <h2 className="text-lg font-bold text-slate-800 mt-2">{m.scale_name}</h2>
+            {m.description && <p className="text-sm text-slate-500">{m.description}</p>}
+          </>
+        )}
         {m.items.map((item, idx) => (
           <div key={`${m.scale_id}-q${item.id}`} className="bg-white rounded-xl border border-slate-200 p-4">
             <div className="text-sm text-slate-700">
@@ -197,7 +233,7 @@ export default function ScalePage() {
               {item.text}
             </div>
             <div className="flex flex-wrap gap-2 mt-3">
-              {optionKeys.map((k) => {
+              {localOptionKeys.map((k) => {
                 const v = Number(k)
                 const active = ans[item.id] === v
                 return (
@@ -262,8 +298,21 @@ export default function ScalePage() {
         </div>
       )}
 
+      {/* 答题进度条 */}
+      {totalItems > 0 && (
+        <div className="flex items-center gap-3">
+          <div className="flex-1 h-2 bg-slate-200 rounded-full overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all duration-300 ${progressPct === 100 ? 'bg-green-500' : 'bg-primary-500'}`}
+              style={{ width: `${progressPct}%` }}
+            />
+          </div>
+          <span className="text-xs text-slate-500 shrink-0">{answeredItems}/{totalItems} 题</span>
+        </div>
+      )}
+
       {!isCombined && meta && renderScaleItems(
-        meta, answers, (qid, v) => setAnswers(a => ({ ...a, [qid]: v }))
+        meta, answers, (qid, v) => setAnswers(a => ({ ...a, [qid]: v })), false
       )}
       {isCombined && COMBINED_SCALES.map(sid => {
         const m = combinedMetas[sid]
@@ -283,39 +332,54 @@ export default function ScalePage() {
 
       {error && <div className="bg-red-50 text-red-600 text-sm p-3 rounded-lg">{error}</div>}
 
-      {!isCombined ? (
-        <>
-          {result && (
+      {/* 统一操作区：先提交查看结果，再生成下载报告 */}
+      {(() => {
+        const hasResults = isCombined ? Object.keys(combinedResults).length > 0 : !!result
+        const onGenerate = isCombined ? generateCombinedReport : generateSingleReport
+        const onSubmit = isCombined ? submitCombined : submit
+        return (
+          <>
+            {hasResults && (
+              <button
+                onClick={onGenerate}
+                disabled={reportLoading}
+                className="w-full py-2.5 rounded-xl text-sm font-semibold border border-[#1e3a5f] text-[#1e3a5f] hover:bg-blue-50 disabled:opacity-50 transition"
+              >
+                {reportLoading ? '报告生成中…（约 30-60 秒，勿关闭）' : '生成 PDF 报告'}
+              </button>
+            )}
             <button
-              onClick={generateSingleReport}
-              disabled={reportLoading}
-              className="w-full py-2 rounded-lg text-sm font-semibold border border-primary-500 text-primary-600 hover:bg-primary-50 disabled:opacity-50 transition"
+              onClick={onSubmit}
+              disabled={!allAnswered || loading}
+              className={`w-full py-3 rounded-xl font-bold text-sm transition ${
+                allAnswered ? 'bg-[#1e3a5f] text-white hover:opacity-90' : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+              }`}
             >
-              {reportLoading ? '生成中…' : '生成 PDF 报告'}
+              {loading ? '提交中…' : hasResults ? '重新评估' : '提交评估'}
             </button>
-          )}
-          <button
-            onClick={submit}
-            disabled={!allAnswered || loading}
-            className={`w-full py-2.5 rounded-xl font-semibold text-sm transition ${
-              allAnswered ? 'bg-primary-500 text-white hover:bg-primary-600' : 'bg-slate-200 text-slate-400 cursor-not-allowed'
-            }`}
-          >
-            {loading ? '提交中…' : result ? '重新评估' : '提交评估'}
-          </button>
-        </>
-      ) : (
-        <button
-          onClick={generateCombinedReport}
-          disabled={!allAnswered || reportLoading}
-          className={`w-full py-3 rounded-xl font-bold text-sm transition ${
-            allAnswered && !reportLoading
-              ? 'bg-[#1e3a5f] text-white hover:opacity-90'
-              : 'bg-slate-200 text-slate-400 cursor-not-allowed'
-          }`}
-        >
-          {reportLoading ? '报告生成中…（约 30-60 秒，勿关闭）' : '生成报告'}
-        </button>
+          </>
+        )
+      })()}
+
+      {reportGenerated && (
+        <div className="bg-green-50 border border-green-200 rounded-xl p-4 space-y-3">
+          <div className="flex items-center gap-2 text-green-700">
+            <span className="text-lg">✓</span>
+            <span className="font-semibold text-sm">报告已生成并开始下载</span>
+          </div>
+          <p className="text-xs text-slate-600">接下来您可以：</p>
+          <div className="flex flex-wrap gap-2">
+            <Link to="/chat" className="px-3 py-1.5 rounded-lg text-sm border border-primary-300 text-primary-700 bg-white hover:bg-primary-50 transition">
+              💬 和AI对话讨论结果
+            </Link>
+            <Link to="/scale" className="px-3 py-1.5 rounded-lg text-sm border border-slate-300 text-slate-600 bg-white hover:bg-slate-50 transition">
+              📋 做其他测评
+            </Link>
+            <Link to="/history" className="px-3 py-1.5 rounded-lg text-sm border border-slate-300 text-slate-600 bg-white hover:bg-slate-50 transition">
+              📊 查看历史报告
+            </Link>
+          </div>
+        </div>
       )}
 
       <FooterDisclaimer />

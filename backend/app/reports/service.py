@@ -99,6 +99,22 @@ SCALE_INTRO = {
         "分离焦虑或躯体化惊恐等焦虑相关症状。SCARED 是我国学校心理普测常用工具，"
         "具备良好的信度、效度及性别/年龄测量等值性。"
     ),
+    "sdq": (
+        "SDQ 长处和困难问卷（Strengths and Difficulties Questionnaire，学生自评版）"
+        "由英国 Goodman 教授编制、国内杜亚松等修订，适用于 11-17 岁青少年自评，"
+        "评估过去 6 个月的情绪、品行、多动注意、同伴交往与亲社会五个维度。"
+        "量表共 25 题，每题 0-2 三级评分（含 5 道反向计分题），总困难分 0-40，"
+        "界值 16-19 为边缘、≥20 为异常。SDQ 兼顾困难与长处（亲社会为优势维度），"
+        "被广泛用于校园心理筛查与流行病学调查，信效度良好。"
+    ),
+    "mht": (
+        "MHT 心理健康诊断测验（中学版）由华东师范大学周步成等 1991 年据日本铃木清"
+        "「不安倾向诊断测验」修订，适用于小学四年级至高中三年级学生。量表共 100 题，"
+        "二选一计分（是=1/不是=0），涵盖学习焦虑、对人焦虑、孤独倾向、自责倾向、"
+        "过敏倾向、身体症状、恐怖倾向与冲动倾向 8 个内容量表，并设效度量表评估"
+        "作答真实性。全量表分 ≥65 提示可能存在心理障碍，需制定特别指导计划；"
+        "分量表分 ≥8 为高分，需针对性指导。MHT 是我国中小学心理健康普测的经典工具。"
+    ),
 }
 
 # —— 2 号章节：测评结果解读注意事项 ——
@@ -222,6 +238,162 @@ SCARED_SUBDIMS = [
 ]
 SCARED_MAX_SINGLE = 2  # 每题 0-2
 
+# —— SDQ 5 因子（25 题 0-2；反向题 7/11/14/21/25 = 2-原始分） ——
+# 亲社会行为为「优势维度」(inverse=True)：高分=良好，通过反转 pct 让高分映射为低严重度（绿色）
+SDQ_SUBDIMS = [
+    {
+        "key": "emotional",
+        "name": "情绪症状",
+        "desc": "头痛/腹痛/担忧/不快乐/恐惧等情绪与躯体不适",
+        "items": [3, 8, 13, 16, 24],
+        "interps": {
+            "low": "情绪状态平稳，无明显焦虑或低落反应。",
+            "mid": "偶有担忧或不快乐，建议关注情绪变化与压力源。",
+            "high": "情绪症状明显，可能影响日常学习与社交，建议专业评估。",
+        },
+    },
+    {
+        "key": "conduct",
+        "name": "品行问题",
+        "desc": "愤怒/争执/说谎/偷拿等外化行为",
+        "items": [5, 7, 12, 18, 22],
+        "interps": {
+            "low": "行为规范，无明显品行问题。",
+            "mid": "偶有情绪失控或冲突行为，可结合规则引导与情绪管理训练。",
+            "high": "品行问题突出，可能影响他人与自身，建议家校协同干预。",
+        },
+    },
+    {
+        "key": "hyperactivity",
+        "name": "多动/注意缺陷",
+        "desc": "坐不住/易分心/不耐烦/冲动",
+        "items": [2, 10, 15, 21, 25],
+        "interps": {
+            "low": "注意力稳定，能安静持久完成任务。",
+            "mid": "偶有分心或多动表现，可尝试结构化任务与短时专注训练。",
+            "high": "多动/注意缺陷明显，可能影响学习表现，建议专业评估。",
+        },
+    },
+    {
+        "key": "peer",
+        "name": "同伴交往问题",
+        "desc": "独处/被欺负/与大人相处多于同伴",
+        "items": [6, 11, 14, 19, 23],
+        "interps": {
+            "low": "同伴关系良好，能融入群体。",
+            "mid": "偶尔独处或感觉被排斥，可鼓励参与小组活动。",
+            "high": "同伴交往困难明显，可能存在被欺凌风险，建议班主任与心理老师介入了解。",
+        },
+    },
+    {
+        "key": "prosocial",
+        "name": "亲社会行为",
+        "desc": "友善/分享/助人（高分=优势资源，低分=需支持）",
+        "items": [1, 4, 9, 17, 20],
+        "inverse": True,
+        "interps": {
+            "low": "亲社会行为丰富，是明显的心理优势资源。",
+            "mid": "亲社会行为适中，可鼓励更多分享与助人。",
+            "high": "亲社会行为不足，建议培养同理心与社交技能。",
+        },
+    },
+]
+SDQ_MAX_SINGLE = 2
+SDQ_REVERSE_IDS = {7, 11, 14, 21, 25}
+
+# —— MHT 8 内容量表（100 题 0/1；冲动倾向含 85/97 自杀题，因子分仅作维度展示，危机由顶部硬框处理） ——
+MHT_SUBDIMS = [
+    {
+        "key": "study_anxiety",
+        "name": "学习焦虑",
+        "desc": "对考试、成绩、学习任务的过度紧张与担忧",
+        "items": list(range(1, 16)),
+        "interps": {
+            "low": "对学习持合理紧张度，能正常应考。",
+            "mid": "学习焦虑中等，偶有考前紧张，可配合放松训练。",
+            "high": "学习焦虑明显，可能影响发挥与学习兴趣，建议学业减压与心理支持。",
+        },
+    },
+    {
+        "key": "social_anxiety",
+        "name": "对人焦虑",
+        "desc": "被关注/被批评/被议论时的不安与脸红",
+        "items": list(range(16, 26)),
+        "interps": {
+            "low": "人际互动自然，无明显社交焦虑。",
+            "mid": "偶在公众场合紧张，可循序渐进行社交暴露练习。",
+            "high": "对人焦虑明显，可能影响课堂参与与交友，建议心理辅导。",
+        },
+    },
+    {
+        "key": "loneliness",
+        "name": "孤独倾向",
+        "desc": "独处偏好、感觉多余、难以融入群体",
+        "items": list(range(26, 36)),
+        "interps": {
+            "low": "能融入集体，无明显孤独感。",
+            "mid": "偶尔感觉孤单，可鼓励同伴活动与兴趣社团。",
+            "high": "孤独倾向明显，建议排查社交支持网络与抑郁风险。",
+        },
+    },
+    {
+        "key": "self_blame",
+        "name": "自责倾向",
+        "desc": "将失败/批评归因于自身、过度自责",
+        "items": list(range(36, 46)),
+        "interps": {
+            "low": "归因方式较平衡，不过度自责。",
+            "mid": "偶有自责想法，可结合认知重构练习调整。",
+            "high": "自责倾向明显，可能影响自我评价，建议认知行为取向辅导。",
+        },
+    },
+    {
+        "key": "allergy",
+        "name": "过敏倾向",
+        "desc": "对声音/意外/决策的过度敏感与犹豫",
+        "items": list(range(46, 56)),
+        "interps": {
+            "low": "感官与决策反应适度。",
+            "mid": "偶有敏感或犹豫，可练习正念与决断。",
+            "high": "过敏倾向明显，可能影响专注与效率，建议关注焦虑水平。",
+        },
+    },
+    {
+        "key": "somatic",
+        "name": "身体症状",
+        "desc": "出汗/头痛/失眠/肠胃等躯体化表现",
+        "items": list(range(56, 71)),
+        "interps": {
+            "low": "身体状态稳定，无明显躯体化。",
+            "mid": "偶有头痛或失眠，可调整作息与运动。",
+            "high": "身体症状明显，建议心内科/心理科联合评估排除器质性问题。",
+        },
+    },
+    {
+        "key": "phobia",
+        "name": "恐怖倾向",
+        "desc": "对高处/黑暗/独处/雷声的强烈恐惧",
+        "items": list(range(71, 81)),
+        "interps": {
+            "low": "无明显恐怖反应。",
+            "mid": "偶有恐惧，可配合渐进暴露。",
+            "high": "恐怖倾向明显，影响日常活动，建议专业干预。",
+        },
+    },
+    {
+        "key": "impulse",
+        "name": "冲动倾向",
+        "desc": "愤怒/急躁/想喊叫/情绪失控",
+        "items": [81, 83, 85, 87, 89, 91, 93, 95, 97, 99],
+        "interps": {
+            "low": "情绪节制良好，无明显冲动。",
+            "mid": "偶有急躁，可练习情绪暂停与表达。",
+            "high": "冲动倾向明显，建议关注情绪调节与安全，必要时专业支持。",
+        },
+    },
+]
+MHT_MAX_SINGLE = 1
+
 # —— LLM 提示词 ——
 REPORT_SYSTEM = (
     "你是 PsycheFlow 心理评估报告的「发展建议」撰写助手。"
@@ -329,12 +501,23 @@ def _compute_subdims(assessment: dict) -> list:
     elif sid == "scared":
         dims_cfg = SCARED_SUBDIMS
         max_single = SCARED_MAX_SINGLE
+    elif sid == "sdq":
+        dims_cfg = SDQ_SUBDIMS
+        max_single = SDQ_MAX_SINGLE
+        # SDQ 反向计分：7/11/14/21/25 = (max_single - 原始分)
+        ans = {qid: (max_single - v) if qid in SDQ_REVERSE_IDS else v for qid, v in ans.items()}
+    elif sid == "mht":
+        dims_cfg = MHT_SUBDIMS
+        max_single = MHT_MAX_SINGLE
 
     out = []
     for d in dims_cfg:
         raw = sum(ans.get(q, 0) for q in d["items"])
         mx = len(d["items"]) * max_single
         pct = 0 if mx == 0 else raw / mx
+        # 优势维度（如亲社会）：高分=良好，反转 pct 使高分映射为低严重度（绿色）
+        if d.get("inverse"):
+            pct = 1 - pct
         sev = _severity_for_pct(pct)
         sev_label = SEVERITY_LABEL[sev]
         if sev in ("none",):
@@ -494,20 +677,34 @@ def render_report_html(session, assessments: list, narrative_md: str) -> str:
 
     # 5. 量表简介条（页眉下方：姓名/机构/报告日期，对应 MHT 的首行）
     generated_at = datetime.utcnow().strftime("%Y-%m-%d")
-    subject = getattr(session, "label", None) or "匿名"
+    # 从 session.account.profile 读取用户真实信息（未登录/匿名时回退）
+    account = getattr(session, "account", None)
+    profile = getattr(account, "profile", None) or {}
+    subject = profile.get("name") or getattr(account, "label", None) or "匿名"
+
+    # 测评用时：session 创建到最新 assessment 提交的时长（单量表≈该量表做题用时；合并量表=两量表合计用时）
+    duration_str = "—"
+    assessments_orm = getattr(session, "assessments", None) or []
+    if assessments_orm:
+        try:
+            latest_at = max(a.created_at for a in assessments_orm)
+            total_sec = int((latest_at - session.created_at).total_seconds())
+            if total_sec >= 0:
+                duration_str = f"{total_sec // 60}分{total_sec % 60}秒" if total_sec >= 60 else f"{total_sec}秒"
+        except Exception:
+            pass
 
     # 6. 测评人员信息表（MHT 3 号章节的 10 字段 5 列 2 行结构）
-    #    未注册 MVP 下字段默认"—"，但表格结构与参考保持一致
     info_fields = [
         ("姓　名", subject),
-        ("性　别", "—"),
-        ("年　龄", "—"),
+        ("性　别", profile.get("gender") or "—"),
+        ("年　龄", str(profile.get("age")) if profile.get("age") else "—"),
         ("编　号", getattr(session, "id", "")[:8]),
-        ("测评用时", "—"),
-        ("学　号", "—"),
-        ("年　级", "—"),
+        ("测评用时", duration_str),
+        ("学　号", profile.get("student_no") or "—"),
+        ("年　级", profile.get("grade") or "—"),
         ("测评工具编号", getattr(session, "id", "")),
-        ("部　门", "校园心理筛查（PsycheFlow）"),
+        ("部　门", profile.get("school") or "校园心理筛查（PsycheFlow）"),
         ("测评工具", " + ".join(a["scale_name"].split(" ")[0] for a in assessments)),
     ]
 

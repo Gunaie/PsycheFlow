@@ -97,6 +97,12 @@ class TestAuthRegister:
         sid = r.json()["session_id"]
         assert len(sid) == 32
 
+        # 历史列表只返回有测评记录的 session（排除纯对话 session），先挂一条全 0 PHQ-A
+        isolated_client.post(
+            f"/api/sessions/{sid}/assessments",
+            json={"scale_id": "phq_a", "answers": {str(i): 0 for i in range(1, 10)}},
+        )
+
         # 用同 token 取 sessions 列表 -> 长度1 且就是这个 sid（证明 account 绑定成功）
         list_r = isolated_client.get("/api/sessions", headers={"Authorization": f"Bearer {token}"})
         assert list_r.status_code == 200

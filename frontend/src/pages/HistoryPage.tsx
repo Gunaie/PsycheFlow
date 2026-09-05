@@ -29,10 +29,17 @@ interface SessionsResponse {
 }
 
 const SEV_COLOR: Record<string, string> = {
-  none: 'bg-slate-200 text-slate-700',
-  mild: 'bg-emerald-100 text-emerald-800',
-  moderate: 'bg-amber-100 text-amber-800',
-  severe: 'bg-red-100 text-red-800',
+  none: 'bg-slate-100 text-slate-600 border-slate-200',
+  mild: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  moderate: 'bg-amber-50 text-amber-700 border-amber-200',
+  severe: 'bg-red-50 text-red-700 border-red-200',
+}
+
+const SEV_DOT: Record<string, string> = {
+  none: 'bg-slate-400',
+  mild: 'bg-emerald-500',
+  moderate: 'bg-amber-500',
+  severe: 'bg-red-500',
 }
 
 const SEV_CN: Record<string, string> = {
@@ -42,13 +49,23 @@ const SEV_CN: Record<string, string> = {
   severe: '重度',
 }
 
-function formatDateTime(iso: string): string {
+function formatDate(iso: string): string {
   try {
     const d = new Date(iso)
     const pad = (n: number) => String(n).padStart(2, '0')
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
   } catch {
     return iso
+  }
+}
+
+function formatTime(iso: string): string {
+  try {
+    const d = new Date(iso)
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}`
+  } catch {
+    return ''
   }
 }
 
@@ -61,6 +78,7 @@ export default function HistoryPage() {
   const [error, setError] = useState<string | null>(null)
   const [detailItem, setDetailItem] = useState<SessionItem | null>(null)
   const [showAnswers, setShowAnswers] = useState<Record<string, boolean>>({})
+  const [downloadingId, setDownloadingId] = useState<string | null>(null)
 
   const fetchSessions = async (cursor?: string) => {
     try {
@@ -89,143 +107,150 @@ export default function HistoryPage() {
   }
 
   const downloadReport = async (sessionId: string) => {
-    // 先同步 window.open 保留手势，避免浏览器弹窗拦截
-    const win = window.open('', '_blank')
-    if (!win) {
-      alert('浏览器拦截了新窗口，请允许本站弹窗后重试')
-      return
-    }
-    win.document.write('<p style="font-family:sans-serif;text-align:center;margin-top:40vh">报告生成中…</p>')
+    setDownloadingId(sessionId)
     try {
       const blob = await apiGetBlob(`/api/sessions/${sessionId}/report`)
+      // 通过 <a download> 触发真实下载，不新开标签页（blob 新标签页会被浏览器内置 PDF 查看器打开成"预览"）
       const url = URL.createObjectURL(blob)
-      win.location.href = url
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `psycheflow-report-${sessionId}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
       setTimeout(() => URL.revokeObjectURL(url), 60000)
     } catch (e) {
-      win.close()
       alert(`下载失败：${(e as Error).message}`)
+    } finally {
+      setDownloadingId(null)
     }
   }
 
-  const viewDetail = (item: SessionItem) => {
-    setDetailItem(item)
-  }
-
-  const close = () => {
-    setDetailItem(null)
-    setShowAnswers({})
-  }
+  const viewDetail = (item: SessionItem) => setDetailItem(item)
+  const close = () => { setDetailItem(null); setShowAnswers({}) }
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-10">
-      {/* 顶部 Header */}
-      <header style={{ backgroundColor: '#1e3a5f' }} className="text-white">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
-          <h1 className="text-lg font-bold">PsycheFlow · 历史报告</h1>
+    <div className="space-y-6">
+      {/* 页面标题 */}
+      <div className="flex items-end justify-between flex-wrap gap-2">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-800">历史报告</h1>
+          <p className="text-sm text-slate-500 mt-1">
+            {loading ? '加载中…' : items.length > 0 ? `共 ${items.length} 份测评记录` : '查看您的历次测评记录与报告'}
+          </p>
+        </div>
+      </div>
+
+      {/* 内容区 */}
+      {loading ? (
+        <div className="flex items-center justify-center py-20 text-slate-400">
+          <span className="text-sm">加载中...</span>
+        </div>
+      ) : error ? (
+        <div className="bg-red-50 text-red-600 text-sm p-4 rounded-xl">加载失败：{error}</div>
+      ) : items.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-24 text-center">
+          <div className="w-20 h-20 rounded-full bg-slate-100 flex items-center justify-center text-4xl mb-5">
+            📋
+          </div>
+          <p className="text-slate-700 text-lg font-semibold mb-2">暂无测评记录</p>
+          <p className="text-slate-500 text-sm mb-6">完成量表测评后，您的报告将出现在这里</p>
           <button
-            onClick={() => navigate('/')}
-            className="rounded-md border border-white/30 px-3 py-1.5 text-sm hover:bg-white/10"
+            onClick={() => navigate('/scale')}
+            className="rounded-lg bg-[#1e3a5f] px-5 py-2.5 text-sm text-white font-medium hover:opacity-95 transition"
           >
-            ← 返回首页
+            前往测评 →
           </button>
         </div>
-      </header>
-
-      {/* 主体内容 */}
-      <main>
-        {loading ? (
-          <p className="text-center text-slate-500 py-10">加载中...</p>
-        ) : error ? (
-          <div className="max-w-7xl mx-auto px-4 py-6">
-            <div className="bg-red-50 text-red-600 text-sm p-3 rounded-lg">加载失败：{error}</div>
-          </div>
-        ) : items.length === 0 ? (
-          <div className="mt-20 text-center">
-            <div className="text-6xl mb-4">📋</div>
-            <p className="text-slate-700 text-lg font-semibold mb-2">暂无测评记录</p>
-            <p className="text-slate-500 mb-6">完成量表测评后，您的报告将出现在这里</p>
-            <button
-              onClick={() => navigate('/scale')}
-              className="rounded-md bg-[#1e3a5f] px-4 py-2 text-white hover:opacity-95"
-            >
-              前往测评
-            </button>
-          </div>
-        ) : (
-          <>
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 max-w-7xl mx-auto px-4 py-6">
-              {items.map((item) => (
+      ) : (
+        <>
+          <div className="space-y-3">
+            {items.map((item) => {
+              const date = formatDate(item.created_at)
+              const time = formatTime(item.created_at)
+              return (
                 <div
                   key={item.session_id}
-                  className={`rounded-lg border bg-white p-4 shadow-sm hover:shadow-md transition ${
-                    item.has_crisis ? 'border-red-400 ring-1 ring-red-200' : 'border-slate-200'
+                  className={`rounded-2xl border bg-white p-5 transition hover:shadow-md ${
+                    item.has_crisis ? 'border-red-300' : 'border-slate-200'
                   }`}
                 >
-                  {/* 顶部行 */}
-                  <div className="flex justify-between items-start mb-2">
-                    <div>
-                      <p className="text-xs text-slate-500">
-                        {formatDateTime(item.created_at)} · {item.label || '匿名'}
-                      </p>
+                  {/* 顶部信息行 */}
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="font-semibold text-slate-700">{date}</span>
+                      <span className="text-slate-300">|</span>
+                      <span className="text-slate-500">{time}</span>
+                      {item.label && (
+                        <>
+                          <span className="text-slate-300">|</span>
+                          <span className="text-slate-500">{item.label}</span>
+                        </>
+                      )}
                     </div>
                     {item.has_crisis && (
-                      <span className="rounded bg-red-600 px-2 py-0.5 text-xs font-semibold text-white">
+                      <span className="inline-flex items-center gap-1 rounded-full bg-red-50 border border-red-200 px-2.5 py-0.5 text-xs font-semibold text-red-600">
                         ⚠ 危机 · 12355
                       </span>
                     )}
                   </div>
 
-                  {/* 量表行：双量表 badge 胶囊 */}
+                  {/* 量表结果 badges */}
                   <div className="flex flex-wrap gap-2 mb-4">
                     {item.assessments.map((a) => (
                       <span
                         key={a.scale_id}
-                        className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                        className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1 text-xs font-medium ${
                           SEV_COLOR[a.severity] || SEV_COLOR.none
                         }`}
                       >
-                        {a.scale_name || a.scale_id}：{a.score}/{a.max_score} ·{' '}
+                        <span className={`w-1.5 h-1.5 rounded-full ${SEV_DOT[a.severity] || SEV_DOT.none}`} />
+                        {a.scale_name || a.scale_id}
+                        <span className="text-slate-400">·</span>
+                        {a.score}/{a.max_score}
+                        <span className="text-slate-400">·</span>
                         {SEV_CN[a.severity] || a.severity}
                       </span>
                     ))}
                   </div>
 
-                  {/* 双按钮行 */}
+                  {/* 操作按钮 */}
                   <div className="flex gap-2">
                     <button
                       onClick={() => downloadReport(item.session_id)}
-                      className="flex-1 rounded-md bg-[#1e3a5f] px-3 py-1.5 text-sm text-white hover:opacity-95 flex items-center justify-center gap-1"
+                      disabled={downloadingId === item.session_id}
+                      className="flex-1 rounded-lg bg-[#1e3a5f] px-3 py-2 text-sm text-white font-medium hover:opacity-95 transition flex items-center justify-center gap-1.5 disabled:opacity-60"
                     >
-                      <span>⬇</span> 下载 PDF
+                      <span>⬇</span> {downloadingId === item.session_id ? '生成中…' : '下载 PDF'}
                     </button>
                     <button
                       onClick={() => viewDetail(item)}
-                      className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center justify-center gap-1"
+                      className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 font-medium hover:bg-slate-50 transition flex items-center justify-center gap-1.5"
                     >
                       <span>📄</span> 查看详情
                     </button>
                   </div>
                 </div>
-              ))}
+              )
+            })}
+          </div>
+
+          {/* 加载更多 */}
+          {nextCursor && (
+            <div className="text-center pt-2">
+              <button
+                onClick={() => loadMore(nextCursor!)}
+                disabled={loadingMore}
+                className="rounded-lg border border-[#1e3a5f] px-6 py-2 text-sm text-[#1e3a5f] font-medium hover:bg-blue-50 disabled:opacity-50 transition"
+              >
+                {loadingMore ? '加载中...' : '加载更多 ↓'}
+              </button>
             </div>
+          )}
+        </>
+      )}
 
-            {/* 下一页分页按钮 */}
-            {nextCursor && (
-              <div className="text-center py-4">
-                <button
-                  onClick={() => loadMore(nextCursor!)}
-                  disabled={loadingMore}
-                  className="rounded-md border border-[#1e3a5f] px-4 py-2 text-sm text-[#1e3a5f] hover:bg-blue-50 disabled:bg-slate-200"
-                >
-                  {loadingMore ? '加载中...' : `加载更多 →`}
-                </button>
-              </div>
-            )}
-          </>
-        )}
-
-        <FooterDisclaimer />
-      </main>
+      <FooterDisclaimer />
 
       {/* 详情 Modal */}
       {detailItem && (
@@ -234,27 +259,27 @@ export default function HistoryPage() {
           onClick={close}
         >
           <div
-            className="bg-white rounded-lg max-w-3xl w-full max-h-[80vh] overflow-y-auto p-5"
+            className="bg-white rounded-2xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-6"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex justify-between items-start mb-4">
+            <div className="flex justify-between items-start mb-5">
               <div>
                 <h2 className="text-lg font-bold text-slate-800">
                   {detailItem.label || '匿名测评'}
                 </h2>
                 <p className="text-sm text-slate-500 mt-1">
-                  {formatDateTime(detailItem.created_at)}
+                  {formatDate(detailItem.created_at)} {formatTime(detailItem.created_at)}
                 </p>
               </div>
               <div className="flex items-center gap-2">
                 {detailItem.has_crisis && (
-                  <span className="rounded bg-red-600 px-2 py-0.5 text-xs font-semibold text-white">
+                  <span className="rounded-full bg-red-50 border border-red-200 px-2.5 py-0.5 text-xs font-semibold text-red-600">
                     ⚠ 危机 · 12355
                   </span>
                 )}
                 <button
                   onClick={close}
-                  className="text-slate-400 hover:text-slate-600 text-xl leading-none"
+                  className="text-slate-400 hover:text-slate-600 text-2xl leading-none"
                 >
                   ×
                 </button>
@@ -268,36 +293,36 @@ export default function HistoryPage() {
                 return (
                   <div
                     key={a.scale_id}
-                    className="rounded-lg border border-slate-200 p-4 bg-slate-50"
+                    className="rounded-xl border border-slate-200 p-4 bg-slate-50/60"
                   >
                     <div className="flex justify-between items-center mb-2">
                       <h3 className="font-semibold text-slate-800">
                         {a.scale_name || a.scale_id}
                       </h3>
                       <span
-                        className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                        className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-0.5 text-xs font-medium ${
                           SEV_COLOR[a.severity] || SEV_COLOR.none
                         }`}
                       >
+                        <span className={`w-1.5 h-1.5 rounded-full ${SEV_DOT[a.severity] || SEV_DOT.none}`} />
                         {a.score}/{a.max_score} · {SEV_CN[a.severity] || a.severity}
                       </span>
                     </div>
 
                     {a.interpretation && (
-                      <p className="text-sm text-slate-600 mt-2 mb-2">
-                        <span className="font-medium text-slate-700">解释：</span>
+                      <p className="text-sm text-slate-600 mt-2 mb-2 leading-relaxed">
                         {a.interpretation}
                       </p>
                     )}
 
                     {a.crisis_triggers && a.crisis_triggers.length > 0 && (
-                      <div className="text-xs text-red-600 bg-red-50 rounded p-2 mt-2">
+                      <div className="text-xs text-red-600 bg-red-50 rounded-lg p-2.5 mt-2">
                         危机触发词：{a.crisis_triggers.join('；')}
                       </div>
                     )}
 
                     {a.crisis_level && (
-                      <div className="text-xs mt-1 text-slate-600">
+                      <div className="text-xs mt-1.5 text-slate-600">
                         危机等级：<span className="font-medium">{a.crisis_level}</span>
                       </div>
                     )}
@@ -305,19 +330,15 @@ export default function HistoryPage() {
                     {a.answers && Object.keys(a.answers).length > 0 && (
                       <div className="mt-3">
                         <button
-                          onClick={() =>
-                            setShowAnswers((s) => ({ ...s, [key]: !open }))
-                          }
-                          className="text-xs text-[#1e3a5f] hover:underline"
+                          onClick={() => setShowAnswers((s) => ({ ...s, [key]: !open }))}
+                          className="text-xs text-[#1e3a5f] hover:underline font-medium"
                         >
                           {open ? '▼ 收起作答详情' : '▶ 展开作答详情'}
                         </button>
                         {open && (
-                          <div className="mt-2 text-xs text-slate-600 bg-white rounded p-3 border border-slate-200 space-y-1">
+                          <div className="mt-2 text-xs text-slate-600 bg-white rounded-lg p-3 border border-slate-200 grid grid-cols-2 gap-x-4 gap-y-1">
                             {Object.entries(a.answers)
-                              .sort(
-                                ([x], [y]) => Number(x) - Number(y)
-                              )
+                              .sort(([x], [y]) => Number(x) - Number(y))
                               .map(([qid, val]) => (
                                 <div key={qid}>
                                   第 {qid} 题：<span className="font-medium">{val}</span>
@@ -330,6 +351,16 @@ export default function HistoryPage() {
                   </div>
                 )
               })}
+            </div>
+
+            <div className="mt-5 pt-4 border-t border-slate-200">
+              <button
+                onClick={() => downloadReport(detailItem.session_id)}
+                disabled={downloadingId === detailItem.session_id}
+                className="w-full rounded-lg bg-[#1e3a5f] px-4 py-2.5 text-sm text-white font-medium hover:opacity-95 transition disabled:opacity-60"
+              >
+                {downloadingId === detailItem.session_id ? '报告生成中…' : '⬇ 下载 PDF 报告'}
+              </button>
             </div>
           </div>
         </div>
