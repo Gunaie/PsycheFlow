@@ -1,5 +1,7 @@
 # PsycheFlow · 智能心理评估系统
 
+[![CI](https://github.com/Gunaie/PsycheFlow/actions/workflows/ci.yml/badge.svg)](https://github.com/Gunaie/PsycheFlow/actions/workflows/ci.yml)
+
 利用大语言模型与多智能体技术，提供标准化心理测评、开放式 AI 对话、智能报告生成的一体化心理健康筛查服务。
 
 > 定位：面向中小学生的校园心理筛查辅助工具。**非医疗器械，非替代专业诊疗。**

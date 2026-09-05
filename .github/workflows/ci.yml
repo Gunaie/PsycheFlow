@@ -1,0 +1,92 @@
+# PsycheFlow CI：后端 pytest + 前端类型检查/构建 + 主干镜像构建
+# 触发：push 到 main、所有 PR
+# 说明：config.py 所有字段均有默认值，测试无需 .env / 真实 API Key（LLM 调用全部 mock）
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend-test:
+    name: Backend pytest (3.11)
+    runs-on: ubuntu-latest
+    env:
+      # 无 .env 时规避两个启动副作用：init_db 建库目录（默认 /app/data 无权限）、审计日志目录
+      SQLITE_PATH: ./psycheflow-ci.db
+      LOGS_DIR: ./data/logs
+      PYTHONUTF8: "1"
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+
+      # WeasyPrint 导入需要 pango 系系统库（容器外环境补齐）
+      - name: Install WeasyPrint system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libpango-1.0-0 libpangoft2-1.0-0 libpangocairo-1.0-0
+
+      - name: Sync dependencies (uv.lock frozen)
+        run: uv sync --frozen
+
+      - name: Run pytest
+        run: uv run pytest -q --no-header
+
+  frontend-check:
+    name: Frontend typecheck + build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # tsc -b（类型检查）+ vite build（打包）一步覆盖
+      - name: Typecheck & build
+        run: npm run build
+
+  docker-build:
+    # 仅主干 push 构建镜像（不推送），验证 Dockerfile 可构建；PR 不跑省额度
+    name: Docker image build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [backend-test, frontend-check]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build frontend image (prod target)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          target: prod
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
