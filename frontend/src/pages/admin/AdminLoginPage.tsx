@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { apiPost, setToken } from '../../api';
 
 interface AuthResp {
@@ -71,9 +71,17 @@ export default function AdminLoginPage() {
   return (
     <div className="min-h-screen bg-slate-50">
       <header className="bg-[#1e3a5f] text-white">
-        <div className="max-w-3xl mx-auto px-6 py-5">
-          <h1 className="text-2xl font-bold">PsycheFlow · 学校心理筛查管理后台</h1>
-          <p className="text-sm text-slate-200 mt-1">教师账号登录 / 注册</p>
+        <div className="max-w-3xl mx-auto px-6 py-5 flex items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold">PsycheFlow · 学校心理筛查管理后台</h1>
+            <p className="text-sm text-slate-200 mt-1">教师账号登录 / 注册</p>
+          </div>
+          <Link
+            to="/"
+            className="text-xs text-white/70 hover:text-white border border-white/30 rounded-md px-2.5 py-1.5 shrink-0"
+          >
+            ← 返回首页
+          </Link>
         </div>
       </header>
 

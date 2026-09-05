@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiGet, apiPost, getToken } from '../../api';
+import AdminShell from './AdminShell';
 
 interface BatchItem {
   batch_id: string;
@@ -137,32 +138,17 @@ export default function AdminBatchesPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-10">
-      <header className="bg-[#1e3a5f] text-white">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
-          <h1 className="text-lg font-bold">PsycheFlow · 筛查批次管理</h1>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setShowCreate((v) => !v)}
-              className="rounded-md bg-white/10 border border-white/30 px-3 py-1.5 text-sm hover:bg-white/20"
-            >
-              {showCreate ? '收起创建' : '+ 创建批次'}
-            </button>
-            <button
-              onClick={() => {
-                localStorage.removeItem('psycheflow_token');
-                localStorage.removeItem('psycheflow_label');
-                localStorage.removeItem('psycheflow_role');
-                navigate('/');
-              }}
-              className="rounded-md border border-white/30 px-3 py-1.5 text-sm hover:bg-white/10"
-            >
-              退出
-            </button>
-          </div>
-        </div>
-      </header>
-
+    <AdminShell
+      title="筛查批次管理"
+      action={
+        <button
+          onClick={() => setShowCreate((v) => !v)}
+          className="rounded-md bg-white/10 border border-white/30 px-3 py-1.5 text-sm hover:bg-white/20"
+        >
+          {showCreate ? '收起创建' : '+ 创建批次'}
+        </button>
+      }
+    >
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
         {error && <div className="bg-red-50 text-red-600 text-sm p-3 rounded-lg">{error}</div>}
 
@@ -317,6 +303,6 @@ export default function AdminBatchesPage() {
           </div>
         )}
       </main>
-    </div>
+    </AdminShell>
   );
 }

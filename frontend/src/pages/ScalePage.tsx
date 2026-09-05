@@ -372,7 +372,7 @@ export default function ScalePage() {
             <Link to="/chat" className="px-3 py-1.5 rounded-lg text-sm border border-primary-300 text-primary-700 bg-white hover:bg-primary-50 transition">
               💬 和AI对话讨论结果
             </Link>
-            <Link to="/scale" className="px-3 py-1.5 rounded-lg text-sm border border-slate-300 text-slate-600 bg-white hover:bg-slate-50 transition">
+            <Link to="/assess" className="px-3 py-1.5 rounded-lg text-sm border border-slate-300 text-slate-600 bg-white hover:bg-slate-50 transition">
               📋 做其他测评
             </Link>
             <Link to="/history" className="px-3 py-1.5 rounded-lg text-sm border border-slate-300 text-slate-600 bg-white hover:bg-slate-50 transition">

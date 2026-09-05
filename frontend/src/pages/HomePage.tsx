@@ -53,7 +53,7 @@ export default function HomePage() {
             {token ? (
               <>
                 <Link
-                  to="/scale"
+                  to="/assess"
                   className="rounded-xl bg-white px-5 py-2.5 text-sm font-semibold text-[#1e3a5f] hover:bg-blue-50 transition"
                 >
                   开始测评 →

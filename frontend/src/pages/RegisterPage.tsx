@@ -103,7 +103,7 @@ export default function RegisterPage() {
   const handleGoScale = () => {
     if (!result) return;
     setToken(result.token, result.label, result.role);
-    navigate('/scale');
+    navigate('/assess');
   };
 
   return (

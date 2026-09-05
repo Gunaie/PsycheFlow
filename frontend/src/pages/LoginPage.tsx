@@ -34,7 +34,7 @@ export default function LoginPage() {
         token: tokenInput.trim(),
       });
       setToken(res.token, res.label, res.role);
-      navigate('/');
+      navigate('/home');
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -51,7 +51,7 @@ export default function LoginPage() {
         label: labelInput.trim(),
       });
       setToken(res.token, res.label, res.role);
-      navigate('/');
+      navigate('/home');
     } catch (e) {
       setError((e as Error).message);
     } finally {

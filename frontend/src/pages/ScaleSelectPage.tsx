@@ -78,7 +78,7 @@ export default function ScaleSelectPage() {
           return (
             <Link
               key={s.scale_id}
-              to={`/scales/${s.scale_id}`}
+              to={`/assess/${s.scale_id}`}
               className="group bg-white rounded-2xl border border-slate-200 p-5 hover:border-[#1e3a5f] hover:shadow-md transition flex flex-col"
             >
               <div className="flex items-start justify-between mb-3">

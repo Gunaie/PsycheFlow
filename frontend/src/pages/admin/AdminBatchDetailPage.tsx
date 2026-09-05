@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { apiGet, apiGetBlob, apiPost } from '../../api';
+import AdminShell from './AdminShell';
 
 interface EntryAssessment {
   scale_id: string;
@@ -137,41 +138,33 @@ export default function AdminBatchDetailPage() {
   const crisisEntries = new Set(detail.crisis_list.map((c) => c.entry_id));
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-10">
-      <header className="bg-[#1e3a5f] text-white">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
-          <div>
-            <h1 className="text-lg font-bold">{detail.name}</h1>
-            <p className="text-xs text-slate-300 mt-0.5">
-              {detail.scale_ids.join(' + ').toUpperCase()} · 共 {detail.total} 人
-              {detail.status === 'closed' && ' · 已关闭'}
-            </p>
-          </div>
-          <div className="flex gap-2">
+    <AdminShell
+      title={detail.name}
+      subtitle={
+        <>
+          {detail.scale_ids.join(' + ').toUpperCase()} · 共 {detail.total} 人
+          {detail.status === 'closed' && ' · 已关闭'}
+        </>
+      }
+      action={
+        <>
+          <button
+            onClick={exportCsv}
+            className="rounded-md border border-white/30 px-3 py-1.5 text-sm hover:bg-white/10"
+          >
+            导出汇总 CSV
+          </button>
+          {detail.status === 'active' && (
             <button
-              onClick={exportCsv}
-              className="rounded-md border border-white/30 px-3 py-1.5 text-sm hover:bg-white/10"
+              onClick={closeBatch}
+              className="rounded-md bg-red-500/80 px-3 py-1.5 text-sm hover:bg-red-500"
             >
-              导出汇总 CSV
+              关闭批次
             </button>
-            {detail.status === 'active' && (
-              <button
-                onClick={closeBatch}
-                className="rounded-md bg-red-500/80 px-3 py-1.5 text-sm hover:bg-red-500"
-              >
-                关闭批次
-              </button>
-            )}
-            <button
-              onClick={() => navigate('/admin')}
-              className="rounded-md border border-white/30 px-3 py-1.5 text-sm hover:bg-white/10"
-            >
-              ← 批次列表
-            </button>
-          </div>
-        </div>
-      </header>
-
+          )}
+        </>
+      }
+    >
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
         {error && <div className="bg-red-50 text-red-600 text-sm p-3 rounded-lg">{error}</div>}
 
@@ -370,6 +363,6 @@ export default function AdminBatchDetailPage() {
           </div>
         </div>
       </main>
-    </div>
+    </AdminShell>
   );
 }

@@ -1,6 +1,8 @@
-import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom'
-import { getRole } from './api'
+import type { ReactNode } from 'react'
+import { Link, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom'
+import { getRole, getToken } from './api'
 import HomePage from './pages/HomePage'
+import PortalPage from './pages/PortalPage'
 import ScaleSelectPage from './pages/ScaleSelectPage'
 import ScalePage from './pages/ScalePage'
 import ChatPage from './pages/ChatPage'
@@ -12,24 +14,42 @@ import AdminBatchesPage from './pages/admin/AdminBatchesPage'
 import AdminBatchDetailPage from './pages/admin/AdminBatchDetailPage'
 import AdminLoginPage from './pages/admin/AdminLoginPage'
 
+/** 旧路径 /scales/:scaleId → /assess/:scaleId 兼容重定向（Navigate 不支持参数插值，需转发参数）。 */
+function LegacyScaleRedirect() {
+  const { scaleId } = useParams()
+  return <Navigate to={`/assess/${scaleId}`} replace />
+}
+
+/** 路由守卫：教师身份才能进管理后台（服务端 admin API 仍有真实鉴权兜底）。 */
+function RequireTeacher({ children }: { children: ReactNode }) {
+  if (!getToken() || getRole() !== 'teacher') return <Navigate to="/admin/login" replace />
+  return <>{children}</>
+}
+
 /** C 端公共布局：顶栏 + 内容容器 + 免责 footer。 */
-function Shell({ children }: { children: React.ReactNode }) {
+function Shell({ children }: { children: ReactNode }) {
   const location = useLocation()
   const path = location.pathname
   const role = getRole()
 
-  const navItems = [
-    { to: '/', label: '首页', active: path === '/' },
-    { to: '/scale', label: '测评', active: path === '/scale' || path.startsWith('/scale/') || path.startsWith('/scales') || path === '/screening' },
-    { to: '/chat', label: '对话', active: path === '/chat' },
-    { to: '/history', label: '历史', active: path === '/history' },
-  ]
+  // 顶栏按角色分化：教师只保留 管理后台（学生功能不做导航暴露）；学生为四个常规入口
+  const navItems =
+    role === 'teacher'
+      ? [
+          { to: '/admin', label: '管理后台', active: path.startsWith('/admin') },
+        ]
+      : [
+          { to: '/home', label: '首页', active: path === '/home' },
+          { to: '/assess', label: '测评', active: path === '/assess' || path.startsWith('/assess/') },
+          { to: '/chat', label: '对话', active: path === '/chat' },
+          { to: '/history', label: '历史', active: path === '/history' },
+        ]
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50">
       <header className="bg-white border-b border-slate-200">
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-6">
-          <Link to="/" className="text-lg font-bold text-primary-600 shrink-0">PsycheFlow</Link>
+          <Link to="/home" className="text-lg font-bold text-primary-600 shrink-0">PsycheFlow</Link>
           <nav className="flex gap-1 text-sm">
             {navItems.map(item => (
               <Link
@@ -40,14 +60,6 @@ function Shell({ children }: { children: React.ReactNode }) {
                 {item.label}
               </Link>
             ))}
-            {role === 'teacher' && (
-              <Link
-                to="/admin"
-                className={`px-2.5 py-1 rounded-md transition ${path.startsWith('/admin') ? 'bg-primary-50 text-primary-700 font-semibold' : 'text-slate-600 hover:text-primary-600 hover:bg-slate-50'}`}
-              >
-                管理后台
-              </Link>
-            )}
           </nav>
         </div>
       </header>
@@ -68,28 +80,32 @@ function StudentPages() {
   return (
     <div className={`${wide ? 'max-w-5xl' : 'max-w-3xl'} w-full mx-auto px-4 py-6`}>
       <Routes>
-        <Route path="/" element={<HomePage />} />
-        <Route path="/scale" element={<ScaleSelectPage />} />
-        <Route path="/scale/combined" element={<ScalePage />} />
-        <Route path="/scales/:scaleId" element={<ScalePage />} />
+        <Route path="/home" element={<HomePage />} />
+        <Route path="/assess" element={<ScaleSelectPage />} />
+        <Route path="/assess/combined" element={<ScalePage />} />
+        <Route path="/assess/:scaleId" element={<ScalePage />} />
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/login" element={<LoginPage />} />
-        <Route path="/history" element={<HistoryPage />} />
+        <Route path="/history" element={getToken() ? <HistoryPage /> : <Navigate to="/login" replace />} />
         <Route path="/screening" element={<ScreeningPage />} />
+        {/* 旧路径兼容重定向 */}
+        <Route path="/scale/combined" element={<Navigate to="/assess/combined" replace />} />
+        <Route path="/scale" element={<Navigate to="/assess" replace />} />
+        <Route path="/scales/:scaleId" element={<LegacyScaleRedirect />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </div>
   )
 }
 
-/** B 端管理后台路由（自带全屏布局，不走公共 Shell）。 */
+/** B 端管理后台路由（AdminShell 布局，不走公共 Shell）。 */
 function AdminPages() {
   return (
     <Routes>
-      <Route path="/" element={<AdminBatchesPage />} />
       <Route path="/login" element={<AdminLoginPage />} />
-      <Route path="/batches/:batchId" element={<AdminBatchDetailPage />} />
+      <Route path="/" element={<RequireTeacher><AdminBatchesPage /></RequireTeacher>} />
+      <Route path="/batches/:batchId" element={<RequireTeacher><AdminBatchDetailPage /></RequireTeacher>} />
       <Route path="*" element={<Navigate to="/admin" replace />} />
     </Routes>
   )
@@ -99,6 +115,8 @@ export default function App() {
   return (
     <Routes>
       <Route path="/admin/*" element={<AdminPages />} />
+      {/* 系统门户：未登录选身份，已登录按角色自动跳转（独立布局，不套学生 Shell） */}
+      <Route path="/" element={<PortalPage />} />
       <Route path="*" element={<Shell><StudentPages /></Shell>} />
     </Routes>
   )

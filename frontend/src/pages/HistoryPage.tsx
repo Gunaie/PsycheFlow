@@ -156,7 +156,7 @@ export default function HistoryPage() {
           <p className="text-slate-700 text-lg font-semibold mb-2">暂无测评记录</p>
           <p className="text-slate-500 text-sm mb-6">完成量表测评后，您的报告将出现在这里</p>
           <button
-            onClick={() => navigate('/scale')}
+            onClick={() => navigate('/assess')}
             className="rounded-lg bg-[#1e3a5f] px-5 py-2.5 text-sm text-white font-medium hover:opacity-95 transition"
           >
             前往测评 →
