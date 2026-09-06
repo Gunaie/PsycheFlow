@@ -1,8 +1,8 @@
 # PsycheFlow 项目交接文档
 
 > 最后更新：2026-09-06
-> 当前 commit：`5fd9f6e` + 工作区未提交（本地私有化 3.A 双模式改造）
-> 阶段：D 四期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标）+ Ollama 本地兜底 + 生产验收/打包交付 + 测评纠偏与前端体验批次 + 文档同步 + 试点合规材料 + 路由重构与三态门户 + 前端视觉丰富 + GitHub CI（全绿）+ LLM 输出评估体系 + README 开源级打磨 + 匿名安全加固 + 双端隔离补强与交互导航 + 报告/历史/批次管理修复批次 + **本地私有化 3.A 基座模型版已落地（LLM_MODE=local，qwen2.5:7b + bge-m3，triage 93.0% 危机 100% / 报告 76/76=100%）**；后续可选：3.B 云GPU微调、ASR/TTS 本地化
+> 当前 commit：`562022f` + 工作区未提交（HANDOVER 3.B 云训练完成回写）
+> 阶段：D 四期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标）+ Ollama 本地兜底 + 生产验收/打包交付 + 测评纠偏与前端体验批次 + 文档同步 + 试点合规材料 + 路由重构与三态门户 + 前端视觉丰富 + GitHub CI（全绿）+ LLM 输出评估体系 + README 开源级打磨 + 匿名安全加固 + 双端隔离补强与交互导航 + 报告/历史/批次管理修复批次 + 本地私有化 3.A 基座模型版已落地（LLM_MODE=local，qwen2.5:7b + bge-m3，triage 93.0% 危机 100% / 报告 76/76=100%）+ **本地私有化 3.B 云GPU微调已完成云上训练与 GGUF 导出（QLoRA 双 LoRA → 4.36GB×2 已下载本地，待导入 Ollama 启用+评测）**；后续可选：ASR/TTS 本地化
 
 > ⚠️ **运行模式提示（2026-09-06）**：当前本机 `.env` 为 `LLM_MODE=local`（后端跑在本地 Ollama 模式，数据不出本机；语音 ASR/TTS 仍走百炼）。切回云端：`.env` 改 `LLM_MODE=cloud` → `docker compose up -d backend` → 重建 RAG 索引（先 `rag_store.reset_namespace()` 再 `build_index()`，embedding 模型换回 v3）。
 >
@@ -446,7 +446,26 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
   - 报告合规 **76/76 = 100%**（5 场景全过，发展建议 733-874 字非空，PDF 136-170KB，单场景 ~11s）
   - 正常对话 SSE：模型热态首 token ~0.8s（RAG 0.6s）；危机路径 0.15s（硬编码前置不调 LLM）
 - **已知限制**：ASR/TTS 语音仍走百炼（3.A 未本地化，faster-whisper/edge-tts 推后）；eval 脚本已适配 local 模式（无 DASHSCOPE_API_KEY 也可跑）
-- **3.B 云GPU微调版**：未实施（可选增强，方案文档 3.B 章；配套 [export_report_finetune_data.py](backend/scripts/export_report_finetune_data.py) 已就绪，数据目录 `backend/data/finetune/`）
+- **3.B 云GPU微调版**：✅ 云上训练与 GGUF 导出已完成（2026-09-06），详见下节「本地私有化 3.B」；剩余本地导入启用+评测
+
+### 本地私有化 3.B 云 GPU 微调 ✅ 云上训练+GGUF 导出完成（2026-09-06，待本地导入启用）
+
+- **目标**：QLoRA 微调 qwen2.5:7b，dialog 角色换用 DeepWell-Adol 心理对话风格，report 角色强化发展建议质量；intake/triage 保持基座不动——**危机红线不受微调影响**
+- **代码侧**：[config.py](backend/app/core/config.py) 增 `LOCAL_MODEL_DIALOG/LOCAL_MODEL_REPORT`（local 模式下 dialog/report 角色可挂微调模型，留空回退 `local_model` 基座）；[llm.py](backend/app/core/llm.py) `_primary_for`/`model_for` 适配；单测全量 **218 passed / 1 skipped**
+- **训练数据**：
+  - dialog：清华 **DeepWell-Adol**（EMNLP 2025 青少年积极心理对话数据集，云上自动 clone + [convert_deepwell.py](backend/scripts/finetune/convert_deepwell.py) 转 sharegpt 格式）
+  - report：**52 条蒸馏数据**（云端 deepseek 对项目历史测评数据生成发展建议，`data/finetune/finetune_report.jsonl`，建议 474–1089 字，结构完整）
+- **训练配置**：QLoRA（bitsandbytes 4bit 基座 + LoRA rank16/alpha32/target all，cutoff 2048，3 epochs，effective batch 16；dialog lr 1e-4 / report lr 5e-5），AutoDL **RTX 4090 24GB**，两个 adapter 各 155MB
+- **导出链**：合并 LoRA → f16 GGUF（convert_hf_to_gguf）→ **llama-quantize 量化 Q4_K_M**（注意：convert 脚本不支持直接出 q4_k_m）→ 产物 `qwen2.5-dialog-lora-q4_k_m.gguf` + `qwen2.5-report-lora-q4_k_m.gguf`（各 **4.36GB**）已下载至 `E:\OllamaModels\gguf\`
+- **一键脚本**：[backend/scripts/finetune/cloud_train.sh](backend/scripts/finetune/cloud_train.sh)（AutoDL 数据盘 /root/autodl-tmp/ft，断点自愈：已训 adapter/已合并目录/已产出 GGUF 均自动跳过；内含全链路导入探针）+ [import_gguf.ps1](backend/scripts/finetune/import_gguf.ps1)（本地注册进 Ollama）
+- **云上环境踩坑记录**（AutoDL 复现训练时的教训，脚本均已修复自愈）：
+  1. 学术加速 `network_turbo` 开启会劫持 pip 流量导致找不到包 → 脚本改为**先装依赖后开代理**
+  2. pip 新装 torchaudio 绑定 CUDA13 而宿主 torch 是 CUDA12（`libcudart.so.13` 报错）→ torchaudio 必须与 torch 严格同版本
+  3. huggingface_hub 新版默认 Xet 协议直连 `cas-server.xethub.hf.co` 国内 401 → `HF_HUB_DISABLE_XET=1` 走 hf-mirror；hf-mirror 大文件断流 → **ModelScope 兜底**（阿里源 ~50MB/s）
+  4. 两个 pip 进程并发写同一环境会连锁损坏（此坑最隐蔽：错误表现为误导性的 `cannot import PreTrainedModel`，真凶是 numpy 1.26.4 与 scipy 1.18+ 冲突 + torch 家族被拆散配对）→ 修复链：transformers 钉回 4.57.6、scipy==1.13.1（兼容 numpy 1.26.4）、torch/torchvision/torchaudio 对齐 2.8.0 CPU（pip 版本比较忽略 `+cpu/+cu128` 后缀，必须先卸载强制重装）
+  5. `convert_hf_to_gguf.py` 的 `--outtype` 不支持 q4_k_m → 只能 f16 转换 + llama-quantize 两步（llama.cpp 需现场 cmake 编译 quantize 目标）
+- **待办（本地）**：`powershell -ExecutionPolicy Bypass -File backend\scripts\finetune\import_gguf.ps1` 导入 → `.env` 加 `LOCAL_MODEL_DIALOG=qwen2.5:dialog-lora`、`LOCAL_MODEL_REPORT=qwen2.5:report-lora` → `docker compose up -d backend` → `eval_report.py` 对比 3.A 基线（76/76）
+- **⚠️ 显存预算待实测**：8GB 显存装不下全部模型常驻（基座 4.7 + dialog 4.36 + report 4.36 + bge-m3 1.2 ≈ 14.6GB）——启用微调模型后，对话/报告（微调模型）与 triage（基座）交替调用会触发 Ollama 换入换出，可能出现加载延迟；需实测后决定 KEEP_ALIVE 策略（当前 `=-1` 常驻可能需改回默认按需加载）
 
 ---
 
