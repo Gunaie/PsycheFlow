@@ -48,6 +48,14 @@ class Settings(BaseSettings):
     ollama_base_url: str = ""
     ollama_model: str = "qwen2.5:7b"
 
+    # LLM 运行模式（双版本切换，见 docs/本地模型化方案.md）：
+    #   cloud = 阿里云百炼云端（默认，按量付费）
+    #   local = Ollama 完全本地（对话/分诊/报告/embedding 全走本地，数据不出本机，可离线；语音 ASR/TTS 仍需云端）
+    llm_mode: str = "cloud"
+    # 本地模式（LLM_MODE=local）使用的 Ollama 模型
+    local_model: str = "qwen2.5:7b"       # 对话/分诊/报告全角色共用（RTX 4060 8GB 可跑 Q4 量化）
+    local_embed_model: str = "bge-m3"     # RAG 向量化（Ollama /v1/embeddings 端点，1024 维）
+
     # LLM 温度：计分场景确定性优先，对话场景放宽
     temp_intake: float = 0.1
     temp_triage: float = 0.1   # 意图分类确定性优先
@@ -59,6 +67,16 @@ class Settings(BaseSettings):
     rag_knowledge_dir: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @model_validator(mode="after")
+    def _validate_llm_mode(self) -> "Settings":
+        """local 模式必须配置 OLLAMA_BASE_URL（否则启动即快速失败，不静默回退云端）。"""
+        if self.llm_mode.strip().lower() == "local" and not self.ollama_base_url:
+            raise ValueError(
+                "LLM_MODE=local 必须配置 OLLAMA_BASE_URL"
+                "（后端容器内填 http://host.docker.internal:11434/v1）"
+            )
+        return self
 
     @model_validator(mode="after")
     def _ensure_dirs(self) -> "Settings":

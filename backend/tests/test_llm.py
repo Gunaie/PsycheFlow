@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 from unittest.mock import AsyncMock, MagicMock
 
 from app.core.llm import LLMProvider
@@ -72,7 +73,10 @@ class TestChat(unittest.IsolatedAsyncioTestCase):
         mock_client.chat.completions.create = AsyncMock(return_value=mock_resp)
         p._client = mock_client
 
-        reply = await p.chat("intake", [{"role": "user", "content": "x"}])
+        # 显式禁用 Ollama 兜底：本测试语义为「未启用兜底时 cloud 空回复 → ""」
+        # （否则在配了 OLLAMA_BASE_URL 且 ollama 可达的环境会转真实本地模型）
+        with mock.patch.object(p._settings, "ollama_base_url", ""):
+            reply = await p.chat("intake", [{"role": "user", "content": "x"}])
         self.assertEqual(reply, "")
 
 
@@ -126,12 +130,26 @@ class TestEmbed(unittest.IsolatedAsyncioTestCase):
 def _fake_settings(ollama_enabled: bool):
     """构造带 ollama 配置的假 settings（避免触碰真实 .env）。"""
     s = MagicMock()
+    s.llm_mode = "cloud"   # 显式 cloud：走百炼 + Ollama 兜底链
     s.ollama_base_url = "http://ollama:11434/v1" if ollama_enabled else ""
     s.ollama_model = "qwen2.5:7b"
     # role 模型/温度（intake 用于多数 chat 测试，dialog 用于 stream 测试）
     s.model_intake = "intake-m"; s.temp_intake = 0.1
     s.model_dialog = "dialog-m"; s.temp_dialog = 0.35
     s.model_report = "report-m";  s.temp_report = 0.1
+    return s
+
+
+def _fake_local_settings(ollama_enabled: bool = True):
+    """构造 LLM_MODE=local 的假 settings（全走 Ollama，不触云端）。"""
+    s = MagicMock()
+    s.llm_mode = "local"
+    s.ollama_base_url = "http://ollama:11434/v1" if ollama_enabled else ""
+    s.local_model = "qwen2.5:7b"
+    s.local_embed_model = "bge-m3"
+    s.temp_intake = 0.1
+    s.temp_dialog = 0.35
+    s.temp_report = 0.1
     return s
 
 
@@ -306,6 +324,152 @@ class TestStreamOllamaFallback(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(RuntimeError):
             await self._collect(p.stream("dialog", [{"role": "user", "content": "hi"}]))
+
+
+# ============ LLM_MODE=local 本地私有化模式单测 ============
+# 覆盖：chat/stream/embed 直走 Ollama 不触云端；Ollama 失败 chat 返回 "" 且不回退云端；
+# model_for 本地角色映射；embed 按 8 条分批；未配 OLLAMA_BASE_URL 快速失败。全部 mock。
+
+
+class TestLocalMode(unittest.IsolatedAsyncioTestCase):
+    def _make(self, ollama_client, ollama_enabled=True):
+        p = LLMProvider(_fake_local_settings(ollama_enabled))
+        p._ollama_client = ollama_client
+        # cloud client 设为哨兵：local 模式下一旦被调用即测试失败（数据不得出本机）
+        p._client = MagicMock()
+        p._client.chat.completions.create = AsyncMock(
+            side_effect=AssertionError("local 模式不得调用云端 chat")
+        )
+        p._client.embeddings.create = AsyncMock(
+            side_effect=AssertionError("local 模式不得调用云端 embedding")
+        )
+        return p
+
+    async def test_local_chat_uses_ollama_only(self):
+        ollama = _chat_client_with_content("本地回复")
+        p = self._make(ollama)
+
+        reply = await p.chat("dialog", [{"role": "user", "content": "hi"}])
+
+        self.assertEqual(reply, "本地回复")
+        ollama.chat.completions.create.assert_awaited_once()
+        kw = ollama.chat.completions.create.call_args.kwargs
+        self.assertEqual(kw["model"], "qwen2.5:7b")
+        p._client.chat.completions.create.assert_not_awaited()
+
+    async def test_local_chat_ollama_failure_returns_empty_no_cloud(self):
+        # Ollama 异常 → 返回 ""（节点级话术兜底），且不回退云端
+        ollama = _chat_client_raising(RuntimeError("ollama down"))
+        p = self._make(ollama)
+
+        reply = await p.chat("intake", [{"role": "user", "content": "hi"}])
+
+        self.assertEqual(reply, "")
+        p._client.chat.completions.create.assert_not_awaited()
+
+    async def test_local_chat_empty_content_returns_empty(self):
+        ollama = _chat_client_with_content(None)
+        p = self._make(ollama)
+
+        reply = await p.chat("report", [{"role": "user", "content": "hi"}])
+
+        self.assertEqual(reply, "")
+        p._client.chat.completions.create.assert_not_awaited()
+
+    async def test_local_stream_uses_ollama(self):
+        ollama = _stream_client_from_chunks(["你", "好"])
+        p = self._make(ollama)
+
+        tokens = [tok async for tok in p.stream("dialog_stream", [{"role": "user", "content": "hi"}])]
+
+        self.assertEqual(tokens, ["你", "好"])
+        ollama.chat.completions.create.assert_awaited_once()
+        self.assertEqual(
+            ollama.chat.completions.create.call_args.kwargs["model"], "qwen2.5:7b"
+        )
+        p._client.chat.completions.create.assert_not_awaited()
+
+    async def test_local_embed_uses_bge_m3(self):
+        resp = MagicMock()
+        d1 = MagicMock(); d1.embedding = [0.1]; d1.index = 0
+        d2 = MagicMock(); d2.embedding = [0.2]; d2.index = 1
+        resp.data = [d1, d2]
+        ollama = MagicMock()
+        ollama.embeddings.create = AsyncMock(return_value=resp)
+        p = self._make(ollama)
+
+        vecs = await p.embed(["a", "b"])
+
+        self.assertEqual(vecs, [[0.1], [0.2]])
+        kw = ollama.embeddings.create.call_args.kwargs
+        self.assertEqual(kw["model"], "bge-m3")
+        self.assertEqual(kw["input"], ["a", "b"])
+        p._client.embeddings.create.assert_not_awaited()
+
+    async def test_local_embed_batches_by_8(self):
+        def fake_create(*a, **kw):
+            n = len(kw["input"])
+            r = MagicMock()
+            r.data = [MagicMock() for _ in range(n)]
+            for i, d in enumerate(r.data):
+                d.embedding = [0.1]
+                d.index = i
+            return r
+
+        ollama = MagicMock()
+        ollama.embeddings.create = AsyncMock(side_effect=fake_create)
+        p = self._make(ollama)
+
+        vecs = await p.embed([f"t{i}" for i in range(20)])  # 20 条 → 8+8+4
+
+        self.assertEqual(len(vecs), 20)
+        self.assertEqual(ollama.embeddings.create.await_count, 3)
+        last_input = ollama.embeddings.create.call_args_list[-1].kwargs["input"]
+        self.assertEqual(len(last_input), 4)
+
+    async def test_local_embed_empty_input(self):
+        ollama = MagicMock()
+        ollama.embeddings.create = AsyncMock()
+        p = self._make(ollama)
+
+        self.assertEqual(await p.embed([]), [])
+        ollama.embeddings.create.assert_not_awaited()
+
+    def test_local_model_for_maps_roles(self):
+        p = LLMProvider(_fake_local_settings(True))
+        for role in ("intake", "triage", "dialog", "dialog_stream", "report"):
+            self.assertEqual(p.model_for(role), "qwen2.5:7b")
+        self.assertEqual(p.model_for("embed"), "bge-m3")
+        with self.assertRaises(ValueError):
+            p.model_for("xxx")
+
+    async def test_local_without_ollama_url_raises(self):
+        # local 模式但 OLLAMA_BASE_URL 空 → 调用快速失败（不静默回退云端）
+        p = LLMProvider(_fake_local_settings(ollama_enabled=False))
+        with self.assertRaises(RuntimeError):
+            await p.chat("dialog", [{"role": "user", "content": "hi"}])
+
+
+class TestLocalModeConfig(unittest.TestCase):
+    """config 层校验：LLM_MODE=local 必须配 OLLAMA_BASE_URL。"""
+
+    def test_local_mode_without_url_rejected(self):
+        import tempfile
+
+        from pydantic import ValidationError
+
+        from app.core.config import Settings
+
+        with self.assertRaises(ValidationError):
+            Settings(llm_mode="local", ollama_base_url="")
+        # 配了 URL 则正常实例化
+        tmp = tempfile.mkdtemp()
+        s = Settings(
+            llm_mode="local",
+            ollama_base_url="http://host.docker.internal:11434/v1",
+            sqlite_path=f"{tmp}/t.db",
+        )
+        self.assertEqual(s.llm_mode, "local")
 
 
 if __name__ == "__main__":

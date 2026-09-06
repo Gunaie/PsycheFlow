@@ -238,9 +238,11 @@ async def run(only: str | None, verbose: bool) -> dict:
 
     total_checks = sum(r["total"] for r in report_results)
     passed_checks = sum(r["passed"] for r in report_results)
+    is_local = str(settings.llm_mode).strip().lower() == "local"
     return {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "model_report": settings.model_report,
+        "mode": settings.llm_mode,
+        "model_report": settings.local_model if is_local else settings.model_report,
         "scenarios": report_results,
         "total_checks": total_checks,
         "passed_checks": passed_checks,
@@ -255,8 +257,9 @@ def main() -> int:
     parser.add_argument("--verbose", action="store_true", help="打印失败项明细")
     args = parser.parse_args()
 
-    if not settings.dashscope_api_key:
-        print("[中止] 未配置 DASHSCOPE_API_KEY：本评测调用真实 LLM，请在有凭据的环境（容器）运行", file=sys.stderr)
+    is_local = str(settings.llm_mode).strip().lower() == "local"
+    if not is_local and not settings.dashscope_api_key:
+        print("[中止] 未配置 DASHSCOPE_API_KEY：cloud 模式评测需百炼凭据；local 模式走本地 Ollama 无需 Key", file=sys.stderr)
         return 2
 
     summary = asyncio.run(run(args.only, args.verbose))
@@ -269,7 +272,7 @@ def main() -> int:
     with open(latest_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
 
-    print(f"\n===== 报告结构合规评测结果（report 模型 {summary['model_report']}）=====")
+    print(f"\n===== 报告结构合规评测结果（{summary['mode']} 模式，report 模型 {summary['model_report']}）=====")
     print(f"总体: {summary['passed_checks']}/{summary['total_checks']} = {summary['pass_rate']:.1%}（耗时 {summary['elapsed_sec']}s）")
     for r in summary["scenarios"]:
         print(f"  {r['scenario']}: {r['passed']}/{r['total']}" + (f" 失败:{r['failed']}" if r["failed"] else ""))

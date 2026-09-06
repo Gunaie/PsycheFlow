@@ -1,16 +1,12 @@
 # PsycheFlow 项目交接文档
 
 > 最后更新：2026-09-06
-> 当前 commit：`5fd9f6e`（fix: 报告字样/历史时间/详情显示 + 批次管理增强 + 测评提交即存档）
-> 阶段：D 四期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标）+ Ollama 本地兜底 + 生产验收/打包交付 + 测评纠偏与前端体验批次 + 文档同步 + 试点合规材料 + 路由重构与三态门户 + 前端视觉丰富 + GitHub CI（全绿）+ LLM 输出评估体系 + README 开源级打磨 + 匿名安全加固 + 双端隔离补强与交互导航 + 报告/历史/批次管理修复批次；**下一阶段主线：本地私有化部署（双版本切换，方案已就绪未实施）**
+> 当前 commit：`5fd9f6e` + 工作区未提交（本地私有化 3.A 双模式改造）
+> 阶段：D 四期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标）+ Ollama 本地兜底 + 生产验收/打包交付 + 测评纠偏与前端体验批次 + 文档同步 + 试点合规材料 + 路由重构与三态门户 + 前端视觉丰富 + GitHub CI（全绿）+ LLM 输出评估体系 + README 开源级打磨 + 匿名安全加固 + 双端隔离补强与交互导航 + 报告/历史/批次管理修复批次 + **本地私有化 3.A 基座模型版已落地（LLM_MODE=local，qwen2.5:7b + bge-m3，triage 93.0% 危机 100% / 报告 76/76=100%）**；后续可选：3.B 云GPU微调、ASR/TTS 本地化
 
-> ⚠️ **工作区有未提交/未跟踪文件（2026-09-06，交接时注意）**：
-> - `docs/本地模型化方案.md`（**未跟踪**）：双版本部署方案 v2.0（云端 API 版 + 本地私有化版 3.A 基座/3.B 云GPU微调），是下一阶段实施依据
-> - `backend/scripts/export_report_finetune_data.py`（**未跟踪**）：微调数据导出脚本（从历史测评/报告反向构造 LLaMA-Factory 格式 JSONL）
-> - `backend/data/finetune/README.md`（**未跟踪**）：微调数据目录说明（数据文件 *.jsonl/*.json 已被 .gitignore 忽略）
-> - `.gitignore`（**已修改未提交**）：新增 `**/data/finetune/*.jsonl`、`**/data/finetune/*.json` 忽略规则（微调数据实际在 `backend/data/finetune/`，必须用 `**/` 前缀才能匹配，根目录 `data/finetune/` 规则不生效——已修正）
-> - `问题,txt`（**未跟踪**）：旧账号的临时问题记录草稿，可自行处置
-> - 新账号接手后请先决定：提交这批文件（建议）或另行处理。**注意：方案中 `LLM_MODE` 开关、bge-m3 本地 embedding、faster-whisper、edge-tts 均为规划，代码尚未实现**（grep 全仓库无匹配）；当前代码里的本地能力只有 Ollama 兜底链（`OLLAMA_BASE_URL`）。
+> ⚠️ **运行模式提示（2026-09-06）**：当前本机 `.env` 为 `LLM_MODE=local`（后端跑在本地 Ollama 模式，数据不出本机；语音 ASR/TTS 仍走百炼）。切回云端：`.env` 改 `LLM_MODE=cloud` → `docker compose up -d backend` → 重建 RAG 索引（先 `rag_store.reset_namespace()` 再 `build_index()`，embedding 模型换回 v3）。
+>
+> **工作区未提交内容**：本地私有化 3.A 代码改造（config.py/llm.py/.env.example/test_llm.py + eval 脚本适配 + HANDOVER/方案文档回写），详见 §7「本地私有化 3.A」；`问题,txt` 为旧账号临时草稿可自行处置。
 
 ---
 
@@ -435,16 +431,22 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 - **教师端批次管理增强**（[admin.py](backend/app/api/admin.py) + 批次列表/详情两页）：新增 `PATCH` 批次重命名、`DELETE` 批次删除、`POST` 批次 reopen（重新开放作答）；列表页与详情页加入口按钮；「创建筛查批次」表单展开时不再同时显示「暂无筛查批次」空状态（条件改 `batches.length === 0 && !showCreate`）
 - **测试**：[test_admin_screening.py](backend/tests/test_admin_screening.py) 新增 3 个批次端点测试（重命名/删除/reopen）
 
-### 本地私有化部署方案（已规划，未实施）📋（2026-09-06，工作区未提交）
+### 本地私有化 3.A 基座模型版 ✅（2026-09-06 实施并验证通过）
 
-- **方案文档**：[docs/本地模型化方案.md](docs/本地模型化方案.md) v2.0——两套部署共用一套代码，`.env` 切换：
-  - 版本一：云端 API 版（现状，零改动）
-  - 版本二 3.A：本地基座模型版（Ollama qwen2.5:7b + bge-m3 embedding + faster-whisper ASR + edge-tts，RTX 4060 8GB 可跑，**0 成本不微调**）
-  - 版本二 3.B：云 GPU 微调版（AutoDL 等免费/低价 4090 租 LoRA 微调，权重下载回本地，约 10-30 元）
-- **路径规范**：模型权重统一 `E:\OllamaModels`（Ollama 容器挂载 `/root/.ollama`）；微调数据 `backend/data/finetune/`（容器内 `/app/data/finetune/`）
-- **配套脚本**：[export_report_finetune_data.py](backend/scripts/export_report_finetune_data.py) 从已有测评记录/报告反向构造 LLaMA-Factory 格式 JSONL（默认输出 `data/finetune/finetune_report.jsonl`）；公开数据源：DeepWell-Adol（青少年心理对话）、CPCD（校园场景），均免费
-- ⚠️ **代码状态**：`LLM_MODE` 开关、bge-m3、faster-whisper、edge-tts **尚未实现**（全仓库 grep 无匹配）；config.py/llm.py 当前仅支持云端百炼 + Ollama 兜底。实施 3.A 需按文档第 3 章改 config/llm/voice 三处
-- 硬件门槛：RTX 4060 8GB（qwen2.5:7b Q4 量化需 ≥6GB 显存）+ ≥16GB 内存
+- **方案文档**：[docs/本地模型化方案.md](docs/本地模型化方案.md) v2.0——两套部署共用一套代码，`.env` 的 `LLM_MODE` 切换（cloud/local）
+- **代码改造**（4 文件）：
+  - [config.py](backend/app/core/config.py)：新增 `llm_mode`（cloud/local，默认 cloud）/`local_model`（qwen2.5:7b）/`local_embed_model`（bge-m3）；model_validator 校验 local 模式必须配 `OLLAMA_BASE_URL` 否则启动报错（快速失败不静默回退云端）
+  - [llm.py](backend/app/core/llm.py)：新增 `is_local` 属性 + `_primary_for(role)` 路由；`chat()/stream()/embed()` 加 local 分支——**直走 Ollama 不触云端**（数据不出本机），Ollama 失败 chat 返回 ""/stream 上抛由节点级话术兜底（**不回退云端**）；embed local 走 bge-m3 `/v1/embeddings`（分批 8 条，按 index 排序保序）；cloud 模式兜底链逻辑不变
+  - [.env.example](.env.example)：补 LLM_MODE/LOCAL_MODEL/LOCAL_EMBED_MODEL 配置块
+  - [test_llm.py](backend/tests/test_llm.py)：+11 例（local 下 chat/stream/embed 直走 Ollama 且 cloud client 设哨兵断言不被调用、失败不回退云端、model_for 本地映射、embed 8 条分批、config 校验）；全量 **217 passed / 1 skipped**
+- **环境变更**：Ollama 整机容器重建加 `-e OLLAMA_KEEP_ALIVE=-1`（模型常驻显存，消除 40s 冷启动；qwen2.5:7b 4.7GB + bge-m3 1.2GB = 5.9GB < 8GB 显存）；模型库仍在 `E:\OllamaModels` 卷，重建不丢
+- **切换动作**：`.env` 设 `LLM_MODE=local` + `OLLAMA_BASE_URL=http://host.docker.internal:11434/v1` → `docker compose up -d backend`（restart 不重读 .env）→ **必须重建 RAG 索引**（embedding 换模型，旧 v3 向量作废）：`rag_store.reset_namespace()` 删 collection 后 `build_index()`（bge-m3 重建 183 条）
+- **实测数据（RTX 4060 Laptop，2026-09-06）**：
+  - triage 意图分诊 **40/43 = 93.0%**（云端 qwen3.8-27b 基线 97.7%）；**危机 8/8 = 100% 安全红线保住**；3 个误判全是求助/咨询边界样本（不改变路由，两类都进 intervention）
+  - 报告合规 **76/76 = 100%**（5 场景全过，发展建议 733-874 字非空，PDF 136-170KB，单场景 ~11s）
+  - 正常对话 SSE：模型热态首 token ~0.8s（RAG 0.6s）；危机路径 0.15s（硬编码前置不调 LLM）
+- **已知限制**：ASR/TTS 语音仍走百炼（3.A 未本地化，faster-whisper/edge-tts 推后）；eval 脚本已适配 local 模式（无 DASHSCOPE_API_KEY 也可跑）
+- **3.B 云GPU微调版**：未实施（可选增强，方案文档 3.B 章；配套 [export_report_finetune_data.py](backend/scripts/export_report_finetune_data.py) 已就绪，数据目录 `backend/data/finetune/`）
 
 ---
 
@@ -452,7 +454,11 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 
 按优先级排序：
 
-0. **【下一阶段主线】本地私有化部署实施**：依据 [docs/本地模型化方案.md](docs/本地模型化方案.md) v2.0。先做 3.A 本地基座模型版（0 成本）：拉 qwen2.5:7b + bge-m3 模型到 `E:\OllamaModels`、config.py 加 `LLM_MODE` 开关、llm.py/voice.py 路由本地 embedding/ASR/TTS、`.env` 切换验证；3.B 云 GPU 微调为可选增强。开工前先把工作区未提交的方案文档与导出脚本提交入库。另：真实校园试点部署待用户决策（见文末）。
+0. ~~**【主线】本地私有化部署 3.A**~~ ✅（2026-09-06 完成，详见 §7「本地私有化 3.A」）：`LLM_MODE=local` 双模式改造落地，qwen2.5:7b + bge-m3 全本地，triage 93.0%（危机 100%）/ 报告 76/76=100%。后续可选项：
+   - 3.B 云 GPU 微调版（LoRA 微调 qwen2.5:7b 提升 triage 求助/咨询边界准确率，方案文档 3.B 章，导出脚本已就绪）
+   - ASR/TTS 语音本地化（faster-whisper + edge-tts，3.A 推后项；当前 local 模式语音仍走百炼）
+   - 切回云端：`.env` 改 `LLM_MODE=cloud` → `docker compose up -d backend` → **必须重建 RAG 索引**（embedding 换回 v3，旧 bge-m3 向量作废，同样先 reset_namespace 再 build_index）
+   另：真实校园试点部署待用户决策。
 
 1. ~~**性能压测**~~ ✅（2026-09-01 跑通，commit 待补）：脚本 [backend/scripts/perf_bench.py](backend/scripts/perf_bench.py)，命令 `docker exec psycheflow-backend uv run python scripts/perf_bench.py`。验收数据：
    - `/api/health` x50 并发：50/50 (100%)，总耗时 138ms，平均 123.6ms，P50 123.4ms，P95 127.9ms，QPS 361.2 ✅ 满足 NFR「接口 < 200ms」

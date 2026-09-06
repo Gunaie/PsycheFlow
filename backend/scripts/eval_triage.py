@@ -67,9 +67,11 @@ async def run(dataset_path: str, limit: int | None, verbose: bool) -> dict:
 
     total = len(cases)
     correct = total - len(failures)
+    is_local = str(settings.llm_mode).strip().lower() == "local"
     summary = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "model": settings.model_triage,
+        "mode": settings.llm_mode,
+        "model": settings.local_model if is_local else settings.model_triage,
         "dataset": os.path.basename(dataset_path),
         "total": total,
         "correct": correct,
@@ -106,7 +108,7 @@ def main() -> int:
     with open(latest_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
 
-    print(f"\n===== Triage 评测结果（模型 {summary['model']}）=====")
+    print(f"\n===== Triage 评测结果（{summary['mode']} 模式，模型 {summary['model']}）=====")
     print(f"总体: {summary['correct']}/{summary['total']} = {summary['accuracy']:.1%}（耗时 {summary['elapsed_sec']}s）")
     for intent, v in summary["per_intent"].items():
         print(f"  {intent}: {v['correct']}/{v['total']} = {v['accuracy']:.1%}")
