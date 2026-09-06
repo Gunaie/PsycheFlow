@@ -6,7 +6,7 @@
 
 > ⚠️ **运行模式提示（2026-09-06）**：当前本机 `.env` 为 `LLM_MODE=local`（后端跑在本地 Ollama 模式，数据不出本机；语音 ASR/TTS 仍走百炼）。切回云端：`.env` 改 `LLM_MODE=cloud` → `docker compose up -d backend` → 重建 RAG 索引（先 `rag_store.reset_namespace()` 再 `build_index()`，embedding 模型换回 v3）。
 >
-> **工作区未提交内容**：本地私有化 3.A 代码改造（config.py/llm.py/.env.example/test_llm.py + eval 脚本适配 + HANDOVER/方案文档回写），详见 §7「本地私有化 3.A」；`问题,txt` 为旧账号临时草稿可自行处置。
+> **工作区未提交内容**：仅本文件（3.B 云训练完成回写）。3.A/3.B 代码与脚本均已提交（3.A=ab0c512，3.B 预备=2447ece，云训练脚本系列修复至 562022f）；`问题,txt` 为旧账号临时草稿可自行处置。
 
 ---
 
@@ -455,7 +455,7 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 按优先级排序：
 
 0. ~~**【主线】本地私有化部署 3.A**~~ ✅（2026-09-06 完成，详见 §7「本地私有化 3.A」）：`LLM_MODE=local` 双模式改造落地，qwen2.5:7b + bge-m3 全本地，triage 93.0%（危机 100%）/ 报告 76/76=100%。后续可选项：
-   - 3.B 云 GPU 微调版（LoRA 微调 qwen2.5:7b 提升 triage 求助/咨询边界准确率，方案文档 3.B 章，导出脚本已就绪）
+   - 3.B 云 GPU 微调版 ✅（2026-09-06 云上训练+GGUF 导出完成，详见 §7「本地私有化 3.B」；剩余：本地导入 import_gguf.ps1 → .env 启用 → eval_report 对比基线 → 按显存实测调 KEEP_ALIVE）
    - ASR/TTS 语音本地化（faster-whisper + edge-tts，3.A 推后项；当前 local 模式语音仍走百炼）
    - 切回云端：`.env` 改 `LLM_MODE=cloud` → `docker compose up -d backend` → **必须重建 RAG 索引**（embedding 换回 v3，旧 bge-m3 向量作废，同样先 reset_namespace 再 build_index）
    另：真实校园试点部署待用户决策。
