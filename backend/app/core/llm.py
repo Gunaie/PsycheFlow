@@ -12,7 +12,8 @@
 
 - local：完全本地私有化，对话/分诊/报告/embedding 全走 Ollama，**不触云端**
   （数据不出本机，可离线；语音 ASR/TTS 暂仍走百炼，后续本地化）
-  - chat 类角色统一 local_model（qwen2.5:7b），embed 用 local_embed_model（bge-m3）
+  - intake/triage 用 local_model 基座；dialog/dialog_stream 用 local_model_dialog、report 用
+    local_model_report（3.B LoRA 微调合并模型，留空回退基座）；embed 用 local_embed_model（bge-m3）
   - Ollama 失败时返回 "" / 上抛，由节点级硬编码话术兜底（不回退云端）
 
 注意：deepseek-v4 系列有 reasoning_content（思考链）字段，会先思考再输出 content，
@@ -81,14 +82,19 @@ class LLMProvider:
     def model_for(self, role: str) -> str:
         """角色 → 模型名。
 
-        local 模式：chat 类角色统一 local_model，embed 用 local_embed_model；
-        cloud 模式：按角色映射百炼模型。
+        local 模式：embed 用 local_embed_model；dialog/dialog_stream 优先 local_model_dialog、
+        report 优先 local_model_report（3.B 微调模型，留空则回退 local_model 基座）；
+        intake/triage 用 local_model 基座。cloud 模式：按角色映射百炼模型。
         """
         chat_roles = ("intake", "triage", "dialog", "dialog_stream", "report")
         if self.is_local:
             if role == "embed":
                 return self._settings.local_embed_model
-            if role in chat_roles:
+            if role in ("dialog", "dialog_stream"):
+                return self._settings.local_model_dialog or self._settings.local_model
+            if role == "report":
+                return self._settings.local_model_report or self._settings.local_model
+            if role in ("intake", "triage"):
                 return self._settings.local_model
             raise ValueError(f"未知角色: {role}，可用: embed / {list(chat_roles)}")
         mapping = {

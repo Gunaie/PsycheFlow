@@ -2,10 +2,23 @@ import unittest
 from unittest import mock
 from unittest.mock import AsyncMock, MagicMock
 
+from app.core.config import settings as real_settings
 from app.core.llm import LLMProvider
 
 
-class TestModelFor(unittest.TestCase):
+class _CloudModeMixin:
+    """把无参 LLMProvider()（读真实 .env）固定到 cloud 模式并禁用 Ollama 兜底，
+    使 cloud 路径单测不受部署机 LLM_MODE 影响（3.B：.env 现为 local）。"""
+
+    def setUp(self):
+        super().setUp()
+        for attr, val in (("llm_mode", "cloud"), ("ollama_base_url", "")):
+            patcher = mock.patch.object(real_settings, attr, val)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+
+class TestModelFor(_CloudModeMixin, unittest.TestCase):
     def test_each_role_returns_configured_model(self):
         p = LLMProvider()
         self.assertEqual(p.model_for("intake"), p._settings.model_intake)
@@ -31,7 +44,7 @@ class TestTempFor(unittest.TestCase):
         self.assertEqual(p.temp_for("embed"), 0.7)
 
 
-class TestChat(unittest.IsolatedAsyncioTestCase):
+class TestChat(_CloudModeMixin, unittest.IsolatedAsyncioTestCase):
     async def test_chat_uses_role_model_and_temp(self):
         p = LLMProvider()
         mock_resp = MagicMock()
@@ -80,7 +93,7 @@ class TestChat(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reply, "")
 
 
-class TestEmbed(unittest.IsolatedAsyncioTestCase):
+class TestEmbed(_CloudModeMixin, unittest.IsolatedAsyncioTestCase):
     async def test_embed_returns_vectors_in_order(self):
         p = LLMProvider()
         mock_resp = MagicMock()
@@ -147,6 +160,9 @@ def _fake_local_settings(ollama_enabled: bool = True):
     s.ollama_base_url = "http://ollama:11434/v1" if ollama_enabled else ""
     s.local_model = "qwen2.5:7b"
     s.local_embed_model = "bge-m3"
+    # 3.B 微调专用模型默认空（回退基座）；测试可在个别用例中覆盖
+    s.local_model_dialog = ""
+    s.local_model_report = ""
     s.temp_intake = 0.1
     s.temp_dialog = 0.35
     s.temp_report = 0.1
@@ -442,6 +458,26 @@ class TestLocalMode(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(p.model_for("embed"), "bge-m3")
         with self.assertRaises(ValueError):
             p.model_for("xxx")
+
+    def test_local_model_for_finetuned_roles(self):
+        # 3.B：配了微调模型后 dialog/report 走微调版，intake/triage 仍基座，留空回退基座
+        s = _fake_local_settings(True)
+        s.local_model_dialog = "qwen2.5:dialog-lora"
+        s.local_model_report = "qwen2.5:report-lora"
+        p = LLMProvider(s)
+        self.assertEqual(p.model_for("dialog"), "qwen2.5:dialog-lora")
+        self.assertEqual(p.model_for("dialog_stream"), "qwen2.5:dialog-lora")
+        self.assertEqual(p.model_for("report"), "qwen2.5:report-lora")
+        # 分诊/接入仍用基座（不微调，保确定性与危机红线）
+        self.assertEqual(p.model_for("intake"), "qwen2.5:7b")
+        self.assertEqual(p.model_for("triage"), "qwen2.5:7b")
+        self.assertEqual(p.model_for("embed"), "bge-m3")
+
+        # 留空 → 回退基座
+        s2 = _fake_local_settings(True)
+        p2 = LLMProvider(s2)
+        self.assertEqual(p2.model_for("dialog"), "qwen2.5:7b")
+        self.assertEqual(p2.model_for("report"), "qwen2.5:7b")
 
     async def test_local_without_ollama_url_raises(self):
         # local 模式但 OLLAMA_BASE_URL 空 → 调用快速失败（不静默回退云端）

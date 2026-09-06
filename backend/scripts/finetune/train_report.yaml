@@ -1,0 +1,40 @@
+### report 角色：评估报告发展建议（项目历史测评数据，云端 deepseek 蒸馏）
+### 在云 GPU（4090 24GB）上：llamafactory-cli train train_report.yaml
+### 数据量小（~50 条），用更小 batch、更低学习率防过拟合
+
+### model
+model_name_or_path: Qwen/Qwen2.5-7B-Instruct
+
+### method（QLoRA）
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_rank: 16
+lora_alpha: 32
+lora_dropout: 0.05
+lora_target: all
+quantization_bit: 4
+
+### dataset
+dataset: psycheflow_report
+dataset_dir: /root/ft/data
+template: qwen
+cutoff_len: 4096
+overwrite_cache: true
+preprocessing_num_workers: 4
+
+### output
+output_dir: /root/ft/lora_report
+logging_steps: 5
+save_steps: 200
+plot_loss: true
+overwrite_output_dir: true
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 16
+learning_rate: 5.0e-5
+num_train_epochs: 3.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.05
+bf16: true
