@@ -27,8 +27,15 @@ async def triage_node(state: AgentState) -> dict:
 
     # 1. 前置硬编码危机扫描
     is_crisis, detected_words = detect_crisis_with_words(message)
+    decisions = state.get("node_decisions", {})
+    
     if is_crisis:
         logger.info("triage: crisis hit, words=%s, skip LLM", detected_words)
+        decisions["triage"] = {
+            "decision": "crisis_detected",
+            "type": "keyword_match",
+            "detected_words": detected_words
+        }
         return {
             "is_crisis": True,
             "crisis": True,
@@ -36,6 +43,7 @@ async def triage_node(state: AgentState) -> dict:
             "triage_intent": "危机",
             "current_agent": "triage",
             "agent_trace": trace,
+            "node_decisions": decisions
         }
 
     # 2. LLM 意图分类
@@ -59,6 +67,11 @@ async def triage_node(state: AgentState) -> dict:
         # 3. 极速直达路径：若是寒暄，直接用 0.5b 生成简短回复并跳过后续节点
         if intent == "寒暄":
             logger.info("triage: greeting detected, using fast-path")
+            decisions["triage"] = {
+                "decision": "fast_path_greeting",
+                "intent": intent,
+                "model": "qwen2.5:0.5b"
+            }
             persona = get_persona(state.get("persona_id"))
             greeting_reply = await provider.chat(
                 role="triage", # 继续复用 0.5b 模型
@@ -75,13 +88,25 @@ async def triage_node(state: AgentState) -> dict:
                 "final_reply": greeting_reply,
                 "current_agent": "triage",
                 "agent_trace": trace,
+                "node_decisions": decisions
             }
 
     except Exception as e:
         logger.warning("triage: LLM failed %s, fallback to 倾诉", str(e))
         intent = "倾诉"
+        decisions["triage"] = {
+            "decision": "fallback",
+            "reason": str(e),
+            "intent": intent
+        }
 
     logger.info("triage: intent=%s", intent)
+    if "triage" not in decisions:
+        decisions["triage"] = {
+            "decision": "intent_classified",
+            "intent": intent
+        }
+        
     return {
         "is_crisis": False,
         "crisis": False,
@@ -89,4 +114,5 @@ async def triage_node(state: AgentState) -> dict:
         "triage_intent": intent,
         "current_agent": "triage",
         "agent_trace": trace,
+        "node_decisions": decisions
     }

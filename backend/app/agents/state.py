@@ -33,4 +33,5 @@ class AgentState(TypedDict, total=False):
     # 通用
     current_agent: str  # triage/assessment/intervention/escalation
     agent_trace: list  # [str] 节点访问顺序审计
+    node_decisions: dict  # {node_name: {decision, reason, ...}} 决策细节追踪
     crisis: bool  # 最终是否危机（同 is_crisis，给 API 返回用）

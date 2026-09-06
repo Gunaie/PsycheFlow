@@ -1299,6 +1299,12 @@ wheels = [
 ]
 
 [[package]]
+name = "jieba"
+version = "0.42.1"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/c6/cb/18eeb235f833b726522d7ebed54f2278ce28ba9438e3135ab0278d9792a2/jieba-0.42.1.tar.gz", hash = "sha256:055ca12f62674fafed09427f176506079bc135638a14e23e25be909131928db2" }
+
+[[package]]
 name = "jinja2"
 version = "3.1.6"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
@@ -2718,6 +2724,7 @@ dependencies = [
     { name = "chromadb" },
     { name = "fastapi" },
     { name = "faster-whisper" },
+    { name = "jieba" },
     { name = "jinja2" },
     { name = "langchain" },
     { name = "langchain-community" },
@@ -2731,6 +2738,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "python-multipart" },
+    { name = "rank-bm25" },
     { name = "sherpa-onnx" },
     { name = "sherpa-onnx-core" },
     { name = "sqlalchemy" },
@@ -2750,6 +2758,7 @@ requires-dist = [
     { name = "chromadb", specifier = ">=0.5.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "faster-whisper", specifier = ">=1.0.0" },
+    { name = "jieba" },
     { name = "jinja2", specifier = ">=3.1.0" },
     { name = "langchain", specifier = ">=0.3.0" },
     { name = "langchain-community", specifier = ">=0.3.0" },
@@ -2763,6 +2772,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.9.0" },
     { name = "pydantic-settings", specifier = ">=2.5.0" },
     { name = "python-multipart", specifier = ">=0.0.9" },
+    { name = "rank-bm25", specifier = ">=0.2.2" },
     { name = "sherpa-onnx", specifier = ">=1.13.7" },
     { name = "sherpa-onnx-core", specifier = ">=1.13.7" },
     { name = "sqlalchemy", specifier = ">=2.0.35" },
@@ -3244,6 +3254,19 @@ wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/da/92/1446574745d74df0c92e6aa4a7b0b3130706a4142b2d1a5869f2eaa423c6/pyyaml-6.0.3-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:16249ee61e95f858e83976573de0f5b2893b3677ba71c9dd36b9cf8be9ac6d65" },
     { url = "https://mirrors.aliyun.com/pypi/packages/f0/7a/1c7270340330e575b92f397352af856a8c06f230aa3e76f86b39d01b416a/pyyaml-6.0.3-cp314-cp314t-win_amd64.whl", hash = "sha256:4ad1906908f2f5ae4e5a8ddfce73c320c2a1429ec52eafd27138b7f1cbe341c9" },
     { url = "https://mirrors.aliyun.com/pypi/packages/f1/12/de94a39c2ef588c7e6455cfbe7343d3b2dc9d6b6b2f40c4c6565744c873d/pyyaml-6.0.3-cp314-cp314t-win_arm64.whl", hash = "sha256:ebc55a14a21cb14062aa4162f906cd962b28e2e9ea38f9b4391244cd8de4ae0b" },
+]
+
+[[package]]
+name = "rank-bm25"
+version = "0.2.2"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
+dependencies = [
+    { name = "numpy", version = "2.4.6", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.2", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version >= '3.12'" },
+]
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/fc/0a/f9579384aa017d8b4c15613f86954b92a95a93d641cc849182467cf0bb3b/rank_bm25-0.2.2.tar.gz", hash = "sha256:096ccef76f8188563419aaf384a02f0ea459503fdf77901378d4fd9d87e5e51d" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/2a/21/f691fb2613100a62b3fa91e9988c991e9ca5b89ea31c0d3152a3210344f9/rank_bm25-0.2.2-py3-none-any.whl", hash = "sha256:7bd4a95571adadfc271746fa146a4bcfd89c0cf731e49c3d1ad863290adbe8ae" },
 ]
 
 [[package]]

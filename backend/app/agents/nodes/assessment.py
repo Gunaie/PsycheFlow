@@ -24,6 +24,7 @@ async def assessment_node(state: AgentState) -> dict:
     """
     sid = state.get("session_id")
     trace = state.get("agent_trace", []) + ["assessment"]
+    decisions = state.get("node_decisions", {})
 
     has_assessment = False
     assessment_context: dict = {}
@@ -54,16 +55,35 @@ async def assessment_node(state: AgentState) -> dict:
                         "assessment: found record scale=%s severity=%s",
                         record.scale_id, record.severity,
                     )
+                    decisions["assessment"] = {
+                        "decision": "record_found",
+                        "scale": record.scale_id,
+                        "severity": record.severity
+                    }
                 else:
                     logger.info("assessment: no record for session %s", sid)
+                    decisions["assessment"] = {
+                        "decision": "no_record",
+                        "reason": "no_assessment_in_db"
+                    }
             finally:
                 db.close()
         except Exception as e:
             logger.warning("assessment: db query failed: %s", str(e))
+            decisions["assessment"] = {
+                "decision": "error",
+                "reason": str(e)
+            }
+    else:
+        decisions["assessment"] = {
+            "decision": "no_session",
+            "reason": "session_id_missing"
+        }
 
     return {
         "has_assessment": has_assessment,
         "assessment_context": assessment_context,
         "current_agent": "assessment",
         "agent_trace": trace,
+        "node_decisions": decisions
     }

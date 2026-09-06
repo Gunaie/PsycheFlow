@@ -144,13 +144,14 @@ async def chat(
         logging.warning("write assistant ConversationTurn failed: %s", e)
         db.rollback()
 
-    # —— 步骤 4：返回（旧字段 reply/sources/crisis 不变；新增 current_agent/agent_trace/persona_id）——
+    # —— 4. 返回（旧字段 reply/sources/crisis 不变；新增 current_agent/agent_trace/persona_id）——
     return {
         "reply": reply,
         "sources": sources,
         "crisis": is_crisis,
         "current_agent": current_agent,
         "agent_trace": agent_trace,
+        "node_decisions": final_state.get("node_decisions", {}),
         "persona_id": effective_persona_id,
     }
 
@@ -251,7 +252,7 @@ async def chat_stream(
 
                 # 提前推 sources（让前端在 token 到来前先渲染知识卡片）
                 # 同一次 build 拿到 messages，传给 stream_intervention 避免重复 RAG 检索
-                messages, formatted_sources, _ = await build_intervention_messages(state)
+                messages, formatted_sources, _, _ = await build_intervention_messages(state)
                 final_sources = formatted_sources
                 if final_sources:
                     yield _sse("sources", {"sources": final_sources})
@@ -297,6 +298,7 @@ async def chat_stream(
             "reply": final_reply,
             "current_agent": final_agent,
             "agent_trace": final_trace,
+            "node_decisions": state.get("node_decisions", {}),
             "persona_id": effective_persona_id,
             "crisis": is_crisis,
             "sources": final_sources,

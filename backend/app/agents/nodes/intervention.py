@@ -28,26 +28,33 @@ FALLBACK_REPLY = (
 )
 
 
-async def build_intervention_messages(state: AgentState) -> tuple[list[dict], list, list]:
+async def build_intervention_messages(state: AgentState) -> tuple[list[dict], list, list, dict]:
     """拼接 intervention 的 LLM messages + formatted_sources + rag_sources。
 
     流式与非流式复用同一套 prompt 拼接逻辑，保证行为一致。
-    返回 (messages, formatted_sources, rag_sources)。
+    返回 (messages, formatted_sources, rag_sources, decision)。
     """
     message = state.get("user_message", "")
+    decision = {}
 
     # 0. 解析人格（未知/为空回退 default）
     persona = get_persona(state.get("persona_id"))
     system_prompt = build_system_prompt(persona)
     logger.info("intervention: persona=%s", persona.persona_id)
+    decision["persona"] = persona.persona_id
 
     # 1. RAG 检索
     rag_sources: list = []
     try:
         rag_sources = await rag_service.search(message, top_k=3)
         logger.info("intervention: rag retrieved %d chunks", len(rag_sources))
+        decision["rag"] = {
+            "count": len(rag_sources),
+            "sources": [s.get("source") for s in rag_sources]
+        }
     except Exception as e:
         logger.warning("intervention: rag search failed: %s", str(e))
+        decision["rag"] = {"error": str(e)}
 
     # 2. 拼接 rag_context（最多 3 段，每段 200 字截断）
     rag_parts = []
@@ -86,7 +93,7 @@ async def build_intervention_messages(state: AgentState) -> tuple[list[dict], li
         for s in rag_sources
     ]
 
-    return messages, formatted_sources, rag_sources
+    return messages, formatted_sources, rag_sources, decision
 
 
 async def stream_intervention(
@@ -133,7 +140,8 @@ async def intervention_node(state: AgentState) -> dict:
     4. sources 字段返回供前端渲染
     """
     trace = state.get("agent_trace", []) + ["intervention"]
-    messages, formatted_sources, rag_sources = await build_intervention_messages(state)
+    decisions = state.get("node_decisions", {})
+    messages, formatted_sources, rag_sources, decision = await build_intervention_messages(state)
 
     try:
         reply = await provider.chat(
@@ -147,9 +155,13 @@ async def intervention_node(state: AgentState) -> dict:
             logger.warning("intervention: LLM returned empty reply, triggering fallback")
             raise ValueError("empty reply from LLM")
         logger.info("intervention: reply len=%d", len(reply))
+        decision["llm"] = {"status": "success", "reply_len": len(reply)}
     except Exception as e:
         logger.warning("intervention: LLM failed: %s", str(e))
         reply = FALLBACK_REPLY
+        decision["llm"] = {"status": "fallback", "reason": str(e)}
+
+    decisions["intervention"] = decision
 
     return {
         "final_reply": reply,
@@ -157,4 +169,5 @@ async def intervention_node(state: AgentState) -> dict:
         "rag_sources": rag_sources,
         "current_agent": "intervention",
         "agent_trace": trace,
+        "node_decisions": decisions
     }

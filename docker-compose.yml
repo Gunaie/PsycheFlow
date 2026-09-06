@@ -68,4 +68,6 @@ services:
       - /app/node_modules
     depends_on:
       - backend
+    environment:
+      - VITE_PROXY_TARGET=http://backend:8000
     command: npm run dev -- --host 0.0.0.0

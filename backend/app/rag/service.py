@@ -5,6 +5,8 @@
 """
 import glob
 import os
+import jieba
+from rank_bm25 import BM25Okapi
 
 from app.core.llm import provider
 from app.rag.store import rag_store
@@ -37,6 +39,40 @@ class RAGService:
         self.store = store or rag_store
         self.llm = llm or provider
         self.knowledge_dir = knowledge_dir
+        self.bm25 = None
+        self.corpus_docs = []  # 存储原始文档内容和元数据，用于 BM25 检索后回显
+
+    def _init_bm25(self):
+        """从 Chroma 获取全量文档并初始化 BM25 索引。"""
+        if self.bm25 is not None:
+            return
+
+        # 从 Chroma 获取所有文档
+        res = self.store.collection.get(include=["documents", "metadatas"])
+        documents = res.get("documents", [])
+        metadatas = res.get("metadatas", [])
+        ids = res.get("ids", [])
+
+        if not documents:
+            return
+
+        self.corpus_docs = []
+        tokenized_corpus = []
+        for i in range(len(documents)):
+            doc_text = documents[i]
+            meta = metadatas[i] or {}
+            self.corpus_docs.append({
+                "id": ids[i],
+                "text": doc_text,
+                "source": meta.get("source", ""),
+                "chunk_id": meta.get("chunk_id", 0)
+            })
+            # 使用 jieba 分词
+            words = list(jieba.cut(doc_text))
+            tokenized_corpus.append(words)
+
+        if tokenized_corpus:
+            self.bm25 = BM25Okapi(tokenized_corpus)
 
     async def build_index(self) -> dict:
         """读取语料，向量化，写入 Chroma。返回入库文档数。"""
@@ -51,53 +87,95 @@ class RAGService:
             embeddings=embeddings,
             metadatas=[{"source": d["source"]} for d in docs],
         )
+        # 强制重置 BM25，下次 search 时重新初始化
+        self.bm25 = None
         return {"indexed": len(docs), "collection_size": self.store.count()}
 
     async def search(self, query: str, top_k: int = 3, threshold: float = 0.70) -> list:
-        """检索相关片段。返回 [{text, source, chunk_id, distance}]。
-
-        threshold: 相似度阈值（L2 距离），进一步收紧至 0.70 以过滤弱相关内容。
+        """混合检索：向量检索 + BM25 检索，使用 RRF (Reciprocal Rank Fusion) 融合。
+        
+        threshold: 相似度阈值（针对向量检索的 L2 距离）。
         """
+        # 1. 向量检索
         q_emb = (await self.llm.embed([query]))[0]
-        results = self.store.query(q_emb, top_k=top_k)  # 恢复正常候选量以提升速度
-        docs = (results.get("documents") or [[]])[0]
-        metas = (results.get("metadatas") or [[]])[0]
-        dists = (results.get("distances") or [[]])[0]
-        
-        # 关键词加权（压力、失眠、焦虑等核心词）
-        keywords = ["压力", "失眠", "焦虑", "难过", "抑郁", "放松", "考试"]
-        
-        out = []
-        for i, doc in enumerate(docs):
-            dist = dists[i] if i < len(dists) else 2.0
+        vec_results = self.store.query(q_emb, top_k=top_k * 2)  # 取多一点用于融合
+        vec_docs = vec_results.get("documents", [[]])[0]
+        vec_metas = vec_results.get("metadatas", [[]])[0]
+        vec_ids = vec_results.get("ids", [[]])[0]
+        vec_dists = vec_results.get("distances", [[]])[0]
+
+        # 2. BM25 检索
+        self._init_bm25()
+        bm25_hits = []
+        if self.bm25:
+            query_words = list(jieba.cut(query))
+            # 获取所有文档的 BM25 分数
+            scores = self.bm25.get_scores(query_words)
+            # 获取前 top_k * 2 个结果的索引
+            import numpy as np
+            top_indices = np.argsort(scores)[::-1][:top_k * 2]
             
-            # 对包含关键词的片段进行距离“扣减”（增强相关性）
+            for idx in top_indices:
+                if scores[idx] > 0:  # 只保留有匹配的分数
+                    bm25_hits.append(self.corpus_docs[idx]["id"])
+
+        # 3. RRF 融合
+        # rrf_score = sum(1 / (k + rank))
+        k = 60
+        rrf_scores = {}
+
+        # 处理向量检索排名
+        for i, doc_id in enumerate(vec_ids):
+            rrf_scores[doc_id] = rrf_scores.get(doc_id, 0) + 1.0 / (k + i + 1)
+
+        # 处理 BM25 检索排名
+        for i, doc_id in enumerate(bm25_hits):
+            rrf_scores[doc_id] = rrf_scores.get(doc_id, 0) + 1.0 / (k + i + 1)
+
+        # 排序并取前 top_k
+        sorted_ids = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
+        
+        # 准备返回结果，同时保留原有的关键词加权和阈值逻辑（针对向量距离）
+        # 如果是 BM25 独有的结果，我们给它一个虚拟的距离值
+        final_docs = []
+        
+        # 为了获取完整信息，建立一个映射
+        id_to_vec_info = {vec_ids[i]: {"dist": vec_dists[i], "meta": vec_metas[i], "text": vec_docs[i]} for i in range(len(vec_ids))}
+        id_to_corpus_info = {d["id"]: d for d in self.corpus_docs}
+        
+        keywords = ["压力", "失眠", "焦虑", "难过", "抑郁", "放松", "考试"]
+
+        for doc_id, rrf_score in sorted_ids:
+            if doc_id in id_to_vec_info:
+                info = id_to_vec_info[doc_id]
+                dist = info["dist"]
+                text = info["text"]
+                meta = info["meta"] or {}
+            elif doc_id in id_to_corpus_info:
+                info = id_to_corpus_info[doc_id]
+                dist = 0.65  # 给 BM25 命中但向量未命中的结果一个适中的虚拟距离，确保能过阈值
+                text = info["text"]
+                meta = {"source": info["source"], "chunk_id": info["chunk_id"]}
+            else:
+                continue
+
+            # 原有关键词加权逻辑
             adjusted_dist = dist
-            if any(kw in doc for kw in keywords):
+            if any(kw in text for kw in keywords):
                 adjusted_dist -= 0.05
-                
+            
             if adjusted_dist > threshold:
                 continue
 
-            meta = metas[i] if i < len(metas) else {}
-            meta = meta or {}
-            src = meta.get("source") or ""
-            cid = meta.get("chunk_id", 0)
-            try:
-                cid_int = int(cid)
-            except (TypeError, ValueError):
-                cid_int = 0
-            
-            out.append({
-                "text": doc,
-                "source": src,
-                "chunk_id": cid_int,
+            final_docs.append({
+                "text": text,
+                "source": meta.get("source", ""),
+                "chunk_id": meta.get("chunk_id", 0),
                 "distance": adjusted_dist,
+                "rrf_score": rrf_score
             })
-            
-        # 按距离排序
-        out.sort(key=lambda x: x["distance"])
-        return out
+
+        return final_docs
 
 
 rag_service = RAGService()
