@@ -94,7 +94,9 @@ class LLMProvider:
                 return self._settings.local_model_dialog or self._settings.local_model
             if role == "report":
                 return self._settings.local_model_report or self._settings.local_model
-            if role in ("intake", "triage"):
+            if role == "triage":
+                return self._settings.local_model_triage or self._settings.local_model
+            if role == "intake":
                 return self._settings.local_model
             raise ValueError(f"未知角色: {role}，可用: embed / {list(chat_roles)}")
         mapping = {

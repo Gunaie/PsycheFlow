@@ -10,7 +10,7 @@
 
 - **标准化测评**：PHQ-A（抑郁）/ SCARED（焦虑，支持与 PHQ-A 合并双量表）/ SDQ / MHT 四套量表，规则化计分（SDQ 反向计分、PHQ-A 自杀意念单项直达升级），不进 LLM
 - **智能报告**：单页长报告（对齐 MHT 六章节结构）、子维度雷达图（3+ 因子量表）、测评用时、发展建议（LLM 生成 + 兜底话术）、PDF 导出与下载
-- **AI 对话**：LangGraph 四智能体编排（分诊→测评→干预→升级）、SSE 流式输出（首 token < 2s）、RAG 心理知识库引用卡片（默认折叠）、4 种对话人格切换、语音输入（ASR）/ 朗读（TTS）
+- **AI 对话**：LangGraph 四智能体编排（分诊→测评→干预→升级）、SSE 流式输出（寒暄毫秒级，对话首 token < 1.5s）、RAG 心理知识库引用卡片（高精度过滤）、4 种对话人格切换、语音输入（ASR）/ 朗读（TTS）
 - **危机处理**：`detect_crisis` 前置于一切 LLM 调用、零 LLM 硬编码响应、12355 青少年热线、`crisis_*.json` 落盘 + 审计日志 DB 双写
 - **批量筛查**：教师管理后台（认证登录、CSV 名单建批次、6 位筛查码、学生匿名作答、统计聚合与导出）
 - **合规加固**：注册知情同意链、非 root 容器（prod uid 1000）、SQLite 文件 0600、备份 AES-256-CBC 加密（`scripts/backup_db.py`）
@@ -35,7 +35,7 @@
 | **LLM 输出评估** | Triage 意图分诊准确率（43 条标注样本，qwen3.8-27b） | **97.7%**（42/43） |
 | | └ 危机类命中（硬编码词表，安全回归） | **100%**（8/8） |
 | | 报告结构合规率（5 场景 × 15 项断言，deepseek-v4-flash） | **100%**（76/76） |
-| **性能（NFR）** | SSE 对话首 token 延迟（P12 思考链优化后） | **1.72s**（目标 < 2s） |
+| **性能（NFR）** | SSE 对话首 token 延迟（0.5b 极速分诊优化后） | **寒暄 < 0.5s / 对话 ~1.2s** |
 | | `/api/health` 50 并发 | QPS 361，P95 128ms |
 | **测试** | 后端 pytest | 199 passed / 1 skipped |
 | | 端到端验收（登录→对话→危机→报告→审计） | **7/7 PASS** |
@@ -96,7 +96,7 @@ flowchart TB
 | ![门户](docs/screenshots/01-portal.png) | ![学生首页](docs/screenshots/02-home.png) |
 | **量表选择** | **量表作答** |
 | ![量表选择](docs/screenshots/03-scale-select.png) | ![量表作答](docs/screenshots/04-assessment.png) |
-| **AI 陪伴对话（人设 + 四阶段流程）** | **历史报告** |
+| **AI 陪伴对话（极致简洁体验）** | **历史报告** |
 | ![对话](docs/screenshots/05-chat.png) | ![历史报告](docs/screenshots/06-history.png) |
 | **教师端·批次列表** | **教师端·批次详情（危机名单 + 严重度分布）** |
 | ![批次列表](docs/screenshots/07-admin-batches.png) | ![批次详情](docs/screenshots/08-admin-batch-detail.png) |

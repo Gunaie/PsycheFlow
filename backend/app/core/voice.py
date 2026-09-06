@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 import httpx
 
 from app.core.config import settings
+from app.core.voice_local import transcribe_local, synthesize_local
 
 logger = logging.getLogger("psycheflow.core.voice")
 
@@ -78,6 +79,22 @@ async def transcribe(audio_bytes: bytes, mime_type: str = "audio/wav") -> str:
     """音频 → 文本。失败抛 VoiceError。"""
     if not audio_bytes:
         raise VoiceError("音频内容为空")
+    
+    # 优先使用本地模式 (D5)
+    if settings.voice_mode == "local":
+        try:
+            text = await transcribe_local(audio_bytes)
+            if not text:
+                raise VoiceError("未能识别出语音内容，请靠近麦克风重试")
+            logger.info("voice_local: transcribed %d chars", len(text))
+            return text
+        except VoiceError:
+            raise
+        except Exception as e:
+            logger.error("voice_local: ASR failed, check logs: %s", e)
+            # 本地失败不回退云端（确保数据不出机原则），直接抛错
+            raise VoiceError(f"本地语音识别失败: {e}")
+
     if len(audio_bytes) > MAX_AUDIO_BYTES:
         raise VoiceError("音频超过 10MB 上限")
 
@@ -178,6 +195,15 @@ async def synthesize(text: str) -> bytes:
     text = (text or "").strip()
     if not text:
         raise VoiceError("合成文本为空")
+    
+    # 优先使用本地模式 (D5)
+    if settings.voice_mode == "local":
+        try:
+            return await synthesize_local(text)
+        except Exception as e:
+            logger.error("voice_local: TTS failed: %s", e)
+            raise VoiceError(f"本地语音合成失败: {e}")
+
     if len(text) > MAX_TTS_CHARS:
         text = text[:MAX_TTS_CHARS]
     return await _tts_http(text)

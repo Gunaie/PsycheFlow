@@ -218,8 +218,16 @@ async def chat_stream(
             triage_out = await triage_node(state)
             state.update(triage_out)
 
-            # —— 2. 危机路径：escalation 不流式，推完整话术后 close ——
-            if state.get("is_crisis"):
+            # —— 2. 极速直达路径：若是寒暄（已产出 final_reply），推完整话术后 close ——
+            if state.get("final_reply"):
+                final_reply = state["final_reply"]
+                final_agent = state.get("current_agent", "triage")
+                final_trace = state.get("agent_trace", ["triage"])
+                # 模拟流式效果（直接推完或推 token，此处选直接推完信号，前端 done 会补全）
+                yield _sse("token", {"token": final_reply})
+            
+            # —— 3. 危机路径：escalation 不流式，推完整话术后 close ——
+            elif state.get("is_crisis"):
                 esc_out = await escalation_node(state)
                 state.update(esc_out)
                 final_reply = esc_out["final_reply"]

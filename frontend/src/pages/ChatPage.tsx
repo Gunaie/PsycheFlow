@@ -23,21 +23,7 @@ interface PersonaOption {
   description: string
 }
 
-// 4 智能体阶段定义
-const AGENT_STAGES = [
-  { key: 'triage', label: '分诊', color: 'bg-blue-500', lightColor: 'bg-blue-50 text-blue-700 border-blue-300' },
-  { key: 'assessment', label: '测评', color: 'bg-cyan-500', lightColor: 'bg-cyan-50 text-cyan-700 border-cyan-300' },
-  { key: 'intervention', label: '干预', color: 'bg-emerald-500', lightColor: 'bg-emerald-50 text-emerald-700 border-emerald-300' },
-  { key: 'escalation', label: '升级', color: 'bg-red-500', lightColor: 'bg-red-100 text-red-700 border-red-400' },
-]
-
-function getStageIndex(agent: string | undefined): number {
-  if (!agent) return -1
-  return AGENT_STAGES.findIndex(s => s.key === agent)
-}
-
 // 对话独立 session：不复用测评的 active_session_id（避免跨用户串号 + 测评/对话解耦）。
-// 首次 send 时若无 chat session 则创建一个（label="对话"），跨刷新保留连续性，退出登录即清。
 async function ensureChatSessionId(): Promise<string> {
   const existing = getChatSessionId()
   if (existing) return existing
@@ -46,51 +32,13 @@ async function ensureChatSessionId(): Promise<string> {
   return session.session_id
 }
 
-function StageStepper({ currentAgent, crisis }: { currentAgent: string | undefined; crisis: boolean }) {
-  const currentIdx = getStageIndex(currentAgent)
-  return (
-    <div className="flex items-center justify-between px-2 py-2 bg-slate-50 rounded-lg border border-slate-200">
-      {AGENT_STAGES.map((stage, i) => {
-        const isCurrent = i === currentIdx
-        const isPast = currentIdx > i
-        const isCrisis = crisis && stage.key === 'escalation'
-        return (
-          <div key={stage.key} className="flex items-center flex-1 last:flex-none">
-            <div className="flex flex-col items-center">
-              <div
-                className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition ${
-                  isCrisis
-                    ? 'bg-red-500 text-white ring-4 ring-red-200'
-                    : isCurrent
-                    ? `${stage.color} text-white ring-4 ring-slate-200`
-                    : isPast
-                    ? 'bg-slate-400 text-white'
-                    : 'bg-slate-200 text-slate-400'
-                }`}
-              >
-                {i + 1}
-              </div>
-              <span
-                className={`mt-1 text-[10px] font-medium ${
-                  isCurrent || isCrisis ? 'text-slate-700' : 'text-slate-400'
-                }`}
-              >
-                {stage.label}
-              </span>
-            </div>
-            {i < AGENT_STAGES.length - 1 && (
-              <div
-                className={`flex-1 h-0.5 mx-1 mb-4 transition ${
-                  currentIdx > i ? 'bg-slate-400' : 'bg-slate-200'
-                }`}
-              />
-            )}
-          </div>
-        )
-      })}
-    </div>
-  )
-}
+// 智能体阶段样式映射（用于 AgentBadge 展示）
+const AGENT_STAGES = [
+  { key: 'triage', label: '分诊', lightColor: 'bg-blue-50 text-blue-700 border-blue-300' },
+  { key: 'assessment', label: '测评', lightColor: 'bg-cyan-50 text-cyan-700 border-cyan-300' },
+  { key: 'intervention', label: '干预', lightColor: 'bg-emerald-50 text-emerald-700 border-emerald-300' },
+  { key: 'escalation', label: '升级', lightColor: 'bg-red-100 text-red-700 border-red-400' },
+]
 
 function AgentBadge({ agent }: { agent: string | undefined }) {
   if (!agent) return null
@@ -320,9 +268,6 @@ export default function ChatPage() {
           ))}
         </div>
       )}
-
-      {/* 4 智能体阶段 Stepper */}
-      <StageStepper currentAgent={currentAgent} crisis={crisis} />
 
       {crisis && <CrisisBanner />}
 

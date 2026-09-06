@@ -53,35 +53,50 @@ class RAGService:
         )
         return {"indexed": len(docs), "collection_size": self.store.count()}
 
-    async def search(self, query: str, top_k: int = 3) -> list:
+    async def search(self, query: str, top_k: int = 3, threshold: float = 0.70) -> list:
         """检索相关片段。返回 [{text, source, chunk_id, distance}]。
 
-        source 保证来自 chunk 的 metadata.source，不为空；
-        每条额外带 chunk_id: int 字段供前端展示片段号。
+        threshold: 相似度阈值（L2 距离），进一步收紧至 0.70 以过滤弱相关内容。
         """
         q_emb = (await self.llm.embed([query]))[0]
-        results = self.store.query(q_emb, top_k=top_k)
+        results = self.store.query(q_emb, top_k=top_k)  # 恢复正常候选量以提升速度
         docs = (results.get("documents") or [[]])[0]
         metas = (results.get("metadatas") or [[]])[0]
         dists = (results.get("distances") or [[]])[0]
+        
+        # 关键词加权（压力、失眠、焦虑等核心词）
+        keywords = ["压力", "失眠", "焦虑", "难过", "抑郁", "放松", "考试"]
+        
         out = []
         for i, doc in enumerate(docs):
+            dist = dists[i] if i < len(dists) else 2.0
+            
+            # 对包含关键词的片段进行距离“扣减”（增强相关性）
+            adjusted_dist = dist
+            if any(kw in doc for kw in keywords):
+                adjusted_dist -= 0.05
+                
+            if adjusted_dist > threshold:
+                continue
+
             meta = metas[i] if i < len(metas) else {}
             meta = meta or {}
-            # source 从 metadata 取值，保证不为空
             src = meta.get("source") or ""
-            # chunk_id 从 metadata 取值，保证是 int
             cid = meta.get("chunk_id", 0)
             try:
                 cid_int = int(cid)
             except (TypeError, ValueError):
                 cid_int = 0
+            
             out.append({
                 "text": doc,
                 "source": src,
                 "chunk_id": cid_int,
-                "distance": dists[i] if i < len(dists) else None,
+                "distance": adjusted_dist,
             })
+            
+        # 按距离排序
+        out.sort(key=lambda x: x["distance"])
         return out
 
 

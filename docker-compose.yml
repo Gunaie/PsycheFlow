@@ -28,6 +28,15 @@ services:
       - ./data:/app/data
       # 审计日志
       - ./logs:/app/logs
+      # 本地语音模型挂载
+      - E:\OllamaModels\voice:/models/voice
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     environment:
       # volume 跨文件系统，关闭 hardlink 警告
       - UV_LINK_MODE=copy

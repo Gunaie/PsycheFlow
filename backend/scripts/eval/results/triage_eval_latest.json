@@ -1,10 +1,11 @@
 {
-  "timestamp": "2026-09-05 05:45:14",
-  "model": "qwen3.8-27b",
+  "timestamp": "2026-09-06 14:30:22",
+  "mode": "local",
+  "model": "qwen2.5:7b",
   "dataset": "triage_dataset.json",
   "total": 43,
-  "correct": 42,
-  "accuracy": 0.9767,
+  "correct": 40,
+  "accuracy": 0.9302,
   "per_intent": {
     "危机": {
       "total": 8,
@@ -13,8 +14,8 @@
     },
     "求助": {
       "total": 11,
-      "correct": 11,
-      "accuracy": 1.0
+      "correct": 9,
+      "accuracy": 0.8182
     },
     "倾诉": {
       "total": 12,
@@ -29,6 +30,20 @@
   },
   "failures": [
     {
+      "index": 13,
+      "note": "情绪管理",
+      "expected": "求助",
+      "got": "咨询",
+      "message": "我经常因为小事发脾气，事后又后悔，怎么控制情绪"
+    },
+    {
+      "index": 17,
+      "note": "强迫行为·调整",
+      "expected": "求助",
+      "got": "咨询",
+      "message": "我总担心门没锁、手没洗干净，反复检查很多遍，这是病吗？要怎么调整"
+    },
+    {
       "index": 40,
       "note": "边界·被安排来聊",
       "expected": "咨询",
@@ -36,5 +51,5 @@
       "message": "我妈让我来咨询，我觉得我没病，来都来了，你这里都能做什么"
     }
   ],
-  "elapsed_sec": 17.7
+  "elapsed_sec": 78.7
 }

@@ -26,6 +26,14 @@ class Settings(BaseSettings):
     model_tts: str = "qwen-audio-3.0-tts-flash"  # 语音合成（audio/tts/SpeechSynthesizer）
     tts_voice: str = "longanhuan_v3.6"           # TTS 音色
 
+    # 语音模式 (D5 阶段)
+    #   cloud = 阿里云百炼 (默认)
+    #   local = 本地 ASR (faster-whisper) + 本地 TTS (sherpa-onnx)
+    voice_mode: str = "cloud"
+    local_asr_model_path: str = "/models/voice/asr/medium"
+    local_tts_model_dir: str = "/models/voice/tts/vits-zh-aishell3"
+    local_tts_sid: int = 0  # 默认发音人 ID (aishell3 共有 174 个)
+
     # Chroma 向量库
     chroma_host: str = "chroma"
     chroma_port: int = 8000
@@ -56,6 +64,7 @@ class Settings(BaseSettings):
     local_model: str = "qwen2.5:7b"       # 默认基座（intake/triage 分诊用；RTX 4060 8GB 可跑 Q4 量化）
     local_embed_model: str = "bge-m3"     # RAG 向量化（Ollama /v1/embeddings 端点，1024 维）
     # 3.B 微调专用模型（留空 = 回退 local_model 基座）：dialog/report 可各自挂 LoRA 合并后的 GGUF
+    local_model_triage: str = ""          # 极速分诊模型（推荐 qwen2.5:0.5b）
     local_model_dialog: str = ""          # 共情对话（intervention 节点 dialog/dialog_stream）
     local_model_report: str = ""          # 报告发展建议（report）
 

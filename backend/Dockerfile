@@ -37,10 +37,14 @@ WORKDIR /app
 
 # 先装依赖（利用 Docker 缓存层）
 COPY pyproject.toml ./
-RUN uv sync --no-dev 2>/dev/null || uv sync --no-dev --no-lockfile
+RUN uv sync --no-dev
 
-# 复制业务代码（开发期由 volume 覆盖）
+# 复制业务代码
 COPY . .
+
+# 设置启动脚本
+RUN chmod +x entrypoint.sh
+ENTRYPOINT ["./entrypoint.sh"]
 
 EXPOSE 8000
 

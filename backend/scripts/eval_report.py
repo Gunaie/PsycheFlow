@@ -242,7 +242,7 @@ async def run(only: str | None, verbose: bool) -> dict:
     return {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "mode": settings.llm_mode,
-        "model_report": settings.local_model if is_local else settings.model_report,
+        "model_report": (settings.local_model_report or settings.local_model) if is_local else settings.model_report,
         "scenarios": report_results,
         "total_checks": total_checks,
         "passed_checks": passed_checks,

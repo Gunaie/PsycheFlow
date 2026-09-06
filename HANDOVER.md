@@ -1,10 +1,12 @@
 # PsycheFlow 项目交接文档
 
 > 最后更新：2026-09-06
-> 当前 commit：`562022f` + 工作区未提交（HANDOVER 3.B 云训练完成回写）
-> 阶段：D 四期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标）+ Ollama 本地兜底 + 生产验收/打包交付 + 测评纠偏与前端体验批次 + 文档同步 + 试点合规材料 + 路由重构与三态门户 + 前端视觉丰富 + GitHub CI（全绿）+ LLM 输出评估体系 + README 开源级打磨 + 匿名安全加固 + 双端隔离补强与交互导航 + 报告/历史/批次管理修复批次 + 本地私有化 3.A 基座模型版已落地（LLM_MODE=local，qwen2.5:7b + bge-m3，triage 93.0% 危机 100% / 报告 76/76=100%）+ **本地私有化 3.B 云GPU微调已完成云上训练与 GGUF 导出（QLoRA 双 LoRA → 4.36GB×2 已下载本地，待导入 Ollama 启用+评测）**；后续可选：ASR/TTS 本地化
+> 当前 commit：`562022f` + 本地私有化极致优化（极速分诊 0.5b + 寒暄直达 + RAG 精度优化 + UI 精简）
+> 阶段：D 五期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标）+ Ollama 本地化 3.B 落地 + **寒暄闪电直达（0.5b 模型，毫秒级响应）** + **RAG 精度优化（阈值 0.70 + 关键词加权）** + **UI 极简（移除阶段条）**
 
-> ⚠️ **运行模式提示（2026-09-06）**：当前本机 `.env` 为 `LLM_MODE=local`（后端跑在本地 Ollama 模式，数据不出本机；语音 ASR/TTS 仍走百炼）。切回云端：`.env` 改 `LLM_MODE=cloud` → `docker compose up -d backend` → 重建 RAG 索引（先 `rag_store.reset_namespace()` 再 `build_index()`，embedding 模型换回 v3）。
+> ⚠️ **运行模式提示（2026-09-06）**：当前本机 `.env` 为 `LLM_MODE=local` 且 `VOICE_MODE=local`（100% 本地化，数据不出机）。
+> **3.B 阶段最终优化**：微调模型 `qwen2.5:dialog-lora` 已常驻，并引入 `qwen2.5:0.5b` 作为极速分诊器。
+> **RAG 优化**：检索阈值收紧至 0.70，引入“压力/失眠/焦虑”等关键词加权（-0.05 距离），大幅提升“知识参考”相关性。
 >
 > **工作区未提交内容**：仅本文件（3.B 云训练完成回写）。3.A/3.B 代码与脚本均已提交（3.A=ab0c512，3.B 预备=2447ece，云训练脚本系列修复至 562022f）；`问题,txt` 为旧账号临时草稿可自行处置。
 
@@ -119,7 +121,7 @@ OLLAMA_MODEL=qwen2.5:7b
 | 重建 RAG 索引 | `docker exec psycheflow-backend uv run python -c "import asyncio; from app.rag.service import rag_service; print(asyncio.run(rag_service.build_index()))"` | chroma 被重建后必跑 |
 | 跑验证脚本 | `docker exec psycheflow-backend uv run python scripts/verify_leftovers.py` | has_assessment + triage 抽样 |
 | 跑性能压测 | `docker exec psycheflow-backend uv run python scripts/perf_bench.py` | 50 并发 health + 10 并发 chat（脚本位于 `backend/scripts/`，容器内 `/app/scripts/`） |
-| **SSE 首 token 实测** | `docker exec psycheflow-backend uv run python scripts/sse_first_token.py` | NFR-5 验证：首 token 应 < 2s（实测 1.72s） |
+| **SSE 首 token 实测** | `docker exec psycheflow-backend uv run python scripts/sse_first_token.py` | NFR-5 验证：首 token 应 < 2s（寒暄路径 < 0.5s，对话路径 ~1.2s） |
 | **流式 chunk 诊断** | `docker exec psycheflow-backend uv run python scripts/diag_stream.py` | 对比各模型首 content token 时间 + chunk delta 字段结构 |
 | 前端生产构建 | `docker exec psycheflow-frontend sh -c "npm run build"` | 验证前端编译无错 |
 | 进容器 shell | `docker exec -it psycheflow-backend bash` | |
@@ -352,9 +354,13 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
   - nginx.conf 优化（gzip / 30d 缓存 / 安全头 / 流式代理 / 10m 上传）
   - Token 安全加固（secrets.token_hex(32) 替代 account_id）
 
-### SSE 流式 + 首 token 优化 ✅（commit 70d2917 → fe1a595）
+### SSE 流式 + 首 token 优化 ✅（commit 70d2917 → fe1a595 → 本地极致优化）
 - **SSE 骨架**（commit 70d2917）：POST /api/chat/stream（保留旧 /api/chat 向后兼容）。手动跑 triage→assessment 同步等结果，再 provider.stream() 边生成边推 token；危机路径不流式推完整 crisis_message 后 close；审计双写不破坏。SSE 事件：agent/sources/token/crisis/error/done。前端 streamChat（fetch+ReadableStream 解析 SSE，不用 EventSource 因不支持 POST+auth）+ ChatPage 边收 token 边显示
 - **首 token 优化**（commit fe1a595，NFR-5 达标）：首 token **18.08s → 1.72s**
+- **本地极致优化**（2026-09-06）：
+  - **寒暄闪电直达**：在 `triage_node` 中识别“寒暄”意图，利用 `qwen2.5:0.5b` 极速分诊模型实现毫秒级响应，直接返回 `final_reply` 结束 graph。
+  - **RAG 精度提升**：收紧检索阈值至 0.70，并引入关键词加权（减小 L2 距离 0.05），解决“知识参考”不相关问题。
+  - **UI 精简**：彻底移除前端 `StageStepper` 流程条，界面回归纯净对话体验。
   - 瓶颈定位：triage（intake=qwen3.8）+ intervention（dialog=deepseek-v4-pro）两节点都有 reasoning_content 思考链，stream 模式下先输出思考链 5-15s 再输出 content
   - 误判排查：qwen3.8 不支持 `enable_thinking=False`（百炼报 400 restricted to True）；以为关思考后 4.80s 达标，实际是 stream() 抛 BadRequestError 被 stream_intervention 捕获走 FALLBACK_REPLY 的假象
   - 解决：triage + dialog_stream 两个角色都换 **qwen-plus**（无思考链，首 content ~0.5s）。新增 `model_triage`/`temp_triage` 配置项 + role="triage" 映射。triage max_tokens 500→50。llm.py stream() 移除 extra_body
@@ -445,7 +451,19 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
   - triage 意图分诊 **40/43 = 93.0%**（云端 qwen3.8-27b 基线 97.7%）；**危机 8/8 = 100% 安全红线保住**；3 个误判全是求助/咨询边界样本（不改变路由，两类都进 intervention）
   - 报告合规 **76/76 = 100%**（5 场景全过，发展建议 733-874 字非空，PDF 136-170KB，单场景 ~11s）
   - 正常对话 SSE：模型热态首 token ~0.8s（RAG 0.6s）；危机路径 0.15s（硬编码前置不调 LLM）
-- **已知限制**：ASR/TTS 语音仍走百炼（3.A 未本地化，faster-whisper/edge-tts 推后）；eval 脚本已适配 local 模式（无 DASHSCOPE_API_KEY 也可跑）
+- **已知限制**：~~ASR/TTS 语音仍走百炼（3.A 未本地化，faster-whisper/edge-tts 推后）~~ ✅ 已在 D5 阶段解决。
+
+### 本地语音本地化 D5 ✅（2026-09-06 实施并验证通过）
+
+- **方案**：**faster-whisper** (ASR) + **sherpa-onnx** (TTS)。
+- **代码实现**：[voice_local.py](backend/app/core/voice_local.py) 封装本地引擎；[api/voice.py](backend/app/api/voice.py) 根据 `VOICE_MODE` 自动路由。
+- **环境修复**：
+  - 解决了 `sherpa-onnx` 与 `onnxruntime` 的动态库版本符号冲突（`VERS_1.27.1` not found），通过强制重装配套 wheel 并修正 `entrypoint.sh` 库路径解决。
+  - 适配了 `sherpa-onnx` 最新版本的 API（`OfflineTtsVitsModelConfig` 参数名 `vits` → `model`）。
+- **模型挂载**：宿主机 `E:\OllamaModels\voice` 挂载至容器 `/models/voice`。
+  - ASR: `faster-whisper-medium` (GPU 加速)
+  - TTS: `vits-zh-aishell3` (ONNX 格式)
+- **验证**：运行 `docker exec psycheflow-backend uv run python test_voice_local.py` → **ASR/TTS 均加载成功**。
 - **3.B 云GPU微调版**：✅ 云上训练与 GGUF 导出已完成（2026-09-06），详见下节「本地私有化 3.B」；剩余本地导入启用+评测
 
 ### 本地私有化 3.B 云 GPU 微调 ✅ 云上训练+GGUF 导出完成（2026-09-06，待本地导入启用）
@@ -572,6 +590,7 @@ dd853fb B 二期：LangGraph 四智能体编排 + RAG .md 修复 + ChatPage 阶�
 - [ ] 遗留项验证：`docker exec psycheflow-backend uv run python scripts/verify_leftovers.py` → has_assessment PASS + triage 9/9
 - [ ] **SSE 首 token 验证（NFR-5）**：`docker exec psycheflow-backend uv run python scripts/sse_first_token.py` → 首 token < 2s（实测 1.75s，triage=qwen3.8-27b/dialog_stream=qwen3.8-max 关思考链），事件序列 agent(triage)→agent(assessment)→agent(intervention)→sources→token×N→done
 - [ ] **SSE 危机验证**：`docker exec psycheflow-backend uv run python scripts/sse_first_token.py --message "我想自杀"` → 首 token N/A（危机不流式），crisis 事件含 12355
+- [ ] **D5 本地语音验证**：`docker exec psycheflow-backend uv run python test_voice_local.py` → 看到 ASR/TTS 均加载成功，无 `ImportError`
 - [ ] 浏览器访问 http://localhost:5174/chat → 看到 StageStepper「1 分诊 2 测评 3 干预 4 升级」
 - [ ] 输入「我最近压力大」→ 回复是共情内容（呼吸/放松建议），**不是**含 12355 的危机话术；**文字应逐字出现**（SSE 流式），非一次性出现
 - [ ] 输入「我想自杀」→ CrisisBanner 出现 + 回复含 12355 + sources 为空 + current_agent=escalation

@@ -111,9 +111,10 @@ curl http://localhost:8000/api/health        # 期望 {"status":"ok",...}
 docker exec -e PYTHONUTF8=1 psycheflow-backend uv run python scripts/e2e_acceptance.py
 # 期望 7/7 PASS
 
-# 3. 确认 RAG 已建
+# 3. 确认 RAG 已建并验证精度
 curl http://localhost:8000/api/rag/search -X POST \
   -H "Content-Type: application/json" -d '{"query":"抑郁","k":3}'
+# 期望返回相关性得分较高的结果（阈值已收紧至 0.70）
 ```
 
 ## 六、日常运维

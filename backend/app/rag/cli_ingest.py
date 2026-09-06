@@ -16,11 +16,16 @@ from app.rag.store import rag_store
 
 
 def _default_knowledge_dir() -> str:
-    """根据当前文件路径求 data/knowledge 的绝对路径。
-
-    cli_ingest.py 位于 backend/app/rag/，向上两级到 backend/，
-    再上一级到项目根，再进 data/knowledge。
+    """根据当前环境返回 data/knowledge 的绝对路径。
+    
+    兼容容器内 (/app/data/knowledge) 和宿主机开发环境。
     """
+    # 优先尝试 /app/data/knowledge (容器标准路径)
+    container_path = "/app/data/knowledge"
+    if os.path.isdir(container_path):
+        return container_path
+        
+    # 回退到相对路径查找 (宿主机开发)
     here = os.path.dirname(os.path.abspath(__file__))  # backend/app/rag
     return os.path.abspath(os.path.join(here, "..", "..", "..", "data", "knowledge"))
 

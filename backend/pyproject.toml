@@ -28,6 +28,13 @@ dependencies = [
     "jinja2>=3.1.0",
     "markdown>=3.7",
     # 语音（D3 四期：ASR/TTS 均走 DashScope 原生 HTTP API，httpx 直连，无需 SDK）
+    # 本地语音支持 (D5 阶段)
+    "faster-whisper>=1.0.0",
+    "sherpa-onnx>=1.13.7",
+    "sherpa-onnx-core>=1.13.7",
+    "onnxruntime>=1.29.0",
+    "nvidia-cublas-cu12",
+    "nvidia-cudnn-cu12",
 ]
 
 [tool.uv]

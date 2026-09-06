@@ -16,10 +16,16 @@ from app.agents.nodes.triage import triage_node
 from app.agents.state import AgentState
 
 
-def route_after_triage(state: AgentState) -> Literal["escalation", "assessment"]:
-    """conditional edge：is_crisis=true 走 escalation，否则走 assessment。"""
+def route_after_triage(state: AgentState) -> Literal["escalation", "assessment", "END"]:
+    """conditional edge：
+    1. is_crisis=true 走 escalation
+    2. triage 已产出 final_reply（如寒暄直达）走 END
+    3. 否则进入 assessment
+    """
     if state.get("is_crisis", False):
         return "escalation"
+    if state.get("final_reply"):
+        return "END"
     return "assessment"
 
 
@@ -36,7 +42,11 @@ def build_graph():
     g.add_conditional_edges(
         "triage",
         route_after_triage,
-        {"escalation": "escalation", "assessment": "assessment"},
+        {
+            "escalation": "escalation",
+            "assessment": "assessment",
+            "END": END
+        },
     )
     g.add_edge("assessment", "intervention")
     g.add_edge("intervention", END)

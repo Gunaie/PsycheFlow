@@ -5,6 +5,7 @@ is_crisis=true 跳过 LLM（Escalation 节点处理），不进入意图分类 L
 """
 import logging
 
+from app.agents.personas import get_persona, build_system_prompt
 from app.agents.prompts import TRIAGE_SYSTEM, TRIAGE_USER_TEMPLATE
 from app.agents.state import AgentState
 from app.core.llm import provider
@@ -37,7 +38,7 @@ async def triage_node(state: AgentState) -> dict:
             "agent_trace": trace,
         }
 
-    # 2. LLM 意图分类（role=triage 用 qwen3.8-27b 关思考链，首 token 快；4 类标签 max_tokens 50 足够）
+    # 2. LLM 意图分类
     try:
         user_prompt = TRIAGE_USER_TEMPLATE.format(message=message)
         reply = await provider.chat(
@@ -50,10 +51,32 @@ async def triage_node(state: AgentState) -> dict:
             max_tokens=50,
         )
         intent = reply.strip()
-        # 兜底：LLM 幻觉出非 4 类标签 → 默认走倾诉（最安全路径）
-        if intent not in ("求助", "倾诉", "咨询", "危机"):
+        # 兜底：LLM 幻觉出非 5 类标签 → 默认走倾诉
+        if intent not in ("寒暄", "求助", "倾诉", "咨询", "危机"):
             logger.warning("triage: unexpected intent %r, fallback to 倾诉", intent)
             intent = "倾诉"
+            
+        # 3. 极速直达路径：若是寒暄，直接用 0.5b 生成简短回复并跳过后续节点
+        if intent == "寒暄":
+            logger.info("triage: greeting detected, using fast-path")
+            persona = get_persona(state.get("persona_id"))
+            greeting_reply = await provider.chat(
+                role="triage", # 继续复用 0.5b 模型
+                messages=[
+                    {"role": "system", "content": build_system_prompt(persona) + "\n请简洁地回应用户的打招呼或询问，不要开启 RAG 或深度对话。"},
+                    {"role": "user", "content": message},
+                ],
+                temperature=0.7,
+                max_tokens=100,
+            )
+            return {
+                "is_crisis": False,
+                "triage_intent": intent,
+                "final_reply": greeting_reply,
+                "current_agent": "triage",
+                "agent_trace": trace,
+            }
+
     except Exception as e:
         logger.warning("triage: LLM failed %s, fallback to 倾诉", str(e))
         intent = "倾诉"

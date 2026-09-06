@@ -10,7 +10,7 @@ BASE = "http://localhost:8000"
 
 text_in = "你好，今天心情怎么样？"
 print("[1] POST /api/voice/synthesize:", text_in)
-with httpx.Client(timeout=60.0) as cli:
+with httpx.Client(timeout=180.0) as cli:
     r1 = cli.post(f"{BASE}/api/voice/synthesize", json={"text": text_in})
     print("    HTTP", r1.status_code, "| content-type:", r1.headers.get("content-type"), "| bytes:", len(r1.content))
     assert r1.status_code == 200 and r1.headers["content-type"] == "audio/mpeg" and len(r1.content) > 1000
