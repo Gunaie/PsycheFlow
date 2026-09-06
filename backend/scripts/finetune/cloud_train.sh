@@ -149,8 +149,24 @@ pip install -q "transformers>=4.49,<5" \
 # "cannot import name 'PreTrainedModel'"）→ 降级 scipy 到兼容 numpy 1.26 的版本
 pip install -q "scipy==1.13.1" \
   || pip install -q "scipy==1.13.1" -i https://mirrors.aliyun.com/pypi/simple
-python3 -c "from transformers import PreTrainedModel; import peft" \
-  || { echo "[FATAL] transformers/peft 导入失败，转 GGUF 无法继续"; exit 1; }
+# llama.cpp 转换依赖会把 torch 升到最新版并拆散 torchvision/torchaudio 配对
+# （RuntimeError: operator torchvision::nms does not exist）→ 全家族对齐回 2.8.0。
+# 注意 pip 比较版本时看不见 +cpu/+cu128 后缀，必须先卸载强制重装正确的构建。
+if [ -f "$FT/lora_dialog/adapter_model.safetensors" ]; then
+  echo "[对齐] torch 家族 → 2.8.0 CPU 版（训练已完成，合并/转换不碰 GPU）"
+  pip uninstall -y torch torchvision torchaudio || true
+  pip install -q torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 \
+    --index-url https://download.pytorch.org/whl/cpu
+else
+  echo "[对齐] torch 家族 → 2.8.0 CUDA 版（训练未完成，还需 GPU）"
+  pip uninstall -y torch torchvision torchaudio || true
+  pip install -q torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 \
+    --index-url https://download.pytorch.org/whl/cu128
+fi
+# 全链路探针：torch 家族 ABI + transformers + peft + llamafactory.data（mm_plugin→torchaudio）
+python3 -c "import torch, torchvision, torchaudio, transformers, peft; from llamafactory.data import template; from transformers import PreTrainedModel" \
+  || { echo "[FATAL] 训练栈导入链仍损坏，把上方完整日志发回"; exit 1; }
+echo "[OK] 导入链完整，可以合并导出"
 
 # 合并 LoRA → 完整 HF 模型 → 转 Q4_K_M GGUF → 删合并模型（省数据盘空间，串行处理）
 merge_and_gguf() {
