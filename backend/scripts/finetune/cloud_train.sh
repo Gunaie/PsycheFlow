@@ -144,6 +144,11 @@ pip install -q -r "$WORK/llama.cpp/requirements/requirements-convert_hf_to_gguf.
 pip uninstall -y transformers || true
 pip install -q "transformers>=4.49,<5" \
   || pip install -q "transformers>=4.49,<5" -i https://mirrors.aliyun.com/pypi/simple
+# llama.cpp 转换依赖把 numpy 钉在 1.26.4，与 scipy 1.18+（要求 numpy>=2）冲突，
+# 连锁导致 transformers.modeling_utils 导入崩溃（表现为误导性的
+# "cannot import name 'PreTrainedModel'"）→ 降级 scipy 到兼容 numpy 1.26 的版本
+pip install -q "scipy==1.13.1" \
+  || pip install -q "scipy==1.13.1" -i https://mirrors.aliyun.com/pypi/simple
 python3 -c "from transformers import PreTrainedModel; import peft" \
   || { echo "[FATAL] transformers/peft 导入失败，转 GGUF 无法继续"; exit 1; }
 
