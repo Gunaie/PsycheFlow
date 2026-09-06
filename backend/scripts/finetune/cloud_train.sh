@@ -86,9 +86,29 @@ else
 fi
 cp "$FT/dataset_info.json" "$DATA/dataset_info.json"
 
-echo "================ [3/6] 训练 dialog LoRA ================"
-# 下 Qwen 基座走 hf-mirror（国内源），关掉学术代理避免被绕到国外
+echo "================ [2.5/6] 预下载基座 Qwen2.5-7B-Instruct ================"
+# 下模型走国内源（modelscope 阿里源最快），关掉学术代理
 unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
+MODEL_DIR=$WORK/Qwen2.5-7B-Instruct
+if [ -f "$MODEL_DIR/config.json" ]; then
+  echo "本地已存在基座：$MODEL_DIR"
+else
+  pip install -q modelscope || pip install -q modelscope -i https://mirrors.aliyun.com/pypi/simple
+  modelscope download --model Qwen/Qwen2.5-7B-Instruct --local_dir "$MODEL_DIR" || {
+    echo "[WARN] modelscope 失败，回退 HF mirror（已禁用 Xet）"
+    python3 - <<PY || { echo "基座下载失败"; exit 1; }
+from huggingface_hub import snapshot_download
+snapshot_download("Qwen/Qwen2.5-7B-Instruct", local_dir=r"$MODEL_DIR", max_workers=4)
+PY
+  }
+fi
+[ -f "$MODEL_DIR/config.json" ] || { echo "模型下载失败：$MODEL_DIR 无 config.json"; exit 1; }
+echo "基座就绪：$MODEL_DIR（$(du -sh "$MODEL_DIR" | cut -f1)）"
+# 训练 yaml 指向本地模型目录，LLaMA-Factory 不再联网下载
+sed -i "s#^model_name_or_path:.*#model_name_or_path: $MODEL_DIR#" \
+  "$FT/train_dialog.yaml" "$FT/train_report.yaml"
+
+echo "================ [3/6] 训练 dialog LoRA ================"
 llamafactory-cli train "$FT/train_dialog.yaml"
 
 if [ "$HAS_REPORT" = "1" ]; then
@@ -113,7 +133,7 @@ merge_and_gguf() {
   local adapter=$1 merged=$2 gguf=$3
   echo "---- 合并 $adapter → $merged ----"
   cat > "$WORK/export_tmp.yaml" <<EOF
-model_name_or_path: Qwen/Qwen2.5-7B-Instruct
+model_name_or_path: $MODEL_DIR
 adapter_name_or_path: $adapter
 template: qwen
 finetuning_type: lora
