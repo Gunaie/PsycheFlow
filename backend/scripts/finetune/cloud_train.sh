@@ -32,6 +32,9 @@ export HF_HOME=/root/autodl-tmp/hf
 export PYTHONUNBUFFERED=1
 # HuggingFace 国内镜像（直连 hf-mirror 下 Qwen 基座，属国内源，不走学术代理）
 export HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
+# 关闭 Xet 存储协议：新版 huggingface_hub 默认走 cas-server.xethub.hf.co，
+# 该域名国内直连 401（hf-mirror 只代理传统 HTTP LFS 下载，不代理 Xet）
+export HF_HUB_DISABLE_XET=1
 # 注意：pip 用 AutoDL 默认的国内 PyPI 镜像，绝不能先 source /etc/network_turbo
 # （学术代理会把国内 pip 源代理坏，报 No matching distribution）。
 unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
@@ -84,6 +87,8 @@ fi
 cp "$FT/dataset_info.json" "$DATA/dataset_info.json"
 
 echo "================ [3/6] 训练 dialog LoRA ================"
+# 下 Qwen 基座走 hf-mirror（国内源），关掉学术代理避免被绕到国外
+unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
 llamafactory-cli train "$FT/train_dialog.yaml"
 
 if [ "$HAS_REPORT" = "1" ]; then
@@ -92,6 +97,8 @@ if [ "$HAS_REPORT" = "1" ]; then
 fi
 
 echo "================ [5/6] 准备 llama.cpp（转 GGUF 用）================"
+# git clone github 需要学术加速
+if [ -f /etc/network_turbo ]; then source /etc/network_turbo || true; fi
 if [ ! -d "$WORK/llama.cpp" ]; then
   git clone --depth 1 https://github.com/ggerganov/llama.cpp.git "$WORK/llama.cpp"
 fi
