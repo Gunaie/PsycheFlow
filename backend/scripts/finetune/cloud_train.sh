@@ -47,7 +47,23 @@ echo "================ [1/6] 安装 LLaMA-Factory（国内 pip 源，不开代�
 # 默认源失败则显式换阿里云源兜底。
 pip install -q llamafactory bitsandbytes \
   || pip install -q llamafactory bitsandbytes -i https://mirrors.aliyun.com/pypi/simple
+
+# 对齐 torchaudio：pip 可能装到绑定新版 CUDA（如 libcudart.so.13）的 torchaudio，
+# 与镜像自带 torch（CUDA 12.x，libcudart.so.12）ABI 冲突 → 启动报 libcudart 找不到。
+# torchaudio 与 torch 版本号一致，装回同版本（纯文本训练用不到音频，仅防 import 崩）。
+python3 - <<'PY' || true
+import subprocess, sys
+try:
+    import torch
+    tv = torch.__version__.split("+")[0]
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", f"torchaudio=={tv}"])
+    print(f"[OK] torchaudio 已对齐 torch {tv}")
+except Exception as e:
+    print("[WARN] torchaudio 对齐失败（可忽略，纯文本训练）:", e)
+PY
+
 llamafactory-cli version || true
+python3 -c "import torch; print('torch', torch.__version__, 'CUDA 可用:', torch.cuda.is_available())"
 
 echo "================ [2/6] 准备 dialog 数据（DeepWell-Adol）================"
 # git clone github 需要 AutoDL 学术加速（pip 已装完，此刻开代理不影响）
