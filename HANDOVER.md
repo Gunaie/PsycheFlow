@@ -1,8 +1,16 @@
 # PsycheFlow 项目交接文档
 
-> 最后更新：2026-09-05
-> 当前 commit：`df68bd0`（feat: 双端隔离补强 + 门户身份换乘站 + 统一返回导航与按钮美化）
-> 阶段：D 四期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标）+ Ollama 本地兜底 + 生产验收/打包交付 + 测评纠偏与前端体验批次 + 文档同步 + 试点合规材料 + 路由重构与三态门户 + 前端视觉丰富 + GitHub CI（全绿）+ LLM 输出评估体系 + README 开源级打磨 + 匿名安全加固 + 双端隔离补强与交互导航（求职三步 P1/P2/P3 完成；真实用户试点待部署决策）
+> 最后更新：2026-09-06
+> 当前 commit：`5fd9f6e`（fix: 报告字样/历史时间/详情显示 + 批次管理增强 + 测评提交即存档）
+> 阶段：D 四期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标）+ Ollama 本地兜底 + 生产验收/打包交付 + 测评纠偏与前端体验批次 + 文档同步 + 试点合规材料 + 路由重构与三态门户 + 前端视觉丰富 + GitHub CI（全绿）+ LLM 输出评估体系 + README 开源级打磨 + 匿名安全加固 + 双端隔离补强与交互导航 + 报告/历史/批次管理修复批次；**下一阶段主线：本地私有化部署（双版本切换，方案已就绪未实施）**
+
+> ⚠️ **工作区有未提交/未跟踪文件（2026-09-06，交接时注意）**：
+> - `docs/本地模型化方案.md`（**未跟踪**）：双版本部署方案 v2.0（云端 API 版 + 本地私有化版 3.A 基座/3.B 云GPU微调），是下一阶段实施依据
+> - `backend/scripts/export_report_finetune_data.py`（**未跟踪**）：微调数据导出脚本（从历史测评/报告反向构造 LLaMA-Factory 格式 JSONL）
+> - `backend/data/finetune/README.md`（**未跟踪**）：微调数据目录说明（数据文件 *.jsonl/*.json 已被 .gitignore 忽略）
+> - `.gitignore`（**已修改未提交**）：新增 `**/data/finetune/*.jsonl`、`**/data/finetune/*.json` 忽略规则（微调数据实际在 `backend/data/finetune/`，必须用 `**/` 前缀才能匹配，根目录 `data/finetune/` 规则不生效——已修正）
+> - `问题,txt`（**未跟踪**）：旧账号的临时问题记录草稿，可自行处置
+> - 新账号接手后请先决定：提交这批文件（建议）或另行处理。**注意：方案中 `LLM_MODE` 开关、bge-m3 本地 embedding、faster-whisper、edge-tts 均为规划，代码尚未实现**（grep 全仓库无匹配）；当前代码里的本地能力只有 Ollama 兜底链（`OLLAMA_BASE_URL`）。
 
 ---
 
@@ -22,7 +30,8 @@ docker exec psycheflow-backend uv run python -c "import asyncio; from app.rag.se
 
 # 4. 跑测试（验证全绿）
 docker exec psycheflow-backend uv run pytest -q --no-header
-# 期望：199 passed, 1 skipped, 0 failed
+# 期望：202 passed, 1 skipped, 0 failed
+# （df68bd0 时基线为 199 passed；5fd9f6e 新增 3 个批次端点测试。若实测数不一致属正常，以实测为准并回写本文档）
 
 # 5. 浏览器打开
 # 前端：http://localhost:5174/（三态门户：未登录选学生端/教师端，已登录显示身份条一键进工作台/切端确认）
@@ -110,7 +119,7 @@ OLLAMA_MODEL=qwen2.5:7b
 | 启动/重启 | `docker compose up -d --build` | **重建 chroma 容器会清空向量索引**，之后必须 build_index() |
 | 重启单服务 | `docker restart psycheflow-backend` | 仅重启进程，**不会重新读 .env**。改 .env 必须用 `docker compose up -d backend` |
 | 看后端日志 | `docker logs psycheflow-backend --tail 50` | 或加 `--since 10m` 看最近 10 分钟 |
-| 跑 pytest | `docker exec psycheflow-backend uv run pytest -q --no-header` | 199 passed + 1 skipped |
+| 跑 pytest | `docker exec psycheflow-backend uv run pytest -q --no-header` | 202 passed + 1 skipped（5fd9f6e 基线，以实测为准） |
 | 重建 RAG 索引 | `docker exec psycheflow-backend uv run python -c "import asyncio; from app.rag.service import rag_service; print(asyncio.run(rag_service.build_index()))"` | chroma 被重建后必跑 |
 | 跑验证脚本 | `docker exec psycheflow-backend uv run python scripts/verify_leftovers.py` | has_assessment + triage 抽样 |
 | 跑性能压测 | `docker exec psycheflow-backend uv run python scripts/perf_bench.py` | 50 并发 health + 10 并发 chat（脚本位于 `backend/scripts/`，容器内 `/app/scripts/`） |
@@ -287,6 +296,7 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 | [scripts/diag_deepseek.py](backend/scripts/diag_deepseek.py) | deepseek-v4 reasoning_content 思考链诊断 |
 | [scripts/reset_teacher_password.py](backend/scripts/reset_teacher_password.py) | **运维**：教师忘记密码重置（`docker exec -it psycheflow-backend uv run python scripts/reset_teacher_password.py --label 账号名 [--password 新密码]`；省略密码则自动生成 12 位并打印；仅限 role=teacher；E2E 实测新密码 200/旧密码 401） |
 | [scripts/backup_db.py](backend/scripts/backup_db.py) | **运维**：SQLite 一致性备份 + AES-256-CBC 加密（需 BACKUP_PASSPHRASE） |
+| [scripts/export_report_finetune_data.py](backend/scripts/export_report_finetune_data.py) | **本地版 3.B 预备**：从历史测评/报告反向构造微调 JSONL（LLaMA-Factory 格式），默认输出 `data/finetune/finetune_report.jsonl`（未跟踪文件，配合 [docs/本地模型化方案.md](docs/本地模型化方案.md) 使用） |
 | [scripts/e2e_acceptance.py](backend/scripts/e2e_acceptance.py) | **验收**：端到端 7 步验收（健康→登录→对话→危机→报告→审计），7/7 PASS |
 | [scripts/eval_triage.py](backend/scripts/eval_triage.py) + [scripts/eval/triage_dataset.json](backend/scripts/eval/triage_dataset.json) | **P2 评测**：triage 意图分诊评测（43 条标注样本，总体 97.7%，危机硬编码 8/8=100% 安全回归）；容器内 `uv run python scripts/eval_triage.py [--limit N] [--verbose]` |
 | [scripts/eval_report.py](backend/scripts/eval_report.py) | **P2 评测**：报告结构合规评测（5 场景×15 断言：六章节/个人信息/测评用时/雷达图/PDF 完整性/危机红框双向/建议无危机话术，100%）；复用计分引擎+真实 LLM 叙事，合成数据自动清理；容器内 `uv run python scripts/eval_report.py [--only key]` |
@@ -414,11 +424,35 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 - **入口补齐**：学生首页新增「班级筛查作答」卡（/screening 筛查码入口，功能卡 3→4 改 2×2 网格）；量表选择页免登录文案纠偏（原文案误写「登录后即可开始测评」，实为免登录可测）
 - **验证**：`tsc --noEmit` 0 错误 + `vite build` 通过；前端容器重启后浏览器目检各页返回按钮、守卫弹回与门户换乘行为
 
+### 报告/历史/批次管理修复批次 ✅（2026-09-06，commit `5fd9f6e`）
+
+试点反馈问题集中修复，9 文件 +299/-24：
+
+- **报告兜底字样**：发展建议 LLM 空回复时的兜底标题不再出现内部标识「发展建议（通用兜底）」字样（[reports/service.py](backend/app/reports/service.py)）
+- **历史报告时间少 8 小时**：根因 `session.created_at` 存 UTC 但 `isoformat()` 无时区标记，浏览器 `new Date()` 按本地时区解析。修复 [HistoryPage.tsx](frontend/src/pages/HistoryPage.tsx) `formatDate/formatTime` 给 ISO 字符串补 `Z` 标记明确 UTC
+- **双量表历史详情打不开报告内容**：根因 `viewDetail` 直接用列表精简数据（无 interpretation/answers）。修复：详情弹窗异步调 `GET /api/sessions/{id}` 补全，新增 `detailLoading` 状态；后端 [sessions.py](backend/app/api/sessions.py) 详情响应补 `max_score`
+- **测评提交即存档**：根因 assessment 写入挂在「生成 PDF 报告」按钮上，不点击则历史记录看不到。修复：[ScalePage.tsx](frontend/src/pages/ScalePage.tsx) submit 改调 `submit_assessment`（计分 + 持久化），生成 PDF 与存档解耦
+- **教师端批次管理增强**（[admin.py](backend/app/api/admin.py) + 批次列表/详情两页）：新增 `PATCH` 批次重命名、`DELETE` 批次删除、`POST` 批次 reopen（重新开放作答）；列表页与详情页加入口按钮；「创建筛查批次」表单展开时不再同时显示「暂无筛查批次」空状态（条件改 `batches.length === 0 && !showCreate`）
+- **测试**：[test_admin_screening.py](backend/tests/test_admin_screening.py) 新增 3 个批次端点测试（重命名/删除/reopen）
+
+### 本地私有化部署方案（已规划，未实施）📋（2026-09-06，工作区未提交）
+
+- **方案文档**：[docs/本地模型化方案.md](docs/本地模型化方案.md) v2.0——两套部署共用一套代码，`.env` 切换：
+  - 版本一：云端 API 版（现状，零改动）
+  - 版本二 3.A：本地基座模型版（Ollama qwen2.5:7b + bge-m3 embedding + faster-whisper ASR + edge-tts，RTX 4060 8GB 可跑，**0 成本不微调**）
+  - 版本二 3.B：云 GPU 微调版（AutoDL 等免费/低价 4090 租 LoRA 微调，权重下载回本地，约 10-30 元）
+- **路径规范**：模型权重统一 `E:\OllamaModels`（Ollama 容器挂载 `/root/.ollama`）；微调数据 `backend/data/finetune/`（容器内 `/app/data/finetune/`）
+- **配套脚本**：[export_report_finetune_data.py](backend/scripts/export_report_finetune_data.py) 从已有测评记录/报告反向构造 LLaMA-Factory 格式 JSONL（默认输出 `data/finetune/finetune_report.jsonl`）；公开数据源：DeepWell-Adol（青少年心理对话）、CPCD（校园场景），均免费
+- ⚠️ **代码状态**：`LLM_MODE` 开关、bge-m3、faster-whisper、edge-tts **尚未实现**（全仓库 grep 无匹配）；config.py/llm.py 当前仅支持云端百炼 + Ollama 兜底。实施 3.A 需按文档第 3 章改 config/llm/voice 三处
+- 硬件门槛：RTX 4060 8GB（qwen2.5:7b Q4 量化需 ≥6GB 显存）+ ≥16GB 内存
+
 ---
 
 ## 8. 待做事项（五期优化）
 
 按优先级排序：
+
+0. **【下一阶段主线】本地私有化部署实施**：依据 [docs/本地模型化方案.md](docs/本地模型化方案.md) v2.0。先做 3.A 本地基座模型版（0 成本）：拉 qwen2.5:7b + bge-m3 模型到 `E:\OllamaModels`、config.py 加 `LLM_MODE` 开关、llm.py/voice.py 路由本地 embedding/ASR/TTS、`.env` 切换验证；3.B 云 GPU 微调为可选增强。开工前先把工作区未提交的方案文档与导出脚本提交入库。另：真实校园试点部署待用户决策（见文末）。
 
 1. ~~**性能压测**~~ ✅（2026-09-01 跑通，commit 待补）：脚本 [backend/scripts/perf_bench.py](backend/scripts/perf_bench.py)，命令 `docker exec psycheflow-backend uv run python scripts/perf_bench.py`。验收数据：
    - `/api/health` x50 并发：50/50 (100%)，总耗时 138ms，平均 123.6ms，P50 123.4ms，P95 127.9ms，QPS 361.2 ✅ 满足 NFR「接口 < 200ms」
@@ -458,6 +492,8 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 ## 9. Git 提交历史
 
 ```
+5fd9f6e fix: 报告字样/历史时间/详情显示 + 批次管理增强 + 测评提交即存档 — 兜底标题去内部标识 + UTC 补 Z 修少 8 小时 + 历史详情异步拉详情接口 + PATCH/DELETE/reopen 批次端点 + submit 即持久化 assessment + 3 批次测试
+a743100 docs(handover): 同步安全加固与双端隔离补强批次 — commit 指针 df68bd0 + 补录 f1da7af/9d06a9b 批次记录 + 前端模块索引更新（RequireStudent/BackLink/门户换乘站）
 df68bd0 feat: 双端隔离补强 + 门户身份换乘站 + 统一返回导航与按钮美化 — RequireStudent/RedirectIfAuthed 守卫 + 门户身份条与切端确认 + BackLink 统一接入 + 筛查码入口卡 + 作答返回确认 + 免登录文案纠偏
 9d06a9b docs: 演示视频录制脚本（OBS 分镜 + 旁白词 + 录前清单）
 f1da7af feat(security): 匿名 LLM 接口 IP 限流 + 匿名测评不存档提示
@@ -507,7 +543,7 @@ dd853fb B 二期：LangGraph 四智能体编排 + RAG .md 修复 + ChatPage 阶�
 
 - [ ] `docker ps` 显示 3 容器 Up（psycheflow-backend / psycheflow-frontend / psycheflow-chroma）
 - [ ] 重建 RAG 索引：`docker exec psycheflow-backend uv run python -c "import asyncio; from app.rag.service import rag_service; print(asyncio.run(rag_service.build_index()))"` 输出 `{'indexed': 183, ...}`
-- [ ] 跑测试：`docker exec psycheflow-backend uv run pytest -q --no-header` → 199 passed / 1 skipped / 0 failed
+- [ ] 跑测试：`docker exec psycheflow-backend uv run pytest -q --no-header` → 202 passed / 1 skipped / 0 failed（5fd9f6e 基线；若实测不同以实测为准并回写文档）
 - [ ] 遗留项验证：`docker exec psycheflow-backend uv run python scripts/verify_leftovers.py` → has_assessment PASS + triage 9/9
 - [ ] **SSE 首 token 验证（NFR-5）**：`docker exec psycheflow-backend uv run python scripts/sse_first_token.py` → 首 token < 2s（实测 1.75s，triage=qwen3.8-27b/dialog_stream=qwen3.8-max 关思考链），事件序列 agent(triage)→agent(assessment)→agent(intervention)→sources→token×N→done
 - [ ] **SSE 危机验证**：`docker exec psycheflow-backend uv run python scripts/sse_first_token.py --message "我想自杀"` → 首 token N/A（危机不流式），crisis 事件含 12355
@@ -516,6 +552,9 @@ dd853fb B 二期：LangGraph 四智能体编排 + RAG .md 修复 + ChatPage 阶�
 - [ ] 输入「我想自杀」→ CrisisBanner 出现 + 回复含 12355 + sources 为空 + current_agent=escalation
 - [ ] 输入「重度抑郁症状」→ sources 里有 `ccmd3_summary.md`
 - [ ] C 三期：访问 http://localhost:5174/admin/login → 注册教师账号 → 创建批次 → /screening 输码作答
+- [ ] **批次管理回归（5fd9f6e）**：批次列表/详情页可见重命名、删除、reopen（重新开放）按钮且功能正常；创建批次表单展开时不再显示「暂无筛查批次」空状态；批次端点测试 `docker exec psycheflow-backend uv run pytest tests/test_admin_screening.py -q` 全绿
+- [ ] **测评提交即存档（5fd9f6e）**：学生登录态完成一份量表提交后，**不点击「生成 PDF 报告」**直接进「历史」页 → 能看到该条记录；点击查看详情能看到完整报告内容（interpretation/answers，非空白）
+- [ ] **历史时间回归（5fd9f6e）**：历史列表时间与本机实际时间一致（不再少 8 小时）；报告发展建议兜底场景无「（通用兜底）」内部字样
 - [ ] D2 人格切换：对话页底部出现 4 个人格选择芯片
 - [ ] D3 语音：对话页有 🎤 按钮 → 录音 → 转写文字到输入框 → 发送 → AI 回复下方有 🔊 朗读按钮
 - [ ] 浏览器访问 http://localhost:8000/docs → FastAPI Swagger UI 正常

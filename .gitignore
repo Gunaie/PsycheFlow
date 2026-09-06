@@ -37,6 +37,9 @@ data/chroma/
 data/*.db-journal
 data/*.mp3
 data/backups/
+# 微调数据（脱敏训练样本，体积较大，不入库；实际目录 backend/data/finetune/）
+**/data/finetune/*.jsonl
+**/data/finetune/*.json
 
 # IDE
 .vscode/
