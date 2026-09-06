@@ -168,15 +168,30 @@ python3 -c "import torch, torchvision, torchaudio, transformers, peft; from llam
   || { echo "[FATAL] 训练栈导入链仍损坏，把上方完整日志发回"; exit 1; }
 echo "[OK] 导入链完整，可以合并导出"
 
-# 合并 LoRA → 完整 HF 模型 → 转 Q4_K_M GGUF → 删合并模型（省数据盘空间，串行处理）
+# convert_hf_to_gguf.py 只支持 f32/f16/bf16/q8_0/auto，不支持 q4_k_m！
+# Q4_K_M 必须：先转 f16 GGUF → 再用 llama-quantize 量化（需编译 llama.cpp，只编 quantize 目标）
+if [ ! -x "$WORK/llama.cpp/build/bin/llama-quantize" ]; then
+  echo "---- 编译 llama-quantize（量化工具，约 5-10 分钟）----"
+  command -v cmake >/dev/null || pip install -q cmake \
+    || pip install -q cmake -i https://mirrors.aliyun.com/pypi/simple
+  command -v g++ >/dev/null || { apt-get update -y && apt-get install -y build-essential; }
+  (cd "$WORK/llama.cpp" \
+    && cmake -B build -DGGML_NATIVE=ON -DLLAMA_CURL=OFF \
+    && cmake --build build --config Release -j"$(nproc)" --target llama-quantize)
+fi
+
+# 合并 LoRA → 完整 HF 模型 → 转 f16 GGUF → llama-quantize 量化 Q4_K_M → 清理中间产物
 merge_and_gguf() {
   local adapter=$1 merged=$2 gguf=$3
   if [ -f "$gguf" ]; then
     echo "[跳过] 已存在 $gguf"
     return 0
   fi
-  echo "---- 合并 $adapter → $merged ----"
-  cat > "$WORK/export_tmp.yaml" <<EOF
+  if [ -f "$merged/config.json" ]; then
+    echo "[跳过合并] $merged 已存在，直接转换"
+  else
+    echo "---- 合并 $adapter → $merged ----"
+    cat > "$WORK/export_tmp.yaml" <<EOF
 model_name_or_path: $MODEL_DIR
 adapter_name_or_path: $adapter
 template: qwen
@@ -185,10 +200,15 @@ export_dir: $merged
 export_size: 2
 export_legacy_format: false
 EOF
-  llamafactory-cli export "$WORK/export_tmp.yaml"
-  echo "---- 转 GGUF → $gguf ----"
+    llamafactory-cli export "$WORK/export_tmp.yaml"
+  fi
+  local f16="${gguf%.gguf}-f16.gguf"
+  echo "---- 转 GGUF(f16) → $f16 ----"
   python3 "$WORK/llama.cpp/convert_hf_to_gguf.py" "$merged" \
-    --outfile "$gguf" --outtype q4_k_m
+    --outfile "$f16" --outtype f16
+  echo "---- 量化 → $gguf (Q4_K_M) ----"
+  (cd "$WORK/llama.cpp/build/bin" && ./llama-quantize "$f16" "$gguf" Q4_K_M)
+  rm -f "$f16"
   rm -rf "$merged"
 }
 
