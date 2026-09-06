@@ -139,9 +139,13 @@ pip install -q -r "$WORK/llama.cpp/requirements/requirements-convert_hf_to_gguf.
   || pip install -q -r "$WORK/llama.cpp/requirements/requirements-convert_hf_to_gguf.txt" \
        -i https://mirrors.aliyun.com/pypi/simple
 # llama.cpp 转换依赖会把 transformers 拉到 5.x，破坏 peft/llamafactory 的导入
-# （ImportError: cannot import name 'PreTrainedModel'）→ 装完立即压回 4.x
-pip install -q "transformers<5" \
-  || pip install -q "transformers<5" -i https://mirrors.aliyun.com/pypi/simple
+# （ImportError: cannot import name 'PreTrainedModel'）→ 卸干净后重装 4.x。
+# 实测仅 pip install 降级可能不生效，必须先 uninstall。
+pip uninstall -y transformers || true
+pip install -q "transformers>=4.49,<5" \
+  || pip install -q "transformers>=4.49,<5" -i https://mirrors.aliyun.com/pypi/simple
+python3 -c "from transformers import PreTrainedModel; import peft" \
+  || { echo "[FATAL] transformers/peft 导入失败，转 GGUF 无法继续"; exit 1; }
 
 # 合并 LoRA → 完整 HF 模型 → 转 Q4_K_M GGUF → 删合并模型（省数据盘空间，串行处理）
 merge_and_gguf() {
