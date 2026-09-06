@@ -109,17 +109,28 @@ sed -i "s#^model_name_or_path:.*#model_name_or_path: $MODEL_DIR#" \
   "$FT/train_dialog.yaml" "$FT/train_report.yaml"
 
 echo "================ [3/6] 训练 dialog LoRA ================"
-llamafactory-cli train "$FT/train_dialog.yaml"
+# 断点续跑：适配器已存在则跳过（重跑脚本不会重训）
+if [ -f "$FT/lora_dialog/adapter_model.safetensors" ]; then
+  echo "[跳过] $FT/lora_dialog 已有训练好的适配器"
+else
+  llamafactory-cli train "$FT/train_dialog.yaml"
+fi
 
 if [ "$HAS_REPORT" = "1" ]; then
   echo "================ [4/6] 训练 report LoRA ================"
-  llamafactory-cli train "$FT/train_report.yaml"
+  if [ -f "$FT/lora_report/adapter_model.safetensors" ]; then
+    echo "[跳过] $FT/lora_report 已有训练好的适配器"
+  else
+    llamafactory-cli train "$FT/train_report.yaml"
+  fi
 fi
 
 echo "================ [5/6] 准备 llama.cpp（转 GGUF 用）================"
 # git clone github 需要学术加速
 if [ -f /etc/network_turbo ]; then source /etc/network_turbo || true; fi
-if [ ! -d "$WORK/llama.cpp" ]; then
+# 校验 convert 脚本存在（防半截 clone 的空目录）
+if [ ! -f "$WORK/llama.cpp/convert_hf_to_gguf.py" ]; then
+  rm -rf "$WORK/llama.cpp"
   git clone --depth 1 https://github.com/ggerganov/llama.cpp.git "$WORK/llama.cpp"
 fi
 # pip 装依赖前关掉学术代理（否则国内 pip 源被代理坏）
@@ -127,10 +138,18 @@ unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
 pip install -q -r "$WORK/llama.cpp/requirements/requirements-convert_hf_to_gguf.txt" \
   || pip install -q -r "$WORK/llama.cpp/requirements/requirements-convert_hf_to_gguf.txt" \
        -i https://mirrors.aliyun.com/pypi/simple
+# llama.cpp 转换依赖会把 transformers 拉到 5.x，破坏 peft/llamafactory 的导入
+# （ImportError: cannot import name 'PreTrainedModel'）→ 装完立即压回 4.x
+pip install -q "transformers<5" \
+  || pip install -q "transformers<5" -i https://mirrors.aliyun.com/pypi/simple
 
 # 合并 LoRA → 完整 HF 模型 → 转 Q4_K_M GGUF → 删合并模型（省数据盘空间，串行处理）
 merge_and_gguf() {
   local adapter=$1 merged=$2 gguf=$3
+  if [ -f "$gguf" ]; then
+    echo "[跳过] 已存在 $gguf"
+    return 0
+  fi
   echo "---- 合并 $adapter → $merged ----"
   cat > "$WORK/export_tmp.yaml" <<EOF
 model_name_or_path: $MODEL_DIR
