@@ -30,10 +30,11 @@ mkdir -p "$DATA" "$GGUF" "$WORK"
 # HF 模型/数据集缓存放数据盘（否则默认 ~/.cache 占系统盘）
 export HF_HOME=/root/autodl-tmp/hf
 export PYTHONUNBUFFERED=1
-# AutoDL 学术加速（给 github 走代理）；非 AutoDL 环境该文件不存在则跳过
-if [ -f /etc/network_turbo ]; then source /etc/network_turbo || true; fi
-# HuggingFace 国内镜像（直连 hf-mirror，下 Qwen 基座）
+# HuggingFace 国内镜像（直连 hf-mirror 下 Qwen 基座，属国内源，不走学术代理）
 export HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
+# 注意：pip 用 AutoDL 默认的国内 PyPI 镜像，绝不能先 source /etc/network_turbo
+# （学术代理会把国内 pip 源代理坏，报 No matching distribution）。
+unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
 
 echo "================ [0/6] 环境检查 ================"
 nvidia-smi || { echo "未检测到 GPU，请确认实例含 GPU"; exit 1; }
@@ -41,12 +42,16 @@ python3 --version
 echo "工作目录 FT=$FT"
 df -h /root/autodl-tmp | tail -1
 
-echo "================ [1/6] 安装 LLaMA-Factory ================"
-# 不装 [torch]：用镜像自带的 CUDA 版 torch，避免 pip 重装成 CPU/错版
-pip install -q llamafactory bitsandbytes
+echo "================ [1/6] 安装 LLaMA-Factory（国内 pip 源，不开代理）================"
+# 不装 [torch]：用镜像自带的 CUDA 版 torch，避免 pip 重装成 CPU/错版。
+# 默认源失败则显式换阿里云源兜底。
+pip install -q llamafactory bitsandbytes \
+  || pip install -q llamafactory bitsandbytes -i https://mirrors.aliyun.com/pypi/simple
 llamafactory-cli version || true
 
 echo "================ [2/6] 准备 dialog 数据（DeepWell-Adol）================"
+# git clone github 需要 AutoDL 学术加速（pip 已装完，此刻开代理不影响）
+if [ -f /etc/network_turbo ]; then source /etc/network_turbo || true; fi
 if [ ! -d "$FT/DeepWell-Adolescent" ]; then
   git clone --depth 1 https://github.com/DeepWell-Adol/DeepWell-Adolescent.git "$FT/DeepWell-Adolescent"
 fi
@@ -74,7 +79,11 @@ echo "================ [5/6] 准备 llama.cpp（转 GGUF 用）================"
 if [ ! -d "$WORK/llama.cpp" ]; then
   git clone --depth 1 https://github.com/ggerganov/llama.cpp.git "$WORK/llama.cpp"
 fi
-pip install -q -r "$WORK/llama.cpp/requirements/requirements-convert_hf_to_gguf.txt"
+# pip 装依赖前关掉学术代理（否则国内 pip 源被代理坏）
+unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
+pip install -q -r "$WORK/llama.cpp/requirements/requirements-convert_hf_to_gguf.txt" \
+  || pip install -q -r "$WORK/llama.cpp/requirements/requirements-convert_hf_to_gguf.txt" \
+       -i https://mirrors.aliyun.com/pypi/simple
 
 # 合并 LoRA → 完整 HF 模型 → 转 Q4_K_M GGUF → 删合并模型（省数据盘空间，串行处理）
 merge_and_gguf() {
