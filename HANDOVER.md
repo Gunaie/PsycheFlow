@@ -491,6 +491,14 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
   - 结论：**微调模型 ≥ 3.A 基线（76/76），无回归，报告链路在对话/RAG 重构后依然全绿**
 - **⚠️→✅ 显存换入换出实测（2026-09-07）**：8GB 显存装不下全部模型常驻（基座 4.7 + dialog 4.36 + report 4.36 + bge-m3 1.2 ≈ 14.6GB）已实测证实——报告生成时 Ollama 自动驱逐 dialog-lora（LRU）换入 report-lora，`ollama ps` 实时可见换出换入，GPU 占用 6.0/8.0GB。**KEEP_ALIVE=-1 在内存压力下不生效**（Ollama 仍按需驱逐），无需调整配置；实测换入延迟：报告首场景含换入约 30-60s、模型常驻后 12.5s/场景。对话→报告交替使用时各自有一次性换入延迟，属预期行为非 bug
 
+### 对话质量改进批次 ✅（2026-09-08，commit `84ca211`）
+- **问题**：干预回复模板腔——连续轮次复读「谢谢你愿意…」收尾句式、「对吧？」闭合问句、无具体可操作建议；另「睡不着」类查询 RAG 召回 0（relaxation_exercises.md 在库但 0.60 距离阈值未放行）
+- **prompt 硬化**（[personas.py](backend/app/agents/personas.py) / [prompts.py](backend/app/agents/prompts.py)）：SAFETY_BASELINE 新增规则 3「落一个具体做法」（含知识库无片段时的通用兜底）/ 规则 4「开放式收尾」（禁"对吧/是不是/好吗"，整轮最多一个问题）/ 规则 5「不重样」（禁复读上轮建议与问句）；INTERVENTION_USER_TEMPLATE 同步加回复骨架与防重复指令；底线从 7 条扩为 9 条（assessment.py 注释同步改"第 9 条"）
+- **温度 0.35 → 0.6**（config `temp_dialog` + intervention.py 两调用点）：实测 0.35 下本地 dialog-lora 模板惯性复读上轮问句，0.6 显著减少重复且未观察到连贯性劣化
+- **新增知识卡**：`data/knowledge/05_睡眠卫生.txt`（固定作息/床只睡觉/屏幕蓝光/担忧记下法/运动与咖啡因/腹式呼吸/就医提示 8 段），`POST /api/rag/build` 重建后 126 片，冒烟第 3 轮 RAG 命中
+- **验证**：容器内 290 passed / 1 skipped 全绿；新增 [dialog_smoke.py](backend/scripts/dialog_smoke.py) 多轮冒烟工具（复用生产 prompt 拼装含 RAG + 逐轮累积 history，`DIALOG_SMOKE_TEMP` 可调温）三轮实测零复读零闭合问句
+- **已知边界**：本地 dialog-lora（7B Q4）对 prompt 结构规则的遵循是随机的，「落具体做法」时有时无——模板腔根因是 3.B 微调语料风格，纯 prompt 已到天花板；云端模式（指令遵循更强）直接受益。根治方向见 §8 第 8 条
+
 ---
 
 ## 8. 待做事项（五期优化）
@@ -535,6 +543,7 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
    - **prod compose 复检** ✅：[docker-compose.prod.yml](docker-compose.prod.yml) backend `user:1000:1000`+4 worker+curl healthcheck（Dockerfile 已装 curl）+restart always；frontend nginx TLS(443)+HSTS+CSP+wget healthcheck。Ollama 不在 prod compose（整机共享独立容器，`.env` 配 `host.docker.internal`）。
    - **部署文档** [DEPLOY.md](DEPLOY.md)：新机器拉起全步骤（前置/`.env`必填项/开发模式/生产模式/TLS 证书/Ollama 可选/部署后验收/日常运维/常见问题）。
    - **`.env.example` Ollama 注释更新**：移除已删的 compose ollama 服务说明，改为整机共享独立容器启动命令 + Open WebUI。
+8. **对话 LoRA 反模板重训（未来项，未动手）**：dialog-lora 微调语料的共情模板（共情句 + 固定问句收尾）惯性会压过 prompt 指令——2026-09-08 实测强化 prompt 后「禁闭合问句/禁复读上轮」仍被部分无视（0.6 温度下缓解）。根治：训练集加入多样化回复样本（开放式问句/具体技巧融入/不同句式骨架）云 GPU 重训；过渡方案已落地（prompt 骨架规则 + 0.6 温度 + 睡眠卫生知识卡），用 `dialog_smoke.py` 可回归验证
 
 ---
 
