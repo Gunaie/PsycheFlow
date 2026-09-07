@@ -5,7 +5,7 @@
 - transcribe：payload 构造（模型名/Data URL/上限）、响应解析、异常分支
 - synthesize：空文本/正常合成（mock _tts_http）/HTTP 请求体构造/异常包装
 - API 层：/api/voice/transcribe（类型校验+mock 转写）、
-  /api/voice/synthesize（audio/mpeg 响应）
+  /api/voice/synthesize（media_type 跟随 voice_mode：local=wav / cloud=mpeg）
 """
 import base64
 from unittest.mock import AsyncMock, patch
@@ -249,7 +249,8 @@ class TestVoiceApi:
         assert r.status_code == 422
         assert "未能识别" in r.json()["detail"]
 
-    def test_synthesize_endpoint_returns_mpeg(self):
+    def test_synthesize_endpoint_returns_mpeg_in_cloud_mode(self, monkeypatch):
+        monkeypatch.setattr(settings, "voice_mode", "cloud")
         with patch("app.api.voice.voice_service.synthesize", new=AsyncMock(return_value=b"mp3")) as m:
             r = client.post("/api/voice/synthesize", json={"text": "我听到你说考试没考好。\n来源：《CBT》"})
         assert r.status_code == 200
@@ -257,6 +258,17 @@ class TestVoiceApi:
         assert r.content == b"mp3"
         # 来源标记在到达合成前已被剥离
         m.assert_awaited_once_with("我听到你说考试没考好。")
+
+    def test_synthesize_endpoint_returns_wav_in_local_mode(self, monkeypatch):
+        # D5 语音本地化：local 模式（sherpa-onnx VITS）产出 WAV，
+        # media_type 必须跟随实际格式，否则部分浏览器 <audio> 拒播
+        monkeypatch.setattr(settings, "voice_mode", "local")
+        with patch("app.api.voice.voice_service.synthesize", new=AsyncMock(return_value=b"wav")) as m:
+            r = client.post("/api/voice/synthesize", json={"text": "我在听你说。"})
+        assert r.status_code == 200
+        assert r.headers["content-type"] == "audio/wav"
+        assert r.content == b"wav"
+        m.assert_awaited_once_with("我在听你说。")
 
     def test_synthesize_empty_text_422(self):
         r = client.post("/api/voice/synthesize", json={"text": "「来源：《CBT》」"})

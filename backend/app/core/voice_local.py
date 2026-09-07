@@ -18,24 +18,34 @@ logger = logging.getLogger("psycheflow.core.voice_local")
 _asr_model = None
 _tts_engine = None
 
+def _load_asr(device: str, compute_type: str):
+    from faster_whisper import WhisperModel
+    path = settings.local_asr_model_path
+    if not os.path.exists(path):
+        raise RuntimeError(f"ASR 模型目录不存在: {path}")
+    logger.info("Loading local ASR model on %s (%s)...", device, compute_type)
+    return WhisperModel(path, device=device, compute_type=compute_type)
+
+
 def _get_asr_model():
     global _asr_model
     if _asr_model is None:
-        from faster_whisper import WhisperModel
-        path = settings.local_asr_model_path
-        if not os.path.exists(path):
-            raise RuntimeError(f"ASR 模型目录不存在: {path}")
-        
-        logger.info("Loading local ASR model from %s...", path)
         # 优先使用 CUDA，自动回退 CPU
         try:
-            _asr_model = WhisperModel(path, device="cuda", compute_type="float16")
+            _asr_model = _load_asr("cuda", "float16")
             logger.info("ASR loaded on GPU (CUDA)")
         except Exception as e:
             logger.warning("ASR GPU load failed (%s), falling back to CPU", e)
-            _asr_model = WhisperModel(path, device="cpu", compute_type="int8")
+            _asr_model = _load_asr("cpu", "int8")
             logger.info("ASR loaded on CPU")
     return _asr_model
+
+
+def _reload_asr_on_cpu() -> None:
+    """CUDA 运行时缺库时的 CPU 兜底（ctranslate2 延迟加载：构造成功不代表首次推理可用）。"""
+    global _asr_model
+    _asr_model = _load_asr("cpu", "int8")
+    logger.info("ASR reloaded on CPU after CUDA runtime failure")
 
 def _get_tts_engine():
     global _tts_engine
@@ -53,7 +63,7 @@ def _get_tts_engine():
         
         tokens = os.path.join(model_dir, "tokens.txt")
         lexicon = os.path.join(model_dir, "lexicon.txt")
-        
+
         config = sherpa_onnx.OfflineTtsVitsModelConfig(
             model=vits_model,
             lexicon=lexicon,
@@ -63,10 +73,15 @@ def _get_tts_engine():
             noise_scale_w=0.8,
             length_scale=1.0,
         )
-        
+
+        # 数字/日期/电话规范化规则：没有它读"12355"会跳过或读错（热线号码朗读必需）
+        rule_names = ["date.fst", "number.fst", "phone.fst", "new_heteronym.fst"]
+        rules = [os.path.join(model_dir, n) for n in rule_names if os.path.exists(os.path.join(model_dir, n))]
+        rule_fsts = ",".join(rules)
+
         tts_config = sherpa_onnx.OfflineTtsConfig(
             model=sherpa_onnx.OfflineTtsModelConfig(vits=config, debug=False),
-            rule_fsts="",
+            rule_fsts=rule_fsts,
             max_num_sentences=1,
         )
         
@@ -80,12 +95,22 @@ def _get_tts_engine():
 async def transcribe_local(audio_bytes: bytes) -> str:
     """本地 ASR 转写。"""
     model = _get_asr_model()
-    
+
     # faster-whisper 需要文件对象或路径
     audio_file = io.BytesIO(audio_bytes)
-    segments, info = model.transcribe(audio_file, beam_size=5, language="zh")
-    
-    text = "".join([s.text for s in segments]).strip()
+    try:
+        segments, info = model.transcribe(audio_file, beam_size=5, language="zh")
+        text = "".join([s.text for s in segments]).strip()
+    except RuntimeError as e:
+        # ctranslate2 延迟加载 CUDA 库：构造成功也可能在首次推理时才暴露缺 libcublas/cudnn，
+        # 此时重建 CPU 模型重试一次，保证无 GPU 环境仍可用
+        msg = str(e)
+        if "cublas" not in msg and "cudnn" not in msg and "CUDA" not in msg:
+            raise
+        logger.warning("ASR CUDA runtime failure (%s), retrying on CPU", msg)
+        _reload_asr_on_cpu()
+        segments, info = _asr_model.transcribe(io.BytesIO(audio_bytes), beam_size=5, language="zh")
+        text = "".join([s.text for s in segments]).strip()
     return text
 
 async def synthesize_local(text: str) -> bytes:

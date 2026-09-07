@@ -17,6 +17,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.core import voice as voice_service
+from app.core.config import settings
 from app.core.voice import VoiceError
 
 router = APIRouter(prefix="/api/voice", tags=["voice"])
@@ -57,7 +58,11 @@ async def transcribe(file: UploadFile = File(...)):
 
 @router.post("/synthesize")
 async def synthesize(req: SynthesizeRequest):
-    """回复文本 → mp3 音频流（前端用 <audio> 播放）。"""
+    """回复文本 → 音频流（前端用 <audio> 播放）。
+
+    local 模式（sherpa-onnx VITS）产出 WAV；cloud 模式（qwen-tts）产出 MP3。
+    media_type 必须跟实际格式一致，标错会导致部分浏览器 <audio> 拒播。
+    """
     text = strip_source_marks(req.text)
     if not text:
         raise HTTPException(status_code=422, detail="合成文本为空")
@@ -66,4 +71,5 @@ async def synthesize(req: SynthesizeRequest):
     except VoiceError as e:
         logger.warning("synthesize failed: %s", e)
         raise HTTPException(status_code=502, detail=str(e))
-    return Response(content=audio, media_type="audio/mpeg")
+    media_type = "audio/wav" if settings.voice_mode == "local" else "audio/mpeg"
+    return Response(content=audio, media_type=media_type)

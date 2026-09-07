@@ -464,6 +464,10 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
   - ASR: `faster-whisper-medium` (GPU 加速)
   - TTS: `vits-zh-aishell3` (ONNX 格式)
 - **验证**：运行 `docker exec psycheflow-backend uv run python test_voice_local.py` → **ASR/TTS 均加载成功**。
+- **2026-09-07 收尾（全链路闭环）**：
+  - TTS 接入 `rule_fsts` 数字/日期规范化（date/number/phone/heteronym.fst），热线号码「12355」不再跳读/误读；
+  - [api/voice.py](backend/app/api/voice.py) `/synthesize` 的 `media_type` 跟随 `voice_mode`（local=audio/wav / cloud=audio/mpeg），修复部分浏览器 `<audio>` 拒播；
+  - E2E 往返验证脚本 [scripts/voice_e2e.py](backend/scripts/voice_e2e.py)（TTS 合成含 12355 文本 → WAV 结构检查 → faster-whisper 转写回读，关键词命中即 PASS），单测覆盖 local/cloud 双模式 media_type（`tests/test_voice.py::TestVoiceApi`）。
 - **3.B 云GPU微调版**：✅ 全部闭环（2026-09-06 训练导出，2026-09-07 本地启用+评测通过），详见下节「本地私有化 3.B」
 
 ### 本地私有化 3.B 云 GPU 微调 ✅（2026-09-06 云上训练+GGUF 导出；2026-09-07 本地启用+评测通过，全部闭环）
@@ -495,7 +499,7 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 
 0. ~~**【主线】本地私有化部署 3.A**~~ ✅（2026-09-06 完成，详见 §7「本地私有化 3.A」）：`LLM_MODE=local` 双模式改造落地，qwen2.5:7b + bge-m3 全本地，triage 93.0%（危机 100%）/ 报告 76/76=100%。后续可选项：
    - 3.B 云 GPU 微调版 ✅ 全部闭环（2026-09-06 训练导出，2026-09-07 本地启用+评测通过：76/76 基线无回归，显存换入换出已实测并回写 §7，KEEP_ALIVE 无需调整）
-   - ASR/TTS 语音本地化（faster-whisper + edge-tts，3.A 推后项；当前 local 模式语音仍走百炼）
+   - ~~ASR/TTS 语音本地化~~ ✅（D5 已闭环，详见 §7「本地语音本地化 D5」：faster-whisper + sherpa-onnx，`VOICE_MODE=local` 下 ASR/TTS 全离线，热线 12355 数字朗读经 rule_fsts 规范化，E2E 往返验证通过）
    - 切回云端：`.env` 改 `LLM_MODE=cloud` → `docker compose up -d backend` → **必须重建 RAG 索引**（embedding 换回 v3，旧 bge-m3 向量作废，同样先 reset_namespace 再 build_index）
    另：真实校园试点部署待用户决策。
 
@@ -592,7 +596,7 @@ dd853fb B 二期：LangGraph 四智能体编排 + RAG .md 修复 + ChatPage 阶�
 - [ ] 遗留项验证：`docker exec psycheflow-backend uv run python scripts/verify_leftovers.py` → has_assessment PASS + triage 9/9
 - [ ] **SSE 首 token 验证（NFR-5）**：`docker exec psycheflow-backend uv run python scripts/sse_first_token.py` → 首 token < 2s（实测 1.75s，triage=qwen3.8-27b/dialog_stream=qwen3.8-max 关思考链），事件序列 agent(triage)→agent(assessment)→agent(intervention)→sources→token×N→done
 - [ ] **SSE 危机验证**：`docker exec psycheflow-backend uv run python scripts/sse_first_token.py --message "我想自杀"` → 首 token N/A（危机不流式），crisis 事件含 12355
-- [ ] **D5 本地语音验证**：`docker exec psycheflow-backend uv run python test_voice_local.py` → 看到 ASR/TTS 均加载成功，无 `ImportError`
+- [x] **D5 本地语音验证**：`docker exec psycheflow-backend uv run python test_voice_local.py` → ASR/TTS 均加载成功，无 `ImportError`（2026-09-06 通过）；E2E 往返：`docker exec psycheflow-backend uv run python scripts/voice_e2e.py` → TTS 合成（含 12355）→ ASR 转写关键词命中 PASS（2026-09-07 通过）
 - [ ] 浏览器访问 http://localhost:5174/chat → 看到 StageStepper「1 分诊 2 测评 3 干预 4 升级」
 - [ ] 输入「我最近压力大」→ 回复是共情内容（呼吸/放松建议），**不是**含 12355 的危机话术；**文字应逐字出现**（SSE 流式），非一次性出现
 - [ ] 输入「我想自杀」→ CrisisBanner 出现 + 回复含 12355 + sources 为空 + current_agent=escalation
