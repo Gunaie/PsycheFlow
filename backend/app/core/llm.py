@@ -129,7 +129,7 @@ class LLMProvider:
             "intake": self._settings.temp_intake,
             "triage": self._settings.temp_triage,
             "dialog": self._settings.temp_dialog,
-            "dialog_stream": self._settings.temp_dialog,  # 流式干预复用 dialog 温度 0.35
+            "dialog_stream": self._settings.temp_dialog,  # 流式干预复用 dialog 温度
             "report": self._settings.temp_report,
         }
         return mapping.get(role, 0.7)

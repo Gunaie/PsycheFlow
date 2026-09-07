@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     # LLM 温度：计分场景确定性优先，对话场景放宽
     temp_intake: float = 0.1
     temp_triage: float = 0.1   # 意图分类确定性优先
-    temp_dialog: float = 0.35
+    temp_dialog: float = 0.6  # 共情自然 + 打破 LoRA 模板重复（0.35 实测复读上轮问句）
     temp_report: float = 0.1
 
     # 目录：审计日志 + RAG 知识库（默认从 sqlite_path 推导，支持 .env 覆盖）

@@ -1,6 +1,6 @@
 """Intervention 干预节点：RAG 检索 + LLM 共情回应。
 
-核心对话智能体，温度 0.35（共情自然）。引用 RAG 知识库片段时回复末尾用
+核心对话智能体，温度 0.6（共情自然 + 缓解模板重复）。引用 RAG 知识库片段时回复末尾用
 「来源：《xxx》」格式，sources 字段同时返回供前端渲染卡片。
 
 本模块同时支持：
@@ -123,7 +123,7 @@ async def stream_intervention(
         async for token in provider.stream(
             role="dialog_stream",
             messages=messages,
-            temperature=0.35,
+            temperature=0.6,
             max_tokens=3000,
         ):
             collected.append(token)
@@ -155,7 +155,7 @@ async def intervention_node(state: AgentState) -> dict:
         reply = await provider.chat(
             role="dialog",
             messages=messages,
-            temperature=0.35,
+            temperature=0.6,
             max_tokens=3000,  # deepseek-v4 有 reasoning_content 思考链，600 不够
         )
         # 空字符串/纯空白不抛异常，须显式检查触发 fallback（同 reports 教训）

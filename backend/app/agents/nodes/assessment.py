@@ -1,7 +1,7 @@
 """Assessment 测评节点：纯 DB 查询，无 LLM 调用。
 
 查最近一条 AssessmentRecord 的 severity/crisis_level/total_score 作为上下文，
-供 Intervention 节点使用（SAFETY_BASELINE 第 7 条：重度用户回复更谨慎）。
+供 Intervention 节点使用（SAFETY_BASELINE 第 9 条：重度用户回复更谨慎）。
 
 查询顺序：
 1. 按 session_id 查（测评 session 内对话场景）
