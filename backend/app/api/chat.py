@@ -1,7 +1,10 @@
 """开放对话端点：LangGraph 四智能体编排（分诊→测评→干预→升级）。
 
-POST /api/chat         非流式（向后兼容 NFR-1，旧客户端不变）
-POST /api/chat/stream  SSE 流式（NFR-5 首 token 优化，边生成边推）
+POST /api/chat              非流式（向后兼容 NFR-1，旧客户端不变）
+POST /api/chat/stream       SSE 流式（NFR-5 首 token 优化，边生成边推）
+GET  /api/chat/history      对话历史回填（刷新页面后恢复会话）
+DELETE /api/chat/history    清空指定会话的全部聊天记录
+POST /api/chat/case-upload  病例科普解读（PDF/粘贴文本，multipart）
 
 向后兼容 NFR-1：旧字段 reply/sources/crisis 不变；新增 current_agent/agent_trace/
 persona_id 为可选。persona_id 仅影响干预节点人格，危机升级零 LLM 不受理格影响。
@@ -9,13 +12,15 @@ persona_id 为可选。persona_id 仅影响干预节点人格，危机升级零 
 import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.agents.graph import graph
 from app.agents.nodes.assessment import assessment_node
+from app.agents.nodes.case import analyze_case
 from app.agents.nodes.escalation import escalation_node
 from app.agents.nodes.intervention import (
     FALLBACK_REPLY,
@@ -26,13 +31,25 @@ from app.agents.nodes.triage import triage_node
 from app.agents.personas import get_persona
 from app.api.deps import get_current_account, get_db_session
 from app.api.ratelimit import rate_limit
+from app.core.case_parser import (
+    CaseParseError,
+    clean_text,
+    extract_pdf_text,
+    truncate_case_text,
+)
 from app.core.llm import provider
 from app.core.safety import crisis_message
-from app.models import ConversationTurn, User
+from app.models import ConversationTurn, Session as SessionModel, User
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 logger = logging.getLogger("psycheflow.api.chat")
+
+# 防护：单条消息最长 2000 字（防 token 滥用/超长刷接口）；上送 history 最多保留 10 轮
+MAX_MESSAGE_CHARS = 2000
+MAX_HISTORY_TURNS = 20  # 10 轮 = 20 条消息
+# 病例上传：PDF 体积上限 10MB
+MAX_CASE_PDF_BYTES = 10 * 1024 * 1024
 
 
 class ChatMessage(BaseModel):
@@ -41,11 +58,21 @@ class ChatMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    message: str
+    message: str = Field(max_length=MAX_MESSAGE_CHARS)
     history: list[ChatMessage] = Field(default_factory=list)
     session_id: str | None = None
     account_id: str | None = None
     persona_id: str | None = None  # 多角色人格，不传=默认"暖暖"
+
+
+def _clip_history(history: list[ChatMessage]) -> list[dict]:
+    """history 截断为最近 MAX_HISTORY_TURNS 条，只保留 user/assistant 角色。"""
+    clipped = [
+        {"role": m.role, "content": m.content}
+        for m in history
+        if m.role in ("user", "assistant")
+    ][-MAX_HISTORY_TURNS:]
+    return clipped
 
 
 def _sse(event: str, data: dict) -> str:
@@ -90,7 +117,7 @@ async def chat(
         "session_id": effective_session_id or "",
         "account_id": effective_account_id or "",
         "user_message": req.message,
-        "history": [{"role": m.role, "content": m.content} for m in req.history],
+        "history": _clip_history(req.history),
         "persona_id": effective_persona_id,
         "agent_trace": [],
     }
@@ -200,7 +227,7 @@ async def chat_stream(
         "session_id": effective_session_id or "",
         "account_id": effective_account_id or "",
         "user_message": req.message,
-        "history": [{"role": m.role, "content": m.content} for m in req.history],
+        "history": _clip_history(req.history),
         "persona_id": effective_persona_id,
         "agent_trace": [],
     }
@@ -269,31 +296,36 @@ async def chat_stream(
         except Exception as e:
             logger.exception("stream: orchestration failed: %s", e)
             err_msg = f"[服务异常] 流式编排失败: {type(e).__name__}"
-            yield _sse("error", {"message": err_msg})
-            # 异常时仍保证有回复（兜底话术），前端可继续展示
+            # 客户端已断开时 yield 会再抛 CancelledError，由 finally 收尾
+            try:
+                yield _sse("error", {"message": err_msg})
+            except Exception:
+                pass
+
+        finally:
+            # —— 5. 写 assistant 轮 ConversationTurn（finally 保证：客户端点「停止」
+            #    导致 CancelledError 时，已生成的片段也落库，刷新回填不丢内容）——
             if not final_reply:
                 final_reply = FALLBACK_REPLY
                 final_agent = final_agent or "intervention"
                 final_trace = final_trace or (state.get("agent_trace", []) + ["intervention"])
-
-        # —— 5. 写 assistant 轮 ConversationTurn（审计双写不破坏）——
-        try:
-            db.add(
-                ConversationTurn(
-                    session_id=effective_session_id,
-                    account_id=effective_account_id,
-                    role="assistant",
-                    content=final_reply,
-                    sources_json=final_sources if final_sources else None,
-                    crisis_hit=is_crisis,
+            try:
+                db.add(
+                    ConversationTurn(
+                        session_id=effective_session_id,
+                        account_id=effective_account_id,
+                        role="assistant",
+                        content=final_reply,
+                        sources_json=final_sources if final_sources else None,
+                        crisis_hit=is_crisis,
+                    )
                 )
-            )
-            db.commit()
-        except Exception as e:
-            logging.warning("stream: write assistant ConversationTurn failed: %s", e)
-            db.rollback()
+                db.commit()
+            except Exception as e:
+                logging.warning("stream: write assistant ConversationTurn failed: %s", e)
+                db.rollback()
 
-        # —— 6. done 信号（前端收到后 close EventSource）——
+        # —— 6. done 信号（前端收到后结束读取；客户端已中断时此 yield 抛异常，无害）——
         yield _sse("done", {
             "reply": final_reply,
             "current_agent": final_agent,
@@ -313,3 +345,170 @@ async def chat_stream(
             "Connection": "keep-alive",
         },
     )
+
+
+# ================================================================
+# 对话历史回填：刷新页面后按 chat session 恢复对话（ConversationTurn 已双写落库）
+# ================================================================
+@router.get("/history")
+async def chat_history(
+    session_id: str,
+    db: Session = Depends(get_db_session),
+    account: User | None = Depends(get_current_account),
+):
+    """返回指定会话的对话轮次（按时间正序），供前端刷新后回填。
+
+    权限与 /api/sessions/{id} 一致：非匿名会话必须是本人；匿名会话不校验。
+    """
+    if not session_id:
+        raise HTTPException(status_code=422, detail="缺少 session_id")
+
+    sess = db.get(SessionModel, session_id)
+    if sess is None:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    if sess.account_id is not None and (account is None or account.id != sess.account_id):
+        raise HTTPException(status_code=403, detail={"code": "forbidden"})
+
+    rows = db.execute(
+        select(ConversationTurn)
+        .where(ConversationTurn.session_id == session_id)
+        .order_by(ConversationTurn.created_at.asc(), ConversationTurn.id.asc())
+    ).scalars().all()
+
+    items = [
+        {
+            "role": r.role,
+            "content": r.content,
+            "sources": r.sources_json or [],
+            "attachments": r.attachments_json or [],
+            "crisis_hit": bool(r.crisis_hit),
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
+    return {"session_id": session_id, "items": items}
+
+
+@router.delete("/history")
+async def chat_history_delete(
+    session_id: str,
+    db: Session = Depends(get_db_session),
+    account: User | None = Depends(get_current_account),
+):
+    """清空指定会话的全部对话轮次（保留会话本身，供继续对话）。
+
+    权限同 GET /history：非匿名会话必须是本人；匿名会话不校验。
+    """
+    if not session_id:
+        raise HTTPException(status_code=422, detail="缺少 session_id")
+
+    sess = db.get(SessionModel, session_id)
+    if sess is None:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    if sess.account_id is not None and (account is None or account.id != sess.account_id):
+        raise HTTPException(status_code=403, detail={"code": "forbidden"})
+
+    result = db.execute(
+        delete(ConversationTurn).where(ConversationTurn.session_id == session_id)
+    )
+    db.commit()
+    return {"session_id": session_id, "deleted": int(result.rowcount or 0)}
+
+
+# ================================================================
+# 病例科普解读：上传文字版 PDF 或粘贴文本 → 危机前置扫描 → LLM 结构化解读
+# 隐私：PDF 文件仅在内存解析不落盘；ConversationTurn 只存文件名+字数，不存原文
+# ================================================================
+@router.post("/case-upload", dependencies=[Depends(rate_limit("report", limit=3, window_sec=60))])
+async def case_upload(
+    file: UploadFile | None = File(None),
+    text: str = Form(""),
+    session_id: str = Form(""),
+    persona_id: str | None = Form(None),  # 收参保持前端统一；病例解读不受理格影响
+    db: Session = Depends(get_db_session),
+    account: User | None = Depends(get_current_account),
+):
+    """病例解读（multipart）：file 与 text 至少提供一个。
+
+    - file：仅支持文字版 .pdf（≤10MB）；扫描件无文本层返回 400 引导粘贴
+    - text：直接粘贴的病例文本（≤6000 字，超长自动截断）
+    """
+    effective_account_id = (account.id if account else None)
+    effective_session_id = session_id or None
+
+    case_text = ""
+    attachment = {"kind": "text", "name": "粘贴文本", "char_count": 0}
+    user_bubble = ""
+
+    if file is not None and file.filename:
+        filename = file.filename
+        if not filename.lower().endswith(".pdf"):
+            raise HTTPException(status_code=400, detail="目前仅支持 PDF 文档（文字版），图片请复制文字后粘贴")
+        pdf_bytes = await file.read()
+        if len(pdf_bytes) > MAX_CASE_PDF_BYTES:
+            raise HTTPException(status_code=400, detail="PDF 文件过大，请上传 10MB 以内的文件")
+        try:
+            case_text = extract_pdf_text(pdf_bytes)
+        except CaseParseError as e:
+            # NoTextLayerError（扫描件）/ 损坏文件：message 可直接展示
+            raise HTTPException(status_code=400, detail=str(e))
+        attachment = {"kind": "pdf", "name": filename, "char_count": len(case_text)}
+        user_bubble = f"📎 上传了病例文件：{filename}（抽取约 {len(case_text)} 字，文件内容不存档）"
+    elif text and text.strip():
+        case_text, truncated = truncate_case_text(clean_text(text))
+        if len(case_text) < 20:
+            raise HTTPException(status_code=400, detail="粘贴的文本太短，请复制完整的病例内容后再发送")
+        note = "，超长部分已省略" if truncated else ""
+        attachment = {"kind": "text", "name": "粘贴文本", "char_count": len(case_text)}
+        user_bubble = f"📝 粘贴了病例文本（约 {len(case_text)} 字{note}，内容不存档）"
+    else:
+        raise HTTPException(status_code=400, detail="请上传 PDF 文件或粘贴病例文本")
+
+    # 写 user 轮（只存附件元数据 + 气泡描述，不存病例原文）
+    try:
+        db.add(ConversationTurn(
+            session_id=effective_session_id,
+            account_id=effective_account_id,
+            role="user",
+            content=user_bubble,
+            sources_json=None,
+            attachments_json=[attachment],
+            crisis_hit=False,
+        ))
+        db.commit()
+    except Exception as e:
+        logging.warning("case: write user ConversationTurn failed: %s", e)
+        db.rollback()
+
+    # 危机前置扫描 + RAG + LLM 解读（LLM 失败有节点级兜底话术）
+    result = await analyze_case(
+        case_text,
+        session_id=effective_session_id or "",
+        account_id=effective_account_id or "",
+    )
+    reply = result["reply"]
+    sources = result["sources"]
+    is_crisis = result["crisis"]
+
+    # 写 assistant 轮
+    try:
+        db.add(ConversationTurn(
+            session_id=effective_session_id,
+            account_id=effective_account_id,
+            role="assistant",
+            content=reply,
+            sources_json=sources if sources else None,
+            crisis_hit=is_crisis,
+        ))
+        db.commit()
+    except Exception as e:
+        logging.warning("case: write assistant ConversationTurn failed: %s", e)
+        db.rollback()
+
+    return {
+        "reply": reply,
+        "sources": sources,
+        "crisis": is_crisis,
+        "current_agent": result["agent"],
+        "attachment": attachment,
+    }

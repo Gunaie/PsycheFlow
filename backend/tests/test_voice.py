@@ -39,7 +39,10 @@ class TestStripSourceMarks:
 
 
 class TestTranscribe:
-    async def test_ok_returns_text_and_payload_shape(self):
+    """云端 ASR 分支（强制 voice_mode=cloud 以确定性测试 payload/异常映射）。"""
+
+    async def test_ok_returns_text_and_payload_shape(self, monkeypatch):
+        monkeypatch.setattr(settings, "voice_mode", "cloud")
         fake_resp = {"output": {"output": {"sentence": {"text": "你好呀"}}, "text": "你好呀"}}
         with patch("app.core.voice._dashscope_generate", new=AsyncMock(return_value=fake_resp)) as m:
             text = await transcribe(b"RIFF....", mime_type="audio/wav")
@@ -55,7 +58,8 @@ class TestTranscribe:
         encoded = part["input_audio"]["data"].split(",", 1)[1]
         assert base64.b64decode(encoded) == b"RIFF...."
 
-    async def test_mp3_skips_sample_rate(self):
+    async def test_mp3_skips_sample_rate(self, monkeypatch):
+        monkeypatch.setattr(settings, "voice_mode", "cloud")
         fake_resp = {"output": {"text": "你好"}}
         with patch("app.core.voice._dashscope_generate", new=AsyncMock(return_value=fake_resp)) as m:
             text = await transcribe(b"ID3", mime_type="audio/mpeg")
@@ -64,51 +68,100 @@ class TestTranscribe:
         assert payload["parameters"]["format"] == "mp3"
         assert "sample_rate" not in payload["parameters"]
 
-    async def test_unsupported_mime_raises(self):
+    async def test_unsupported_mime_raises(self, monkeypatch):
+        monkeypatch.setattr(settings, "voice_mode", "cloud")
         with pytest.raises(VoiceError, match="不支持的音频格式"):
             await transcribe(b"x", mime_type="audio/webm")
 
     async def test_empty_audio_raises(self):
+        # 空音频校验在本地/云端分支之前，任意模式都应拦截
         with pytest.raises(VoiceError, match="为空"):
             await transcribe(b"")
 
-    async def test_oversized_audio_raises(self):
+    async def test_oversized_audio_raises(self, monkeypatch):
+        monkeypatch.setattr(settings, "voice_mode", "cloud")
         with pytest.raises(VoiceError, match="10MB"):
             await transcribe(b"x" * (MAX_AUDIO_BYTES + 1))
 
-    async def test_transport_failure_wrapped_as_voice_error(self):
+    async def test_transport_failure_wrapped_as_voice_error(self, monkeypatch):
+        monkeypatch.setattr(settings, "voice_mode", "cloud")
         with patch("app.core.voice._dashscope_generate", new=AsyncMock(side_effect=VoiceError("语音识别服务调用失败：ConnectError"))):
             with pytest.raises(VoiceError, match="调用失败"):
                 await transcribe(b"audio")
 
-    async def test_bad_response_shape_raises(self):
+    async def test_bad_response_shape_raises(self, monkeypatch):
+        monkeypatch.setattr(settings, "voice_mode", "cloud")
         with patch("app.core.voice._dashscope_generate", new=AsyncMock(return_value={"error": "x"})):
             with pytest.raises(VoiceError, match="未能识别"):
                 await transcribe(b"audio")
 
-    async def test_empty_content_raises(self):
+    async def test_empty_content_raises(self, monkeypatch):
+        monkeypatch.setattr(settings, "voice_mode", "cloud")
         with patch("app.core.voice._dashscope_generate", new=AsyncMock(return_value={"output": {"text": ""}})):
             with pytest.raises(VoiceError, match="未能识别"):
                 await transcribe(b"audio")
 
 
+class TestLocalVoice:
+    """D5 语音本地化分支：voice_mode=local 走本地 ASR/TTS（mock 本地实现，不触真实模型）。"""
+
+    async def test_transcribe_dispatches_to_local(self, monkeypatch):
+        monkeypatch.setattr(settings, "voice_mode", "local")
+        with patch("app.core.voice.transcribe_local", new=AsyncMock(return_value="本地转写结果")) as m:
+            text = await transcribe(b"RIFFdata", mime_type="audio/wav")
+        assert text == "本地转写结果"
+        m.assert_awaited_once_with(b"RIFFdata")
+
+    async def test_transcribe_local_empty_result_raises(self, monkeypatch):
+        monkeypatch.setattr(settings, "voice_mode", "local")
+        with patch("app.core.voice.transcribe_local", new=AsyncMock(return_value="")):
+            with pytest.raises(VoiceError, match="未能识别"):
+                await transcribe(b"RIFFdata")
+
+    async def test_transcribe_local_failure_wrapped(self, monkeypatch):
+        monkeypatch.setattr(settings, "voice_mode", "local")
+        with patch("app.core.voice.transcribe_local", new=AsyncMock(side_effect=RuntimeError("boom"))):
+            with pytest.raises(VoiceError, match="本地语音识别失败"):
+                await transcribe(b"RIFFdata")
+
+    async def test_synthesize_dispatches_to_local_and_truncates(self, monkeypatch):
+        monkeypatch.setattr(settings, "voice_mode", "local")
+        with patch("app.core.voice.synthesize_local", new=AsyncMock(return_value=b"wav-bytes")) as m:
+            audio = await synthesize("长" * 3000)
+        assert audio == b"wav-bytes"
+        # 长文本须在进入本地合成前截断（防 CPU 合成超长音频长时间占用）
+        assert m.await_args.args[0] == "长" * 2000
+
+    async def test_synthesize_local_failure_wrapped(self, monkeypatch):
+        monkeypatch.setattr(settings, "voice_mode", "local")
+        with patch("app.core.voice.synthesize_local", new=AsyncMock(side_effect=RuntimeError("boom"))):
+            with pytest.raises(VoiceError, match="本地语音合成失败"):
+                await synthesize("你好")
+
+
 class TestSynthesize:
-    async def test_ok_returns_bytes_via_http(self):
+    """云端 TTS 分支（强制 voice_mode=cloud）。"""
+
+    async def test_ok_returns_bytes_via_http(self, monkeypatch):
+        monkeypatch.setattr(settings, "voice_mode", "cloud")
         with patch("app.core.voice._tts_http", new=AsyncMock(return_value=b"mp3-bytes")) as m:
             audio = await synthesize("我在听你说。")
         assert audio == b"mp3-bytes"
         m.assert_awaited_once_with("我在听你说。")
 
     async def test_empty_text_raises(self):
+        # 空文本校验在本地/云端分支之前，任意模式都应拦截
         with pytest.raises(VoiceError, match="为空"):
             await synthesize("   ")
 
-    async def test_long_text_truncated(self):
+    async def test_long_text_truncated(self, monkeypatch):
+        monkeypatch.setattr(settings, "voice_mode", "cloud")
         with patch("app.core.voice._tts_http", new=AsyncMock(return_value=b"mp3")) as m:
             await synthesize("长" * 3000)
         assert m.await_args.args[0] == "长" * 2000
 
-    async def test_unexpected_error_wrapped(self):
+    async def test_unexpected_error_wrapped(self, monkeypatch):
+        monkeypatch.setattr(settings, "voice_mode", "cloud")
         with patch(
             "app.core.voice._tts_http",
             new=AsyncMock(side_effect=VoiceError("语音合成服务调用失败：ConnectError")),
@@ -128,6 +181,7 @@ class TestTtsHttpPayload:
             patch("app.core.voice.httpx.AsyncClient") as mock_cli_cls,
             patch("app.core.voice.settings") as mock_settings,
         ):
+            mock_settings.voice_mode = "cloud"
             mock_settings.model_tts = "qwen-audio-3.0-tts-flash"
             mock_settings.tts_voice = "longanhuan_v3.6"
             mock_settings.dashscope_api_key = "sk-test"
@@ -148,7 +202,8 @@ class TestTtsHttpPayload:
         # voice 不允许出现在顶层
         assert "voice" not in payload
 
-    async def test_http_500_wrapped(self):
+    async def test_http_500_wrapped(self, monkeypatch):
+        monkeypatch.setattr(settings, "voice_mode", "cloud")
         with patch("app.core.voice.httpx.AsyncClient") as mock_cli_cls:
             mock_cli = mock_cli_cls.return_value.__aenter__.return_value
             mock_cli.post = AsyncMock(return_value=_fake_http_response(500, {"message": "boom"}))

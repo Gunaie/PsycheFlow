@@ -71,6 +71,9 @@ class ConversationTurn(Base):
     role: Mapped[str] = mapped_column(String(16), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     sources_json: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
+    # 附件元数据（病例解读等场景）：[{"kind": "pdf"|"text", "name": str, "char_count": int}]
+    # 只存元数据，不存文件原文（PDF 文件不落盘，隐私合规）
+    attachments_json: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
     crisis_hit: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

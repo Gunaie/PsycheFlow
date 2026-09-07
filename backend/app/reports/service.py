@@ -12,6 +12,7 @@
 import math
 import os
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from markdown import markdown
@@ -23,6 +24,14 @@ from app.core.safety import crisis_message
 from app.scales.registry import get_scale
 
 TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "templates")
+# 报告落款时间统一用北京时间（存储层保持 UTC，展示层转东八区）
+_BEIJING_TZ = ZoneInfo("Asia/Shanghai")
+
+
+def _now_beijing() -> datetime:
+    return datetime.now(_BEIJING_TZ)
+
+
 _env = Environment(
     loader=FileSystemLoader(TEMPLATES_DIR), autoescape=select_autoescape(["html"])
 )
@@ -676,7 +685,7 @@ def render_report_html(session, assessments: list, narrative_md: str) -> str:
     scale_intro_html = "</p><p>".join(intro_parts) if intro_parts else "—"
 
     # 5. 量表简介条（页眉下方：姓名/机构/报告日期，对应 MHT 的首行）
-    generated_at = datetime.utcnow().strftime("%Y-%m-%d")
+    generated_at = _now_beijing().strftime("%Y-%m-%d")
     # 从 session.account.profile 读取用户真实信息（未登录/匿名时回退）
     account = getattr(session, "account", None)
     profile = getattr(account, "profile", None) or {}
@@ -720,7 +729,7 @@ def render_report_html(session, assessments: list, narrative_md: str) -> str:
         report_subtitle="个人评估报告",
         org_label="PsycheFlow 智能心理评估系统",
         generated_at=generated_at,
-        generated_at_full=datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
+        generated_at_full=_now_beijing().strftime("%Y-%m-%d %H:%M"),
         subject=subject,
         session_id=getattr(session, "id", ""),
         # 危机

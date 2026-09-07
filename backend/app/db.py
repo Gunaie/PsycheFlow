@@ -76,6 +76,20 @@ def _migrate_sqlite_columns(engine) -> None:
         import logging
         logging.getLogger("psycheflow.db").warning("users.password_hash 迁移失败，忽略", exc_info=True)
 
+    try:
+        # conversation_turns.attachments_json：病例解读附件元数据新增
+        if not _col_exists(engine, "conversation_turns", "attachments_json"):
+            with engine.connect() as conn:
+                conn.execute(text(
+                    "ALTER TABLE conversation_turns ADD COLUMN attachments_json JSON NULL"
+                ))
+                conn.commit()
+    except Exception:
+        import logging
+        logging.getLogger("psycheflow.db").warning(
+            "conversation_turns.attachments_json 迁移失败，忽略", exc_info=True
+        )
+
 
 def restrict_db_file_perms(db_path: str | None = None) -> None:
     """合规：SQLite 文件权限收紧为 0600（仅属主可读写）。

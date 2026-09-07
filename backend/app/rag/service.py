@@ -1,10 +1,13 @@
 """RAG 服务：向量化 + 检索 + 索引构建。
 
-知识库语料放 data/knowledge/*.txt，按空行切片，每段一个文档。
+知识库语料放 data/knowledge/*.txt，结构感知切片：Markdown 标题作为章节前缀、
+过短段落合并、超长段落按句子边界二次切分，保证每片"有头（章节）有尾（完整句）"。
 向量化用百炼 text-embedding-v3，存入 Chroma。
 """
 import glob
 import os
+import re
+
 import jieba
 from rank_bm25 import BM25Okapi
 
@@ -13,10 +16,72 @@ from app.rag.store import rag_store
 
 KNOWLEDGE_DIR = "/app/data/knowledge"
 
+# 切片参数：句子级重切 + 章节前缀
+MAX_CHUNK_CHARS = 400   # 单片正文中段上限，超长按句子边界二次切分
+MIN_CHUNK_CHARS = 40    # 缓冲下限：过短段落与相邻内容合并，避免碎片
+MAX_SECTION_PREFIX = 40  # 章节前缀截断长度
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？!?；;])")  # 保留句尾标点的零宽切分
+_MD_HEADER_RE = re.compile(r"^#{1,6}\s+")
+
+
+def _split_long(buf: str) -> list:
+    """把超长缓冲按句子边界切成 ≤MAX_CHUNK_CHARS 的片；单句超长才按长度硬切。"""
+    if len(buf) <= MAX_CHUNK_CHARS:
+        return [buf]
+    sentences = [s for s in _SENTENCE_SPLIT_RE.split(buf) if s]
+    pieces: list = []
+    cur = ""
+    for sent in sentences:
+        if cur and len(cur) + len(sent) > MAX_CHUNK_CHARS:
+            pieces.append(cur)
+            cur = sent
+        else:
+            cur += sent
+        while len(cur) > MAX_CHUNK_CHARS:
+            pieces.append(cur[:MAX_CHUNK_CHARS])
+            cur = cur[MAX_CHUNK_CHARS:]
+    if cur:
+        pieces.append(cur)
+    return pieces
+
 
 def chunk_text(text: str) -> list:
-    """按空行切片，丢弃过短片段。"""
-    chunks = [c.strip() for c in text.split("\n\n") if c.strip()]
+    """结构感知切片：按空行分段。
+
+    - Markdown 标题行（#/##/###）作为"章节"，不单独成片，而是给后续段落加前缀
+      【章节】，让切片有"头"（标题行的裸片段毫无信息量，是"没头"碎片的主因）
+    - 过短段落（<10 字噪声）丢弃；累积缓冲 <MIN_CHUNK_CHARS 时并入后续段落
+    - 超长段落按句子边界二次切分，切片以完整句子收尾（有"尾"）
+    """
+    chunks: list = []
+    section = ""   # 当前章节标题（最近一个 Markdown 标题行）
+    buf = ""       # 段落累积缓冲
+
+    def _flush() -> None:
+        nonlocal buf
+        if not buf:
+            return
+        pieces = _split_long(buf)
+        if section:
+            prefix = f"【{section[:MAX_SECTION_PREFIX]}】"
+            pieces = [f"{prefix}{p}" for p in pieces]
+        chunks.extend(pieces)
+        buf = ""
+
+    for block in re.split(r"\n\s*\n", text):
+        block = block.strip()
+        if not block:
+            continue
+        if _MD_HEADER_RE.match(block):
+            _flush()  # 换章节前先落片，避免跨章节内容混在一片
+            section = _MD_HEADER_RE.sub("", block).strip()
+            continue
+        if len(block) < 10:  # 纯噪声碎片（与旧逻辑 len>=10 一致）
+            continue
+        buf = f"{buf}\n{block}" if buf else block
+        if len(buf) >= MIN_CHUNK_CHARS:
+            _flush()
+    _flush()
     return [c for c in chunks if len(c) >= 10]
 
 
@@ -79,6 +144,8 @@ class RAGService:
         docs = load_corpus(self.knowledge_dir)
         if not docs:
             return {"indexed": 0, "detail": "知识库目录无 txt 文件"}
+        # 重建前清空旧集合：切片规则变更后 chunk ID 变化，旧片残留会污染检索
+        self.store.reset_namespace()
         texts = [d["text"] for d in docs]
         embeddings = await self.llm.embed(texts)
         self.store.upsert(
@@ -91,10 +158,11 @@ class RAGService:
         self.bm25 = None
         return {"indexed": len(docs), "collection_size": self.store.count()}
 
-    async def search(self, query: str, top_k: int = 3, threshold: float = 0.70) -> list:
+    async def search(self, query: str, top_k: int = 3, threshold: float = 0.60) -> list:
         """混合检索：向量检索 + BM25 检索，使用 RRF (Reciprocal Rank Fusion) 融合。
-        
+
         threshold: 相似度阈值（针对向量检索的 L2 距离）。
+        0.70 → 0.60 收紧：阈值过松时弱相关片段也被推送（用户反馈"与输入相关性不强"）。
         """
         # 1. 向量检索
         q_emb = (await self.llm.embed([query]))[0]
@@ -111,13 +179,17 @@ class RAGService:
             query_words = list(jieba.cut(query))
             # 获取所有文档的 BM25 分数
             scores = self.bm25.get_scores(query_words)
-            # 获取前 top_k * 2 个结果的索引
-            import numpy as np
-            top_indices = np.argsort(scores)[::-1][:top_k * 2]
-            
-            for idx in top_indices:
-                if scores[idx] > 0:  # 只保留有匹配的分数
-                    bm25_hits.append(self.corpus_docs[idx]["id"])
+            max_score = float(scores.max()) if len(scores) else 0.0
+            if max_score > 0:
+                # 取前 top_k * 2 个结果的索引
+                import numpy as np
+                top_indices = np.argsort(scores)[::-1][:top_k * 2]
+
+                for idx in top_indices:
+                    # 自适应过滤：仅保留强关键词命中（得分 ≥ 0.5*最高分），
+                    # 单个常见词碰巧出现的低分命中直接丢弃（弱相关卡片的主要来源）
+                    if scores[idx] >= 0.5 * max_score:
+                        bm25_hits.append(self.corpus_docs[idx]["id"])
 
         # 3. RRF 融合
         # rrf_score = sum(1 / (k + rank))
@@ -153,7 +225,9 @@ class RAGService:
                 meta = info["meta"] or {}
             elif doc_id in id_to_corpus_info:
                 info = id_to_corpus_info[doc_id]
-                dist = 0.65  # 给 BM25 命中但向量未命中的结果一个适中的虚拟距离，确保能过阈值
+                # BM25 独有命中：候选已按"得分 ≥ 0.5*最高分"过滤，虚拟距离 0.55
+                # 可过 0.60 阈值，但弱于典型向量命中（强关键词精确匹配才走到这）
+                dist = 0.55
                 text = info["text"]
                 meta = {"source": info["source"], "chunk_id": info["chunk_id"]}
             else:

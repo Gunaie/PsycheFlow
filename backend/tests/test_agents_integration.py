@@ -11,6 +11,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.agents.graph import graph
+from app.agents.nodes.intervention import build_intervention_messages
+from app.agents.state import AgentState
 
 
 @pytest.mark.asyncio
@@ -152,3 +154,35 @@ async def test_integration_empty_llm_reply_triggers_fallback():
     # fallback 话术非空且含 12355 热线
     assert reply and reply.strip()
     assert "12355" in reply
+
+
+# ================= intervention 按意图跳过 RAG =================
+
+@pytest.mark.asyncio
+async def test_build_messages_skips_rag_for_greeting_intent():
+    """triage_intent=寒暄 → build_intervention_messages 跳过 RAG（快速通道异常兜底场景）。"""
+    state: AgentState = {"user_message": "你好", "triage_intent": "寒暄", "agent_trace": []}
+    with patch("app.agents.nodes.intervention.rag_service") as mock_rag:
+        mock_rag.search = AsyncMock(return_value=[
+            {"text": "无关片段", "source": "s.md", "chunk_id": 0},
+        ])
+        _, formatted_sources, rag_sources, decision = await build_intervention_messages(state)
+    mock_rag.search.assert_not_awaited()
+    assert formatted_sources == []
+    assert rag_sources == []
+    assert decision["rag"]["skipped"] is True
+
+
+@pytest.mark.asyncio
+async def test_build_messages_searches_rag_for_venting_intent():
+    """triage_intent=倾诉 → RAG 正常检索（对照用例）。"""
+    state: AgentState = {"user_message": "我压力大", "triage_intent": "倾诉", "agent_trace": []}
+    with patch("app.agents.nodes.intervention.rag_service") as mock_rag:
+        mock_rag.search = AsyncMock(return_value=[
+            {"text": "深呼吸放松", "source": "04_放松技术.txt", "chunk_id": 3},
+        ])
+        _, formatted_sources, rag_sources, decision = await build_intervention_messages(state)
+    mock_rag.search.assert_awaited_once()
+    assert len(rag_sources) == 1
+    assert formatted_sources[0]["source"] == "04_放松技术.txt"
+    assert decision["rag"]["count"] == 1

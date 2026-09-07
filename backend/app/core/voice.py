@@ -195,7 +195,10 @@ async def synthesize(text: str) -> bytes:
     text = (text or "").strip()
     if not text:
         raise VoiceError("合成文本为空")
-    
+    if len(text) > MAX_TTS_CHARS:
+        # 截断须在本地/云端分支之前：本地合成超长文本会长时间占用 CPU
+        text = text[:MAX_TTS_CHARS]
+
     # 优先使用本地模式 (D5)
     if settings.voice_mode == "local":
         try:
@@ -204,6 +207,4 @@ async def synthesize(text: str) -> bytes:
             logger.error("voice_local: TTS failed: %s", e)
             raise VoiceError(f"本地语音合成失败: {e}")
 
-    if len(text) > MAX_TTS_CHARS:
-        text = text[:MAX_TTS_CHARS]
     return await _tts_http(text)

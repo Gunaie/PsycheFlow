@@ -27,6 +27,8 @@ dependencies = [
     "weasyprint>=62.0",
     "jinja2>=3.1.0",
     "markdown>=3.7",
+    # 病例解读：文字版 PDF 文本抽取（纯 Python，扫描件无文本层需走粘贴文本）
+    "pypdf>=4.0",
     # 语音（D3 四期：ASR/TTS 均走 DashScope 原生 HTTP API，httpx 直连，无需 SDK）
     # 本地语音支持 (D5 阶段)
     "faster-whisper>=1.0.0",

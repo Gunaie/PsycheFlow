@@ -116,7 +116,7 @@ class TestChatPersona:
         """不传 persona_id → 默认人格，向后兼容旧行为。"""
         with _patch_chat_graph() as m:
             self._mock_normal_graph(m)
-            r = client.post("/api/chat", json={"message": "嗨"})
+            r = client.post("/api/chat", json={"message": "我有点难过"})
             assert r.status_code == 200
             data = r.json()
             assert data["persona_id"] == "default"
@@ -127,7 +127,7 @@ class TestChatPersona:
         with _patch_chat_graph() as m:
             self._mock_normal_graph(m)
             r = client.post("/api/chat", json={
-                "message": "嗨",
+                "message": "我有点难过",
                 "persona_id": "hacker_persona",
             })
             assert r.status_code == 200

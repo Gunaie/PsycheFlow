@@ -43,23 +43,30 @@ async def build_intervention_messages(state: AgentState) -> tuple[list[dict], li
     logger.info("intervention: persona=%s", persona.persona_id)
     decision["persona"] = persona.persona_id
 
-    # 1. RAG 检索
+    # 1. RAG 检索（寒暄/求助跳过：问候与身份询问/测评引导和心理知识无关，
+    #    避免向量检索凑近推送无关来源卡片，如"你好，你是谁"也能召回 ≤0.70 距离片段）
+    triage_intent = state.get("triage_intent", "")
     rag_sources: list = []
-    try:
-        rag_sources = await rag_service.search(message, top_k=3)
-        logger.info("intervention: rag retrieved %d chunks", len(rag_sources))
-        decision["rag"] = {
-            "count": len(rag_sources),
-            "sources": [s.get("source") for s in rag_sources]
-        }
-    except Exception as e:
-        logger.warning("intervention: rag search failed: %s", str(e))
-        decision["rag"] = {"error": str(e)}
+    if triage_intent in ("寒暄", "求助"):
+        logger.info("intervention: skip rag for intent=%s", triage_intent)
+        decision["rag"] = {"skipped": True, "reason": f"intent={triage_intent}"}
+    else:
+        try:
+            rag_sources = await rag_service.search(message, top_k=3)
+            logger.info("intervention: rag retrieved %d chunks", len(rag_sources))
+            decision["rag"] = {
+                "count": len(rag_sources),
+                "sources": [s.get("source") for s in rag_sources]
+            }
+        except Exception as e:
+            logger.warning("intervention: rag search failed: %s", str(e))
+            decision["rag"] = {"error": str(e)}
 
-    # 2. 拼接 rag_context（最多 3 段，每段 200 字截断）
+    # 2. 拼接 rag_context（最多 3 段，每段 350 字截断；切片本身以句子边界收尾，
+    #    截断过短会把完整句重新切成"没尾"片段误导 LLM）
     rag_parts = []
     for i, src in enumerate(rag_sources[:3], 1):
-        text = (src.get("text") or "")[:200]
+        text = (src.get("text") or "")[:350]
         source = src.get("source") or "未知来源"
         rag_parts.append(f"[{i}] 《{source}》:\n{text}")
     rag_context = "\n\n".join(rag_parts) if rag_parts else "（无相关片段）"
@@ -72,11 +79,12 @@ async def build_intervention_messages(state: AgentState) -> tuple[list[dict], li
         message=message,
         rag_context=rag_context,
     )
+    # 只保留最近 10 轮（20 条），防长对话 token 膨胀（API 层 _clip_history 已截，双保险）
     history = [
         {"role": h["role"], "content": h["content"]}
         for h in (state.get("history") or [])
         if h.get("role") in ("user", "assistant")
-    ]
+    ][-20:]
     messages = [
         {"role": "system", "content": system_prompt},
         *history,

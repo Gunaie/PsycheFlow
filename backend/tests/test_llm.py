@@ -163,6 +163,7 @@ def _fake_local_settings(ollama_enabled: bool = True):
     # 3.B 微调专用模型默认空（回退基座）；测试可在个别用例中覆盖
     s.local_model_dialog = ""
     s.local_model_report = ""
+    s.local_model_triage = ""
     s.temp_intake = 0.1
     s.temp_dialog = 0.35
     s.temp_report = 0.1
@@ -478,6 +479,16 @@ class TestLocalMode(unittest.IsolatedAsyncioTestCase):
         p2 = LLMProvider(s2)
         self.assertEqual(p2.model_for("dialog"), "qwen2.5:7b")
         self.assertEqual(p2.model_for("report"), "qwen2.5:7b")
+
+    def test_local_model_for_triage_finetuned(self):
+        # 0.5b 极速分诊：local_model_triage 非空时 triage 用微调/小模型，留空回退基座
+        s = _fake_local_settings(True)
+        s.local_model_triage = "qwen2.5:0.5b"
+        p = LLMProvider(s)
+        self.assertEqual(p.model_for("triage"), "qwen2.5:0.5b")
+        s2 = _fake_local_settings(True)
+        p2 = LLMProvider(s2)
+        self.assertEqual(p2.model_for("triage"), "qwen2.5:7b")
 
     async def test_local_without_ollama_url_raises(self):
         # local 模式但 OLLAMA_BASE_URL 空 → 调用快速失败（不静默回退云端）

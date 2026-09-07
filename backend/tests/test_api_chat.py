@@ -127,3 +127,35 @@ class TestChatNormal:
             messages = m.intv_provider.chat.call_args.kwargs["messages"]
             roles = [m["role"] for m in messages]
             assert roles == ["system", "user", "assistant", "user"]
+
+
+class TestIntentSkipsRag:
+    def test_help_intent_skips_rag(self):
+        """求助意图 → intervention 跳过 RAG 检索（测评引导无需知识库，防无关卡片）。"""
+        with _patch_chat_graph() as m:
+            m.triage_provider.chat = AsyncMock(return_value="求助")
+            m.rag_service.search = AsyncMock(return_value=[
+                {"text": "无关片段", "source": "x.md", "distance": 0.5},
+            ])
+            m.intv_provider.chat = AsyncMock(return_value="建议你前往 /scale 完成测评。")
+
+            r = client.post("/api/chat", json={"message": "我想做测评"})
+            assert r.status_code == 200
+            data = r.json()
+            assert data["sources"] == []
+            m.rag_service.search.assert_not_awaited()
+            m.intv_provider.chat.assert_awaited_once()
+
+    def test_venting_intent_still_searches_rag(self):
+        """倾诉意图 → RAG 正常检索（对照用例，确认跳过逻辑不误伤）。"""
+        with _patch_chat_graph() as m:
+            m.triage_provider.chat = AsyncMock(return_value="倾诉")
+            m.rag_service.search = AsyncMock(return_value=[
+                {"text": "深呼吸放松", "source": "04_放松技术.txt", "distance": 0.4},
+            ])
+            m.intv_provider.chat = AsyncMock(return_value="我理解你。")
+
+            r = client.post("/api/chat", json={"message": "我最近压力很大"})
+            assert r.status_code == 200
+            assert len(r.json()["sources"]) == 1
+            m.rag_service.search.assert_awaited_once()
