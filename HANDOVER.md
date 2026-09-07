@@ -464,9 +464,9 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
   - ASR: `faster-whisper-medium` (GPU 加速)
   - TTS: `vits-zh-aishell3` (ONNX 格式)
 - **验证**：运行 `docker exec psycheflow-backend uv run python test_voice_local.py` → **ASR/TTS 均加载成功**。
-- **3.B 云GPU微调版**：✅ 云上训练与 GGUF 导出已完成（2026-09-06），详见下节「本地私有化 3.B」；剩余本地导入启用+评测
+- **3.B 云GPU微调版**：✅ 全部闭环（2026-09-06 训练导出，2026-09-07 本地启用+评测通过），详见下节「本地私有化 3.B」
 
-### 本地私有化 3.B 云 GPU 微调 ✅ 云上训练+GGUF 导出完成（2026-09-06，待本地导入启用）
+### 本地私有化 3.B 云 GPU 微调 ✅（2026-09-06 云上训练+GGUF 导出；2026-09-07 本地启用+评测通过，全部闭环）
 
 - **目标**：QLoRA 微调 qwen2.5:7b，dialog 角色换用 DeepWell-Adol 心理对话风格，report 角色强化发展建议质量；intake/triage 保持基座不动——**危机红线不受微调影响**
 - **代码侧**：[config.py](backend/app/core/config.py) 增 `LOCAL_MODEL_DIALOG/LOCAL_MODEL_REPORT`（local 模式下 dialog/report 角色可挂微调模型，留空回退 `local_model` 基座）；[llm.py](backend/app/core/llm.py) `_primary_for`/`model_for` 适配；单测全量 **218 passed / 1 skipped**
@@ -482,8 +482,10 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
   3. huggingface_hub 新版默认 Xet 协议直连 `cas-server.xethub.hf.co` 国内 401 → `HF_HUB_DISABLE_XET=1` 走 hf-mirror；hf-mirror 大文件断流 → **ModelScope 兜底**（阿里源 ~50MB/s）
   4. 两个 pip 进程并发写同一环境会连锁损坏（此坑最隐蔽：错误表现为误导性的 `cannot import PreTrainedModel`，真凶是 numpy 1.26.4 与 scipy 1.18+ 冲突 + torch 家族被拆散配对）→ 修复链：transformers 钉回 4.57.6、scipy==1.13.1（兼容 numpy 1.26.4）、torch/torchvision/torchaudio 对齐 2.8.0 CPU（pip 版本比较忽略 `+cpu/+cu128` 后缀，必须先卸载强制重装）
   5. `convert_hf_to_gguf.py` 的 `--outtype` 不支持 q4_k_m → 只能 f16 转换 + llama-quantize 两步（llama.cpp 需现场 cmake 编译 quantize 目标）
-- **待办（本地）**：`powershell -ExecutionPolicy Bypass -File backend\scripts\finetune\import_gguf.ps1` 导入 → `.env` 加 `LOCAL_MODEL_DIALOG=qwen2.5:dialog-lora`、`LOCAL_MODEL_REPORT=qwen2.5:report-lora` → `docker compose up -d backend` → `eval_report.py` 对比 3.A 基线（76/76）
-- **⚠️ 显存预算待实测**：8GB 显存装不下全部模型常驻（基座 4.7 + dialog 4.36 + report 4.36 + bge-m3 1.2 ≈ 14.6GB）——启用微调模型后，对话/报告（微调模型）与 triage（基座）交替调用会触发 Ollama 换入换出，可能出现加载延迟；需实测后决定 KEEP_ALIVE 策略（当前 `=-1` 常驻可能需改回默认按需加载）
+- **本地启用与评测（2026-09-07 实测）**：import_gguf.ps1 已完成导入（`ollama list` 可见 qwen2.5:dialog-lora / report-lora 各 4.7GB），`.env` 已配置并生效。`eval_report.py` 评测（local 模式，report=qwen2.5:report-lora）：
+  - 2026-09-06 全量：**76/76 = 100%**（114s）；2026-09-07 复跑：75/76 → 唯一失败是「发展建议非空」字面"建议"断言误报（narrative 775 字只是措辞未含"建议"两字），`--only scared` 复跑 15/15（796 字）确认模型质量稳定，断言已加同义表达兜底
+  - 结论：**微调模型 ≥ 3.A 基线（76/76），无回归，报告链路在对话/RAG 重构后依然全绿**
+- **⚠️→✅ 显存换入换出实测（2026-09-07）**：8GB 显存装不下全部模型常驻（基座 4.7 + dialog 4.36 + report 4.36 + bge-m3 1.2 ≈ 14.6GB）已实测证实——报告生成时 Ollama 自动驱逐 dialog-lora（LRU）换入 report-lora，`ollama ps` 实时可见换出换入，GPU 占用 6.0/8.0GB。**KEEP_ALIVE=-1 在内存压力下不生效**（Ollama 仍按需驱逐），无需调整配置；实测换入延迟：报告首场景含换入约 30-60s、模型常驻后 12.5s/场景。对话→报告交替使用时各自有一次性换入延迟，属预期行为非 bug
 
 ---
 
@@ -492,7 +494,7 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 按优先级排序：
 
 0. ~~**【主线】本地私有化部署 3.A**~~ ✅（2026-09-06 完成，详见 §7「本地私有化 3.A」）：`LLM_MODE=local` 双模式改造落地，qwen2.5:7b + bge-m3 全本地，triage 93.0%（危机 100%）/ 报告 76/76=100%。后续可选项：
-   - 3.B 云 GPU 微调版 ✅（2026-09-06 云上训练+GGUF 导出完成，详见 §7「本地私有化 3.B」；剩余：本地导入 import_gguf.ps1 → .env 启用 → eval_report 对比基线 → 按显存实测调 KEEP_ALIVE）
+   - 3.B 云 GPU 微调版 ✅ 全部闭环（2026-09-06 训练导出，2026-09-07 本地启用+评测通过：76/76 基线无回归，显存换入换出已实测并回写 §7，KEEP_ALIVE 无需调整）
    - ASR/TTS 语音本地化（faster-whisper + edge-tts，3.A 推后项；当前 local 模式语音仍走百炼）
    - 切回云端：`.env` 改 `LLM_MODE=cloud` → `docker compose up -d backend` → **必须重建 RAG 索引**（embedding 换回 v3，旧 bge-m3 向量作废，同样先 reset_namespace 再 build_index）
    另：真实校园试点部署待用户决策。

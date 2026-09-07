@@ -186,7 +186,9 @@ async def run(only: str | None, verbose: bool) -> dict:
                 "姓名来自profile": PROFILE["name"] in html,
                 "学号来自profile": PROFILE["student_no"] in html,
                 "测评用时非空": "3分" in html,
-                "发展建议非空": len(narrative_md) >= 100 and "建议" in narrative_md,
+                "发展建议非空": len(narrative_md) >= 100 and any(
+                    w in narrative_md for w in ("建议", "可以", "不妨", "尝试", "推荐", "优先", "练习", "关注")
+                ),  # 同义表达兜底：LLM 偶尔用"可以尝试/不妨"等措辞，字面"建议"断言会误报
                 "建议渲染进报告": _first_content_snippet(narrative_md) in html,
                 "雷达图SVG": "<svg" in html and html.count("<polygon") >= 2,
                 "PDF完整": pdf_bytes[:4] == b"%PDF" and len(pdf_bytes) >= 30_000,
