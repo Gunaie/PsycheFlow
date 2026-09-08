@@ -77,7 +77,7 @@ class TestBuildIndex(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kw["ids"], ["a#0", "a#1"])
         self.assertEqual(kw["documents"], ["段一", "段二"])
         self.assertEqual(kw["embeddings"], [[0.1], [0.2]])
-        self.assertEqual(kw["metadatas"], [{"source": "a.txt"}, {"source": "a.txt"}])
+        self.assertEqual(kw["metadatas"], [{"source": "a.txt", "tags": []}, {"source": "a.txt", "tags": []}])
 
     async def test_build_returns_zero_when_no_corpus(self):
         store = MagicMock()
@@ -111,8 +111,8 @@ class TestSearch(unittest.IsolatedAsyncioTestCase):
         results = await svc.search("焦虑", top_k=2)
 
         llm.embed.assert_awaited_once_with(["焦虑"])
-        # 混合检索（RRF 融合）向量侧取 top_k*2 候选
-        store.query.assert_called_once_with([0.5], top_k=4)
+        # 混合检索：向量侧取 top_k*3 候选用于融合
+        store.query.assert_called_once_with([0.5], top_k=6)
         self.assertEqual(len(results), 2)
         self.assertEqual(results[0]["text"], "段A")
         self.assertEqual(results[0]["source"], "a.txt")
@@ -128,7 +128,7 @@ class TestSearch(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results, [])
 
     async def test_search_bm25_only_hit_uses_virtual_distance(self):
-        # BM25 独有命中（向量未召回）→ 虚拟距离 0.55 可过 0.60 阈值
+        # BM25 独有命中（向量未召回）→ 虚拟距离 0.72 可过 0.75 阈值
         # 注意：4 篇文档中仅 1 篇含查询词，保证 BM25 IDF 为正（2 篇小语料会退化为 idf=0）
         store = MagicMock()
         store.collection.get.return_value = {
@@ -157,11 +157,10 @@ class TestSearch(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["source"], "a.txt")
-        self.assertEqual(results[0]["distance"], 0.55)
-        self.assertGreater(results[0]["rrf_score"], 0)
+        self.assertEqual(results[0]["distance"], 0.72)
 
     async def test_search_bm25_weak_hits_filtered(self):
-        """BM25 弱命中（得分 < 0.5*最高分）被自适应过滤，不推弱相关卡片。
+        """BM25 弱命中（得分 < 0.7*最高分）被自适应过滤，不推弱相关卡片。
 
         构造：a 短文档强命中"作息"；b 超长文档仅提一次"作息"（长度归一化后得分远低），
         另有 6 篇无关文档（rank_bm25 IDF=ln((N-n+0.5)/(n+0.5))，N=4/n=2 恰好为 0，

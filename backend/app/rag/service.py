@@ -189,7 +189,15 @@ class RAGService:
         return {"indexed": len(docs), "collection_size": self.store.count()}
 
     async def search(self, query: str, top_k: int = 3, threshold: float = 0.75) -> list:
-        """混合检索：向量检索 + BM25 检索，使用 RRF (Reciprocal Rank Fusion) 融合。
+        """混合检索：向量检索为主 + BM25 补充召回。
+
+        排序策略：以向量 L2 距离为主排序信号，BM25 仅用于：
+        1）补充召回——向量未命中但 BM25 强关键词命中的片段（虚拟距离 0.55）；
+        2）小幅加权——同时出现在向量和 BM25 前列的片段，距离减 0.03（双重印证）。
+
+        弃用 RRF 的原因：RRF 排名融合让 BM25 关键词命中权重过大，
+        「焦虑怎么缓解」中仅含"缓解"关键词的科普片段会挤掉含具体做法、
+        向量距离更近的片段。向量语义相似度比关键词命中更能反映相关性。
 
         threshold: 相似度阈值（针对向量检索的 L2 距离）。
         0.60 → 0.75 放宽：原 0.60 过严，把「04_放松技术.txt」（腹式呼吸 chunk 无
@@ -198,118 +206,96 @@ class RAGService:
         """
         # 1. 向量检索
         q_emb = (await self.llm.embed([query]))[0]
-        vec_results = self.store.query(q_emb, top_k=top_k * 2)  # 取多一点用于融合
+        vec_results = self.store.query(q_emb, top_k=top_k * 3)  # 取多一点用于融合
         vec_docs = vec_results.get("documents", [[]])[0]
         vec_metas = vec_results.get("metadatas", [[]])[0]
         vec_ids = vec_results.get("ids", [[]])[0]
         vec_dists = vec_results.get("distances", [[]])[0]
 
-        # 2. BM25 检索
+        # 2. BM25 检索（仅取 top 命中用于补充召回 + 双重印证加权）
         self._init_bm25()
-        bm25_hits = []
+        bm25_hit_ids: set[str] = set()
+        bm25_unique: list[dict] = []  # BM25 命中但向量未命中的片段
         if self.bm25:
             query_words = list(jieba.cut(query))
-            # 获取所有文档的 BM25 分数
             scores = self.bm25.get_scores(query_words)
             max_score = float(scores.max()) if len(scores) else 0.0
             if max_score > 0:
-                # 取前 top_k * 2 个结果的索引
                 import numpy as np
-                top_indices = np.argsort(scores)[::-1][:top_k * 2]
-
+                top_indices = np.argsort(scores)[::-1][:top_k * 3]
+                vec_id_set = set(vec_ids)
                 for idx in top_indices:
-                    # 自适应过滤：仅保留强关键词命中（得分 ≥ 0.5*最高分），
-                    # 单个常见词碰巧出现的低分命中直接丢弃（弱相关卡片的主要来源）
-                    if scores[idx] >= 0.5 * max_score:
-                        bm25_hits.append(self.corpus_docs[idx]["id"])
+                    if scores[idx] < 0.7 * max_score:
+                        continue
+                    doc = self.corpus_docs[idx]
+                    doc_id = doc["id"]
+                    bm25_hit_ids.add(doc_id)
+                    if doc_id not in vec_id_set:
+                        bm25_unique.append(doc)
 
-        # 3. RRF 融合
-        # rrf_score = sum(1 / (k + rank))
-        k = 60
-        rrf_scores = {}
-
-        # 处理向量检索排名
-        for i, doc_id in enumerate(vec_ids):
-            rrf_scores[doc_id] = rrf_scores.get(doc_id, 0) + 1.0 / (k + i + 1)
-
-        # 处理 BM25 检索排名
-        for i, doc_id in enumerate(bm25_hits):
-            rrf_scores[doc_id] = rrf_scores.get(doc_id, 0) + 1.0 / (k + i + 1)
-
-        # 排序并取前 top_k
-        sorted_ids = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
-        
-        # 准备返回结果，同时保留原有的关键词加权和阈值逻辑（针对向量距离）
-        # 如果是 BM25 独有的结果，我们给它一个虚拟的距离值
-        final_docs = []
-        
-        # 为了获取完整信息，建立一个映射
-        id_to_vec_info = {vec_ids[i]: {"dist": vec_dists[i], "meta": vec_metas[i], "text": vec_docs[i]} for i in range(len(vec_ids))}
-        id_to_corpus_info = {d["id"]: d for d in self.corpus_docs}
-        
+        # 3. 融合：以向量距离为主排序，BM25 补充召回 + 双重印证小幅加权
         keywords = ["压力", "失眠", "焦虑", "难过", "抑郁", "放松", "考试"]
+        candidates: list[dict] = []
 
-        # 危机内容过滤：非危机查询（用户未提及自杀/自伤/轻生等）不推送危机热线片段。
-        # 实测"睡不着"会召回含 12355 热线的危机科普卡片，属于噪声，应过滤。
-        _CRISIS_QUERY_WORDS = ("自杀", "自伤", "轻生", "不想活", "结束生命", "割腕", "跳楼")
-        query_is_crisis = any(w in query for w in _CRISIS_QUERY_WORDS)
-
-        for doc_id, rrf_score in sorted_ids:
-            if doc_id in id_to_vec_info:
-                info = id_to_vec_info[doc_id]
-                dist = info["dist"]
-                text = info["text"]
-                meta = info["meta"] or {}
-            elif doc_id in id_to_corpus_info:
-                info = id_to_corpus_info[doc_id]
-                # BM25 独有命中：候选已按"得分 ≥ 0.5*最高分"过滤，虚拟距离 0.55
-                # 可过 0.60 阈值，但弱于典型向量命中（强关键词精确匹配才走到这）
-                dist = 0.55
-                text = info["text"]
-                meta = {"source": info["source"], "chunk_id": info["chunk_id"], "tags": info.get("tags", [])}
-            else:
-                continue
-
-            tags = meta.get("tags", []) or []
-
-            # 原有关键词加权逻辑
-            adjusted_dist = dist
+        # 向量命中的片段
+        for i in range(len(vec_ids)):
+            meta = vec_metas[i] or {}
+            text = vec_docs[i]
+            adjusted = vec_dists[i]
+            # 双重印证：同时被 BM25 强命中，距离减 0.03
+            if vec_ids[i] in bm25_hit_ids:
+                adjusted -= 0.03
+            # 关键词命中加权
             if any(kw in text for kw in keywords):
-                adjusted_dist -= 0.05
-            
-            if adjusted_dist > threshold:
-                continue
-
-            final_docs.append({
+                adjusted -= 0.05
+            candidates.append({
+                "id": vec_ids[i],
                 "text": text,
                 "source": meta.get("source", ""),
                 "chunk_id": meta.get("chunk_id", 0),
-                "tags": tags,
-                "distance": adjusted_dist,
-                "rrf_score": rrf_score
+                "tags": meta.get("tags", []) or [],
+                "distance": adjusted,
             })
 
-        # 非危机查询过滤带「危机」标签的片段，避免"睡不着"却推送自杀干预热线卡片。
-        # 用标签过滤替代原内容关键词匹配，更精确（危机内容本身含"热线""120"等词，
-        # 关键词法会误杀含这些词的非危机片段）。
-        if not query_is_crisis:
-            final_docs = [
-                d for d in final_docs
-                if "危机" not in d.get("tags", [])
-            ]
+        # BM25 独有命中（向量未召回），虚拟距离 0.72
+        # 0.55→0.72：原 0.55 低于大部分真实向量命中（0.6-0.74），导致含常见词
+        # （如"低落""怎么办"）但不相关的 BM25 片段挤掉语义更相关的向量命中。
+        # 0.72 低于阈值 0.75 可过检，但弱于中等以上向量命中，让语义匹配优先。
+        for doc in bm25_unique:
+            text = doc["text"]
+            adjusted = 0.72
+            if any(kw in text for kw in keywords):
+                adjusted -= 0.05
+            candidates.append({
+                "id": doc["id"],
+                "text": text,
+                "source": doc["source"],
+                "chunk_id": doc["chunk_id"],
+                "tags": doc.get("tags", []) or [],
+                "distance": adjusted,
+            })
 
-        # 来源去重：同一来源最多保留 1 条（排名最高的），确保返回多样化方法
-        # 避免 top_k=3 全是 dbt_skills.md 同一来源的不同片段
+        # 按调整后距离升序排序（越小越相关）
+        candidates.sort(key=lambda x: x["distance"])
+
+        # 4. 过滤 + 去重
+        _CRISIS_QUERY_WORDS = ("自杀", "自伤", "轻生", "不想活", "结束生命", "割腕", "跳楼")
+        query_is_crisis = any(w in query for w in _CRISIS_QUERY_WORDS)
+
         seen_sources: set[str] = set()
-        deduped: list = []
-        for d in final_docs:
-            src = d.get("source", "")
-            if src not in seen_sources:
-                seen_sources.add(src)
-                deduped.append(d)
-            if len(deduped) >= top_k:
+        final_docs: list[dict] = []
+        for c in candidates:
+            if c["distance"] > threshold:
+                continue
+            if not query_is_crisis and "危机" in c["tags"]:
+                continue
+            src = c["source"]
+            if src in seen_sources:
+                continue
+            seen_sources.add(src)
+            final_docs.append(c)
+            if len(final_docs) >= top_k:
                 break
-        final_docs = deduped
 
         return final_docs
 
