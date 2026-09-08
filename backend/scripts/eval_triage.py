@@ -71,7 +71,7 @@ async def run(dataset_path: str, limit: int | None, verbose: bool) -> dict:
     summary = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "mode": settings.llm_mode,
-        "model": settings.local_model if is_local else settings.model_triage,
+        "model": (settings.local_model_triage or settings.local_model) if is_local else settings.model_triage,
         "dataset": os.path.basename(dataset_path),
         "total": total,
         "correct": correct,

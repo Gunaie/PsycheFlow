@@ -5,17 +5,18 @@
 model_name_or_path: Qwen/Qwen2.5-7B-Instruct
 
 ### method（QLoRA：4bit 量化基座 + LoRA，24GB 显存可跑 7B）
+### 反模板重训（2026-09-08）：rank 16→32 提高容量学更多样表达，lr 1e-4→5e-5 减少过拟合模板，epochs 3→5 小数据集多跑
 stage: sft
 do_train: true
 finetuning_type: lora
-lora_rank: 16
-lora_alpha: 32
+lora_rank: 32
+lora_alpha: 64
 lora_dropout: 0.05
 lora_target: all
 quantization_bit: 4
 
-### dataset
-dataset: deepwell_dialog
+### dataset（反模板重训：deepwell 清洗后 + 云端合成 500 条，merge_datasets.py 合并注入 system prompt）
+dataset: dialog_merged
 dataset_dir: /root/autodl-tmp/ft/data
 template: qwen
 cutoff_len: 2048
@@ -32,8 +33,8 @@ overwrite_output_dir: true
 ### train（4090 24GB 保守配置：batch1 + 梯度累积，effective batch=16，防 OOM）
 per_device_train_batch_size: 1
 gradient_accumulation_steps: 16
-learning_rate: 1.0e-4
-num_train_epochs: 3.0
+learning_rate: 5.0e-5
+num_train_epochs: 5.0
 lr_scheduler_type: cosine
 warmup_ratio: 0.03
 bf16: true

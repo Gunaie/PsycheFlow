@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-09-07 15:05:18",
+  "timestamp": "2026-09-08 13:27:25",
   "mode": "local",
   "model_report": "qwen2.5:report-lora",
   "scenarios": [
@@ -7,8 +7,8 @@
       "scenario": "phq_a",
       "passed": 15,
       "total": 15,
-      "narrative_len": 780,
-      "pdf_bytes": 145013,
+      "narrative_len": 644,
+      "pdf_bytes": 137467,
       "checks": {
         "章节_1_测评工具介绍": true,
         "章节_2_解读注意事项": true,
@@ -30,10 +30,10 @@
     },
     {
       "scenario": "scared",
-      "passed": 14,
+      "passed": 15,
       "total": 15,
-      "narrative_len": 775,
-      "pdf_bytes": 143848,
+      "narrative_len": 707,
+      "pdf_bytes": 145160,
       "checks": {
         "章节_1_测评工具介绍": true,
         "章节_2_解读注意事项": true,
@@ -44,23 +44,21 @@
         "姓名来自profile": true,
         "学号来自profile": true,
         "测评用时非空": true,
-        "发展建议非空": false,
+        "发展建议非空": true,
         "建议渲染进报告": true,
         "雷达图SVG": true,
         "PDF完整": true,
         "危机红框符合预期": true,
         "安全场景建议无危机话术": true
       },
-      "failed": [
-        "发展建议非空"
-      ]
+      "failed": []
     },
     {
       "scenario": "sdq",
       "passed": 15,
       "total": 15,
-      "narrative_len": 794,
-      "pdf_bytes": 138193,
+      "narrative_len": 753,
+      "pdf_bytes": 140970,
       "checks": {
         "章节_1_测评工具介绍": true,
         "章节_2_解读注意事项": true,
@@ -84,8 +82,8 @@
       "scenario": "mht",
       "passed": 15,
       "total": 15,
-      "narrative_len": 918,
-      "pdf_bytes": 154987,
+      "narrative_len": 835,
+      "pdf_bytes": 157006,
       "checks": {
         "章节_1_测评工具介绍": true,
         "章节_2_解读注意事项": true,
@@ -109,8 +107,8 @@
       "scenario": "combined",
       "passed": 16,
       "total": 16,
-      "narrative_len": 868,
-      "pdf_bytes": 174259,
+      "narrative_len": 715,
+      "pdf_bytes": 169157,
       "checks": {
         "章节_1_测评工具介绍": true,
         "章节_2_解读注意事项": true,
@@ -133,7 +131,7 @@
     }
   ],
   "total_checks": 76,
-  "passed_checks": 75,
-  "pass_rate": 0.9868,
-  "elapsed_sec": 107.6
+  "passed_checks": 76,
+  "pass_rate": 1.0,
+  "elapsed_sec": 98.3
 }

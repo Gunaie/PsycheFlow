@@ -1,55 +1,48 @@
 {
-  "timestamp": "2026-09-06 14:30:22",
+  "timestamp": "2026-09-08 13:32:23",
   "mode": "local",
-  "model": "qwen2.5:7b",
+  "model": "qwen2.5:dialog-lora",
   "dataset": "triage_dataset.json",
   "total": 43,
-  "correct": 40,
-  "accuracy": 0.9302,
+  "correct": 41,
+  "accuracy": 0.9535,
   "per_intent": {
     "危机": {
       "total": 8,
       "correct": 8,
       "accuracy": 1.0
     },
+    "咨询": {
+      "total": 22,
+      "correct": 21,
+      "accuracy": 0.9545
+    },
     "求助": {
-      "total": 11,
-      "correct": 9,
-      "accuracy": 0.8182
+      "total": 1,
+      "correct": 0,
+      "accuracy": 0.0
     },
     "倾诉": {
       "total": 12,
       "correct": 12,
       "accuracy": 1.0
-    },
-    "咨询": {
-      "total": 12,
-      "correct": 11,
-      "accuracy": 0.9167
     }
   },
   "failures": [
     {
-      "index": 13,
-      "note": "情绪管理",
-      "expected": "求助",
-      "got": "咨询",
-      "message": "我经常因为小事发脾气，事后又后悔，怎么控制情绪"
-    },
-    {
-      "index": 17,
-      "note": "强迫行为·调整",
-      "expected": "求助",
-      "got": "咨询",
-      "message": "我总担心门没锁、手没洗干净，反复检查很多遍，这是病吗？要怎么调整"
-    },
-    {
-      "index": 40,
-      "note": "边界·被安排来聊",
+      "index": 10,
+      "note": "同伴冲突·行动建议",
       "expected": "咨询",
-      "got": "求助",
-      "message": "我妈让我来咨询，我觉得我没病，来都来了，你这里都能做什么"
+      "got": "倾诉",
+      "message": "我和好朋友吵架了，三天没说话，我想和好但拉不下脸，怎么办"
+    },
+    {
+      "index": 16,
+      "note": "被欺凌·明确求助",
+      "expected": "求助",
+      "got": "倾诉",
+      "message": "被同学起了难听的外号，全班都在笑，我不想上学了，帮帮我"
     }
   ],
-  "elapsed_sec": 78.7
+  "elapsed_sec": 26.0
 }
