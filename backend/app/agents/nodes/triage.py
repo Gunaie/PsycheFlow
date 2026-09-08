@@ -1,4 +1,5 @@
-"""Triage 分诊节点：detect_crisis 硬编码短路 + 硬编码寒暄识别 + LLM 意图分类。
+"""Triage 分诊节点：detect_crisis 硬编码短路 + 硬编码寒暄识别 + LLM 意图分类
++ 方法问句纠偏（求助→咨询，修 0.5b 意图误判触发 RAG-skip 的误伤）。
 
 安全原则：detect_crisis_with_words 在任何 LLM 调用前执行，命中即直接设置
 is_crisis=true 跳过 LLM（Escalation 节点处理），不进入意图分类 LLM 调用。
@@ -75,6 +76,30 @@ def detect_greeting(message: str) -> bool:
         return True
     segments = [s for s in _SEGMENT_SPLIT_RE.split(text) if s]
     return bool(segments) and all(_seg_is_greeting(s) for s in segments)
+
+
+# ================= 硬编码方法问句识别（零 LLM，2026-09-08） =================
+# 实测 0.5b triage 把「怎么缓解焦虑」误判为「求助」，触发 intervention 对求助
+# 意图的 RAG-skip，导致缓解方法知识卡被拦截、答非所问反问（检索实测 dist=0.45
+# 内容就在库里）。方法问句（求做法/求建议）按 TRIAGE_SYSTEM 定义属「咨询」。
+# 采用最小侵入纠偏：仅当 LLM 判为求助且方法问句命中时改判咨询；LLM 判倾诉/
+# 咨询时保持原判（倾诉骨架同样给做法且 RAG 不跳过，无需干预）。
+_METHOD_Q_RE = re.compile(
+    r"(怎么|如何|怎样)[^，。！？!?；;]{0,10}(缓解|改善|克服|应对|调节|治疗|解决)"
+    r"|(缓解|改善|克服|应对|调节|解决)[^，。！？!?；;]{0,8}(怎么办|的方法|的办法)"
+    r"|怎么办|有什么办法|有什么方法"
+)
+
+
+def detect_method_question(message: str) -> bool:
+    """硬编码方法问句识别（零 LLM）：询问缓解/改善/应对等做法的消息。
+
+    守卫：≤30 字（长句多为主线倾诉附带提问，交回 LLM 与倾诉骨架处理）。
+    """
+    text = (message or "").strip()
+    if not text or len(text) > 30:
+        return False
+    return bool(_METHOD_Q_RE.search(text))
 
 
 async def _greeting_fast_path(
@@ -184,6 +209,17 @@ async def triage_node(state: AgentState) -> dict:
             "reason": str(e),
             "intent": intent
         }
+
+    # 3.5 方法问句纠偏（零 LLM 二次校验）：LLM 判求助且方法问句命中 → 改判咨询。
+    # 修 0.5b 把「怎么缓解焦虑」误判求助触发 RAG-skip 的误伤；判倾诉/咨询保持原判。
+    if intent == "求助" and detect_method_question(message):
+        logger.info("triage: method-question override 求助→咨询")
+        decisions["triage"] = {
+            "decision": "method_question_override",
+            "type": "keyword_match",
+            "original_intent": "求助"
+        }
+        intent = "咨询"
 
     # 4. 极速直达路径：LLM 分类为寒暄 → 快速通道（跳过后续节点）
     if intent == "寒暄":

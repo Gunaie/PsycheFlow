@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  @page { size: A4; margin: 2.2cm 2.4cm; }
+  * { box-sizing: border-box; }
+  body { font-family: "WenQuanYi Zen Hei", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; color: #222; }
+  .watermark {
+    position: fixed; top: 42%; left: 50%;
+    transform: translate(-50%, -50%) rotate(-24deg);
+    font-size: 64px; color: rgba(180, 30, 30, 0.08);
+    font-weight: bold; white-space: nowrap; z-index: 0;
+  }
+  .content { position: relative; z-index: 1; }
+  .hospital { text-align: center; font-size: 22px; font-weight: bold; letter-spacing: 2px; }
+  .hospital-sub { text-align: center; font-size: 13px; color: #555; margin-top: 4px; }
+  .title { text-align: center; font-size: 30px; color: #b41e1e; font-weight: bold; letter-spacing: 10px; margin: 26px 0 6px; }
+  .no { text-align: right; font-size: 13px; color: #444; margin-bottom: 18px; }
+  table.info { width: 100%; border-collapse: collapse; font-size: 15px; margin-bottom: 12px; }
+  table.info td { padding: 5px 4px; }
+  .section { font-size: 15px; line-height: 1.9; margin-top: 10px; }
+  .section .h { font-weight: bold; font-size: 16px; }
+  ol { margin: 4px 0 0 22px; padding: 0; }
+  .sign { margin-top: 40px; text-align: right; font-size: 15px; line-height: 2.0; }
+  .seal {
+    display: inline-block; width: 120px; height: 120px; border: 3px solid rgba(180,30,30,.55);
+    border-radius: 50%; color: rgba(180,30,30,.55); text-align: center;
+    font-size: 13px; line-height: 1.6; padding-top: 28px; margin-top: 20px;
+    transform: rotate(-12deg); font-weight: bold;
+  }
+  .footer { position: fixed; bottom: 1.1cm; left: 0; right: 0; text-align: center; font-size: 12px; color: #999; border-top: 1px solid #ddd; padding-top: 6px; }
+</style>
+</head>
+<body>
+  <div class="watermark">虚构演示样例</div>
+  <div class="content">
+    <div class="hospital">××市第一人民医院</div>
+    <div class="hospital-sub">（虚构机构名称 · 演示专用）</div>
+    <div class="title">门诊诊断证明书</div>
+    <div class="no">NO：ZM-2026-0911-0042</div>
+    <table class="info">
+      <tr><td>姓　　名：李某某</td><td>性　别：女</td><td>年　龄：15 岁</td></tr>
+      <tr><td>科　　室：临床心理科</td><td>就诊类型：门诊</td><td>就诊日期：2026 年 9 月 1 日</td></tr>
+    </table>
+    <div class="section"><span class="h">主诉：</span>情绪低落、入睡困难一月余，近期面临考试，紧张担心加重。</div>
+    <div class="section"><span class="h">诊断：</span></div>
+    <div class="section">
+      <ol>
+        <li>抑郁状态（轻度）；</li>
+        <li>焦虑状态。</li>
+      </ol>
+    </div>
+    <div class="section"><span class="h">处理意见：</span></div>
+    <div class="section">
+      <ol>
+        <li>门诊规律复诊，每两周一次，遵医嘱接受心理疏导；</li>
+        <li>保持规律作息，每晚睡眠不少于 8 小时，每日适量运动；</li>
+        <li>家长注意观察情绪与睡眠变化，症状加重随时复诊；</li>
+        <li>建议学校予以适当关注，近期暂缓参加排名性考试；</li>
+        <li>本次未开具处方药物，后续是否用药以专科医生评估为准。</li>
+      </ol>
+    </div>
+    <div class="sign">
+      <div>医师：王某某　（签名）</div>
+      <div>2026 年 9 月 1 日</div>
+    </div>
+    <div><span class="seal">××市第一人民医院<br>门诊专用章<br>（虚构）</span></div>
+  </div>
+  <div class="footer">本文件为虚构演示样例，非真实医疗文书，仅用于软件功能演示，不作为任何医疗依据。</div>
+</body>
+</html>

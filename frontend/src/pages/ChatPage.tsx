@@ -59,6 +59,29 @@ function AgentBadge({ agent }: { agent: string | undefined }) {
   )
 }
 
+/** 病例结构化摘要卡片（诊断/用药/复诊/关注）。 */
+function CaseSummaryCard({ summary }: { summary: Record<string, string> }) {
+  if (!summary || Object.keys(summary).length === 0) return null
+  const labels: Record<string, string> = { '诊断': '诊断', '用药': '用药', '复诊': '复诊', '关注': '关注' }
+  const icons: Record<string, string> = { '诊断': '📋', '用药': '💊', '复诊': '📅', '关注': '⚠️' }
+  return (
+    <div className="mt-1 ml-1 w-full max-w-[80%] rounded-lg border border-indigo-200 bg-indigo-50/50 p-3">
+      <p className="text-[11px] font-medium text-indigo-600 mb-2">结构化摘要</p>
+      <div className="space-y-1.5">
+        {Object.entries(labels).map(([key, label]) =>
+          summary[key] ? (
+            <div key={key} className="flex items-start gap-1.5">
+              <span className="text-xs shrink-0">{icons[key]}</span>
+              <span className="text-[11px] text-slate-500 shrink-0 min-w-[3rem]">{label}：</span>
+              <span className="text-xs text-slate-700 whitespace-pre-line">{summary[key]}</span>
+            </div>
+          ) : null,
+        )}
+      </div>
+    </div>
+  )
+}
+
 /** 单轮知识来源卡片（每轮独立折叠，默认收起）。 */
 function TurnSources({ sources }: { sources: SourceRef[] }) {
   const [open, setOpen] = useState(false)
@@ -105,6 +128,8 @@ export default function ChatPage() {
   const [caseMode, setCaseMode] = useState<'pdf' | 'text'>('pdf')
   const [caseFile, setCaseFile] = useState<File | null>(null)
   const [caseText, setCaseText] = useState('')
+  const [caseContext, setCaseContext] = useState<string | null>(null) // 病例追问：持有上次上传的文书原文
+  const [caseSummary, setCaseSummary] = useState<Record<string, string> | null>(null) // 结构化摘要卡片
   const [analyzing, setAnalyzing] = useState(false)
   const [startingNew, setStartingNew] = useState(false)
   const [clearing, setClearing] = useState(false)
@@ -190,6 +215,7 @@ export default function ChatPage() {
           history: prevTurns.map(t => ({ role: t.role, content: t.content })),
           session_id: chatSid,
           persona_id: personaId,
+          case_context: caseContext ?? undefined, // 病例追问时携带文书原文
         },
         (evt) => {
           const { event, data } = evt
@@ -301,6 +327,8 @@ export default function ChatPage() {
       setError(null)
       setCrisis(false)
       setCurrentAgent(undefined)
+      setCaseContext(null)
+      setCaseSummary(null)
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -369,6 +397,10 @@ export default function ChatPage() {
         current_agent: string
         attachment: CaseAttachment
       }>('/api/chat/case-upload', form)
+
+      // 保存原文供后续追问；保存摘要供卡片渲染
+      if (res.case_text) setCaseContext(res.case_text)
+      if (res.case_summary) setCaseSummary(res.case_summary)
 
       setTurns((prev) => {
         const next = [...prev]
@@ -591,6 +623,9 @@ export default function ChatPage() {
                 </button>
               )}
               {t.role === 'assistant' && <TurnSources sources={t.sources || []} />}
+              {t.role === 'assistant' && t.agent === 'case' && caseSummary && (
+                <CaseSummaryCard summary={caseSummary} />
+              )}
             </div>
           ))}
           <div ref={bottomRef} />

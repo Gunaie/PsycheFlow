@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.agents.nodes.triage import detect_greeting, triage_node
+from app.agents.nodes.triage import detect_greeting, detect_method_question, triage_node
 from app.agents.state import AgentState
 
 
@@ -155,3 +155,72 @@ async def test_triage_greeting_fast_path_llm_failure_fallback():
     assert result["triage_intent"] == "倾诉"
     assert "final_reply" not in result
     assert result["is_crisis"] is False
+
+
+# ================= detect_method_question 方法问句纠偏（求助→咨询） =================
+
+class TestDetectMethodQuestion:
+    @pytest.mark.parametrize("text", [
+        "怎么缓解焦虑", "如何改善睡眠", "怎样克服考前紧张",
+        "如何应对考试焦虑", "焦虑怎么缓解", "缓解焦虑的方法",
+        "睡不着怎么办", "压力大怎么办？", "有什么办法缓解紧张", "失眠有什么方法",
+    ])
+    def test_method_hit(self, text):
+        assert detect_method_question(text) is True
+
+    @pytest.mark.parametrize("text", [
+        "", "   ",
+        "我怎么这么没用",           # 自我否定倾诉，非方法问句
+        "你好，我最近压力大",
+        "什么是抑郁",
+        "我想做测评",               # 真求助，方法问句不命中，测评引导不受影响
+        "我最近考试压力很大晚上总是睡不着白天上课也提不起精神快撑不住了怎么办啊老师我真的很累很累很累很累",  # >30 长度排除
+    ])
+    def test_method_miss(self, text):
+        assert detect_method_question(text) is False
+
+
+@pytest.mark.asyncio
+async def test_triage_method_question_overrides_help_request():
+    """「怎么缓解焦虑」LLM 误判求助（0.5b 实测行为）→ 方法问句纠偏改判咨询，
+    避免 intervention 对求助意图跳过 RAG 导致缓解方法知识卡被拦截"""
+    state: AgentState = {"user_message": "怎么缓解焦虑", "agent_trace": []}
+    with patch("app.agents.nodes.triage.provider") as mock_provider:
+        mock_provider.chat = AsyncMock(return_value="求助")
+        result = await triage_node(state)
+    assert result["triage_intent"] == "咨询"
+    assert result["node_decisions"]["triage"]["decision"] == "method_question_override"
+    assert result["node_decisions"]["triage"]["original_intent"] == "求助"
+    assert result["is_crisis"] is False
+
+
+@pytest.mark.asyncio
+async def test_triage_true_help_request_not_overridden():
+    """「我想做测评」真求助（无方法问句）→ 保持求助，测评引导不受影响"""
+    state: AgentState = {"user_message": "我想做测评", "agent_trace": []}
+    with patch("app.agents.nodes.triage.provider") as mock_provider:
+        mock_provider.chat = AsyncMock(return_value="求助")
+        result = await triage_node(state)
+    assert result["triage_intent"] == "求助"
+
+
+@pytest.mark.asyncio
+async def test_triage_method_question_venting_stays_venting():
+    """「好烦啊怎么办」LLM 判倾诉 → 保持倾诉（倾诉骨架同样给做法且 RAG 不跳过）"""
+    state: AgentState = {"user_message": "好烦啊怎么办", "agent_trace": []}
+    with patch("app.agents.nodes.triage.provider") as mock_provider:
+        mock_provider.chat = AsyncMock(return_value="倾诉")
+        result = await triage_node(state)
+    assert result["triage_intent"] == "倾诉"
+
+
+@pytest.mark.asyncio
+async def test_triage_crisis_precedes_method_question():
+    """「我想自杀怎么办」危机词前置短路优先于方法问句（安全顺序不破坏）"""
+    state: AgentState = {"user_message": "我想自杀怎么办", "agent_trace": []}
+    with patch("app.agents.nodes.triage.provider") as mock_provider:
+        mock_provider.chat = AsyncMock(return_value="咨询")
+        result = await triage_node(state)
+    mock_provider.chat.assert_not_called()
+    assert result["is_crisis"] is True
+    assert result["triage_intent"] == "危机"

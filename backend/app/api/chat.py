@@ -20,13 +20,13 @@ from sqlalchemy.orm import Session
 
 from app.agents.graph import graph
 from app.agents.nodes.assessment import assessment_node
-from app.agents.nodes.case import analyze_case
 from app.agents.nodes.escalation import escalation_node
 from app.agents.nodes.intervention import (
     FALLBACK_REPLY,
     build_intervention_messages,
     stream_intervention,
 )
+from app.agents.nodes.case import analyze_case, case_followup
 from app.agents.nodes.triage import triage_node
 from app.agents.personas import get_persona
 from app.api.deps import get_current_account, get_db_session
@@ -63,6 +63,7 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
     account_id: str | None = None
     persona_id: str | None = None  # 多角色人格，不传=默认"暖暖"
+    case_context: str | None = None  # 病例追问：前端持有上次上传的文书原文
 
 
 def _clip_history(history: list[ChatMessage]) -> list[dict]:
@@ -253,7 +254,29 @@ async def chat_stream(
                 final_trace = state.get("agent_trace", ["triage"])
                 # 模拟流式效果（直接推完或推 token，此处选直接推完信号，前端 done 会补全）
                 yield _sse("token", {"token": final_reply})
-            
+
+            # —— 2b. 病例追问路径：前端持有 case_context 时走轻量 follow-up ——
+            elif req.case_context:
+                yield _sse("agent", {"agent": "case", "agent_trace": ["case_followup"]})
+                followup_reply = await case_followup(
+                    case_text=req.case_context,
+                    interpretation="",  # 历史已有解读，追问不需重传
+                    question=req.message,
+                )
+                # 危机追问走 crisis 事件，否则走 token
+                from app.core.safety import detect_crisis_with_words as _dc
+                _is_crisis_q, _ = _dc(req.message)
+                if _is_crisis_q:
+                    is_crisis = True
+                    final_agent = "escalation"
+                    final_trace = ["case_followup", "escalation"]
+                    yield _sse("crisis", {"reply": followup_reply, "agent_trace": final_trace, "sources": []})
+                else:
+                    yield _sse("token", {"token": followup_reply})
+                    final_reply = followup_reply
+                    final_agent = "case"
+                    final_trace = ["case_followup"]
+
             # —— 3. 危机路径：escalation 不流式，推完整话术后 close ——
             elif state.get("is_crisis"):
                 esc_out = await escalation_node(state)
@@ -511,4 +534,6 @@ async def case_upload(
         "crisis": is_crisis,
         "current_agent": result["agent"],
         "attachment": attachment,
+        "case_summary": result.get("case_summary"),
+        "case_text": case_text,
     }
