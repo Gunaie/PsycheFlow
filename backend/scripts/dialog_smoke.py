@@ -20,7 +20,8 @@ import sys
 
 sys.path.insert(0, "/app")
 
-from app.agents.nodes.intervention import build_intervention_messages  # noqa: E402
+from app.agents.nodes.intervention import build_intervention_messages, check_reply_quality, RETRY_HINT  # noqa: E402
+from app.agents.nodes.triage import detect_method_question  # noqa: E402
 from app.agents.state import AgentState  # noqa: E402
 from app.core.llm import provider  # noqa: E402
 
@@ -45,7 +46,7 @@ SCENARIOS = [
 ]
 
 # 违规检查：闭合问句 / 空历史下的幻觉归因
-_BANNED_CLOSE_Q = re.compile(r"(对吧|对吗|是不是|是吧|好吗)")
+_BANNED_CLOSE_Q = re.compile(r"(对吧|对吗|是不是|是吧|好吗|对不对|好不好|吗[？?]|吧[？?])")
 # 「你提到」常合法引用当前消息内容（"你提到最近考试压力大"），不算幻觉；
 # 「你说过/你之前说」才指向历史轮次，空历史下出现即编造
 _FABRICATED_ATTR = re.compile(r"(你说过|你之前说|你上次说|你以前说)")
@@ -78,6 +79,26 @@ async def run_scenario(scenario: dict) -> None:
         ):
             tokens.append(token)
         reply = "".join(tokens).strip()
+        # 质检重试（与生产 intervention_node 同口径：最多重试 2 次）
+        history = [
+            {"role": h["role"], "content": h["content"]}
+            for h in (state.get("history") or [])
+            if h.get("role") in ("user", "assistant")
+        ][-20:]
+        min_methods = 2 if detect_method_question(msg) else 1
+        for attempt in range(2):
+            if check_reply_quality(reply, history, min_method_categories=min_methods):
+                break
+            retry_tokens: list[str] = []
+            async for token in provider.stream(
+                role="dialog_stream",
+                messages=[*messages, {"role": "system", "content": RETRY_HINT}],
+                temperature=0.35, max_tokens=3000,
+            ):
+                retry_tokens.append(token)
+            retry_reply = "".join(retry_tokens).strip()
+            if retry_reply:
+                reply = retry_reply
         rag = decision.get("rag", {})
         rag_desc = "skipped" if rag.get("skipped") else rag.get("count")
         print(f"用户({intent}): {msg}")

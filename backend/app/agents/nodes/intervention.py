@@ -36,18 +36,42 @@ FALLBACK_REPLY = (
 
 # —— 回复质检重试层（正则零 LLM 成本，与 dialog_smoke 检查口径一致）——
 # 封闭式问句：诱导「是/否」式回答，压制对话开放性（7B 模型高频坏习惯）
-_BANNED_CLOSE_Q = re.compile(r"(对吧|对吗|是不是|是吧|好吗)")
+# 覆盖：对吧/对吗/是不是/是吧/好吗/对不对/好不好/会不会/有没有/能不能 + 句末「吗？」「吧？」
+_BANNED_CLOSE_Q = re.compile(r"(对吧|对吗|是不是|是吧|好吗|对不对|好不好|会不会|有没有|能不能|可以吗|吗[？?]|吧[？?])")
 # 逐字重复判定阈值：短于该长度的分句（如「嗯」「好的」）不判重复，避免误伤常规应答
 _REPEAT_MIN_LEN = 12
+
+# 幻觉归因检测：「你说过/你之前说/你上次说/你以前说」引导的内容若不在用户历史中出现即为编造
+_FABRICATED_ATTR_RE = re.compile(r"(你说过|你之前说|你上次说|你以前说)([^，。！？!?；;\n]{2,40})")
+
+# 做法类别关键词：用于检测跨轮"同类做法重复"（腹式呼吸的不同表述都算同一类）
+_METHOD_CATEGORIES = {
+    "breathing": ("呼吸", "肚子", "吸气", "呼气", "腹式", "喘气", "气息"),
+    "journaling": ("写", "本子", "日记", "记下来", "纸笔", "写下来"),
+    "muscle_relax": ("肌肉", "紧张再放松", "渐进式", "握拳", "绷紧"),
+    "mindfulness": ("正念", "冥想", "观察", "当下", "感受身体"),
+    "exercise": ("运动", "跑步", "散步", "拉伸", "走动"),
+}
+
+
+def _detect_method_categories(text: str) -> set[str]:
+    """提取回复中涉及的做法类别集合。"""
+    norm = _normalize(text)
+    found = set()
+    for cat, keywords in _METHOD_CATEGORIES.items():
+        if any(kw in norm for kw in keywords):
+            found.add(cat)
+    return found
 
 # 质检不合格时附加在 messages 末尾的重试纠正提示
 # 注意：不引用违禁词原文（列出「对吧/对吗」等 token 反而会诱导模型复现它们）
 RETRY_HINT = (
-    "【重试要求】你上一次的回复不合格：用了诱导对方回答「是/否」的确认式问句，"
-    "或与历史对话逐字重复了相同的句子。请重新生成回复，必须做到："
-    "1）提问只用开放式邀请（如「能多说说吗」「你希望怎么改变」）；"
-    "2）不要复述历史对话里已出现过的句子，换新的说法；"
-    "3）给出具体可操作的建议；直接输出新回复正文，不要解释。"
+    "【重试要求】你上一次的回复不合格。请严格按以下要求重新生成，直接输出回复正文："
+    "1）整轮最多一个开放式问题（用「什么/怎么/哪些/哪里」提问，禁止用「吗/吧/会不会/有没有」收尾）；"
+    "2）50-100字、不超过3句；"
+    "3）如果用户问缓解/改善方法，必须给出2种不同类型的具体做法（如「试试腹式呼吸：吸4秒呼6秒；再试试把担心的事写在纸上」），两种做法用「也可以」「另外」连接；"
+    "4）上轮用过的做法本轮必须换成完全不同类型（如上轮用了呼吸，本轮用写日记或肌肉放松）；"
+    "5）「你说过…」只能指用户历史中真实说过的内容，不确定就不要用这个句式。"
 )
 
 
@@ -57,17 +81,61 @@ def _normalize(text: str) -> str:
     return re.sub(r"《[^》]*》", "", t)
 
 
-def check_reply_quality(reply: str, history: list[dict] | None) -> bool:
-    """回复质检：True=合格；False=不合格（封闭式问句 / 与历史 assistant 回复逐字重复）。
+def check_reply_quality(reply: str, history: list[dict] | None, min_method_categories: int = 1) -> bool:
+    """回复质检：True=合格；False=不合格。
 
-    重复判定：新回复与历史某条 assistant 回复存在 ≥12 字的逐字公共片段
-    （滑动窗口匹配，半改写也算——捕获「这一定让你感到特别疲惫」及
-    「除了担心/焦虑，你有没有感觉到…」这类换头不换身的模板句跨轮复发）。
+    检查项：
+    - 封闭式问句：对吧/对吗/是不是/是吧/好吗/对不对/好不好/会不会/有没有/能不能 + 句末「吗？」「吧？」
+    - 整轮最多一个问题：问号（?/？）超过 1 个即不合格
+    - 长度上限：超过 120 字不合格（prompt 要求 50-100，留 20 字弹性）
+    - 逐字重复：新回复与历史某条 assistant 回复存在 ≥12 字的逐字公共片段
+    - 幻觉归因：「你说过…」引导的内容若未在用户历史消息中出现，即为编造
+    - 同类做法重复：本轮做法类别与上一轮 assistant 回复有交集即不合格
+    - 做法多样性：min_method_categories>1 时，回复须包含至少该数量的不同做法类别
+      （求做法问题要求 ≥2 种，避免只给腹式呼吸一种）
     """
     if not reply or not reply.strip():
         return False
     if _BANNED_CLOSE_Q.search(reply):
         return False
+    # 整轮最多一个问题：问号计数（中英文问号）
+    q_count = reply.count("?") + reply.count("？")
+    if q_count > 1:
+        return False
+    # 长度上限：120 字（含标点，留 20 字弹性避免误伤正常表达）
+    if len(reply.strip()) > 120:
+        return False
+    # 做法多样性检测：求做法问题要求 ≥2 种不同类别
+    cur_cats = _detect_method_categories(reply)
+    if min_method_categories > 1 and len(cur_cats) < min_method_categories:
+        return False
+    # 幻觉归因检测：「你说过X」中的 X 须在用户历史中真实出现
+    user_hist_text = "".join(
+        _normalize(h.get("content", ""))
+        for h in (history or [])
+        if h.get("role") == "user"
+    )
+    for m in _FABRICATED_ATTR_RE.finditer(reply):
+        attr_content = _normalize(m.group(2))
+        if attr_content and attr_content not in user_hist_text:
+            # 宽松匹配：归因内容的任一 4 字以上片段在用户历史中出现即算合法引用
+            has_overlap = any(
+                attr_content[i:i+4] in user_hist_text
+                for i in range(len(attr_content) - 3)
+            ) if len(attr_content) >= 4 else False
+            if not has_overlap:
+                return False
+    # 同类做法重复检测：本轮做法类别与上一轮 assistant 回复有交集即不合格
+    # （腹式呼吸的不同表述都算 breathing 类，避免"数数呼吸"和"手放肚子上呼吸"跨轮重复）
+    if cur_cats:
+        last_assistant = next(
+            (h for h in reversed(history or []) if h.get("role") == "assistant"),
+            None,
+        )
+        if last_assistant:
+            prev_cats = _detect_method_categories(last_assistant.get("content", ""))
+            if cur_cats & prev_cats:
+                return False
     hist_norms = [
         _normalize(h.get("content", ""))
         for h in (history or [])
@@ -234,16 +302,24 @@ async def stream_intervention(
         yield FALLBACK_REPLY
         return
 
-    # 质检不合格 → 附纠正提示重试 1 次（降温提高指令遵循）；重试异常或仍不合格则沿用首次回复
-    if not check_reply_quality(text, history):
-        logger.info("intervention: quality check failed, retrying once (stream)")
+    # 质检不合格 → 附纠正提示重试最多 2 次（降温提高指令遵循）；重试异常或仍不合格则沿用首次回复
+    # 求做法问题要求 ≥2 种不同做法类别
+    from app.agents.nodes.triage import detect_method_question
+    user_msg = state.get("user_message", "")
+    min_methods = 2 if detect_method_question(user_msg) else 1
+    for attempt in range(2):
+        if check_reply_quality(text, history, min_method_categories=min_methods):
+            break
+        logger.info("intervention: quality check failed, retry %d/2 (stream)", attempt + 1)
         retry_tokens, retry_failed = await _collect(
             [*messages, {"role": "system", "content": RETRY_HINT}],
             temperature=0.35,
         )
         retry_text = "".join(retry_tokens)
-        if not retry_failed and retry_text.strip() and check_reply_quality(retry_text, history):
+        if not retry_failed and retry_text.strip():
             tokens, text = retry_tokens, retry_text
+        else:
+            break
 
     async for token in _paced(tokens):
         yield token
@@ -275,15 +351,21 @@ async def intervention_node(state: AgentState) -> dict:
             logger.warning("intervention: LLM returned empty reply, triggering fallback")
             raise ValueError("empty reply from LLM")
         decision["llm"] = {"status": "success", "reply_len": len(reply)}
-        # 质检不合格 → 附纠正提示重试 1 次；重试异常或仍不合格则保留首次回复
+        # 质检不合格 → 附纠正提示重试最多 2 次；重试异常或仍不合格则保留首次回复
         history = [
             {"role": h["role"], "content": h["content"]}
             for h in (state.get("history") or [])
             if h.get("role") in ("user", "assistant")
         ][-20:]
-        if not check_reply_quality(reply, history):
-            logger.info("intervention: quality check failed, retrying once")
-            decision["llm"]["quality_retry"] = True
+        # 求做法问题要求 ≥2 种不同做法类别，避免只给腹式呼吸一种
+        from app.agents.nodes.triage import detect_method_question
+        user_msg = state.get("user_message", "")
+        min_methods = 2 if detect_method_question(user_msg) else 1
+        for attempt in range(2):
+            if check_reply_quality(reply, history, min_method_categories=min_methods):
+                break
+            logger.info("intervention: quality check failed, retry %d/2", attempt + 1)
+            decision["llm"]["quality_retry"] = attempt + 1
             try:
                 retry = await provider.chat(
                     role="dialog",
@@ -291,12 +373,13 @@ async def intervention_node(state: AgentState) -> dict:
                     temperature=0.35,  # 重试降温：约束类指令低温下遵循率更高
                     max_tokens=3000,
                 )
-                if retry and retry.strip() and check_reply_quality(retry, history):
+                if retry and retry.strip():
                     reply = retry
             except Exception as retry_err:
                 logger.warning(
                     "intervention: quality retry failed: %s, keep first reply", str(retry_err)
                 )
+                break
         logger.info("intervention: reply len=%d", len(reply))
     except Exception as e:
         logger.warning("intervention: LLM failed: %s", str(e))

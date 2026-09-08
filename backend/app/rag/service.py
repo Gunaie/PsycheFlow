@@ -158,11 +158,13 @@ class RAGService:
         self.bm25 = None
         return {"indexed": len(docs), "collection_size": self.store.count()}
 
-    async def search(self, query: str, top_k: int = 3, threshold: float = 0.60) -> list:
+    async def search(self, query: str, top_k: int = 3, threshold: float = 0.75) -> list:
         """混合检索：向量检索 + BM25 检索，使用 RRF (Reciprocal Rank Fusion) 融合。
 
         threshold: 相似度阈值（针对向量检索的 L2 距离）。
-        0.70 → 0.60 收紧：阈值过松时弱相关片段也被推送（用户反馈"与输入相关性不强"）。
+        0.60 → 0.75 放宽：原 0.60 过严，把「04_放松技术.txt」（腹式呼吸 chunk 无
+        「焦虑」关键词，向量距离 0.71）过滤掉，导致求做法问题只召回 DBT 等间接
+        相关内容。放宽到 0.75 后放松/睡眠类直接做法能召回，由来源去重保证多样性。
         """
         # 1. 向量检索
         q_emb = (await self.llm.embed([query]))[0]
@@ -217,6 +219,12 @@ class RAGService:
         
         keywords = ["压力", "失眠", "焦虑", "难过", "抑郁", "放松", "考试"]
 
+        # 危机内容过滤：非危机查询（用户未提及自杀/自伤/轻生等）不推送危机热线片段。
+        # 实测"睡不着"会召回含 12355 热线的危机科普卡片，属于噪声，应过滤。
+        _CRISIS_QUERY_WORDS = ("自杀", "自伤", "轻生", "不想活", "结束生命", "割腕", "跳楼")
+        _CRISIS_CONTENT_WORDS = ("12355", "自杀", "自伤", "轻生", "热线", "120", "110", "报警", "急救", "危机干预")
+        query_is_crisis = any(w in query for w in _CRISIS_QUERY_WORDS)
+
         for doc_id, rrf_score in sorted_ids:
             if doc_id in id_to_vec_info:
                 info = id_to_vec_info[doc_id]
@@ -248,6 +256,26 @@ class RAGService:
                 "distance": adjusted_dist,
                 "rrf_score": rrf_score
             })
+
+        # 非危机查询过滤危机热线类片段，避免"睡不着"却推送自杀干预热线卡片
+        if not query_is_crisis:
+            final_docs = [
+                d for d in final_docs
+                if not any(w in d["text"] for w in _CRISIS_CONTENT_WORDS)
+            ]
+
+        # 来源去重：同一来源最多保留 1 条（排名最高的），确保返回多样化方法
+        # 避免 top_k=3 全是 dbt_skills.md 同一来源的不同片段
+        seen_sources: set[str] = set()
+        deduped: list = []
+        for d in final_docs:
+            src = d.get("source", "")
+            if src not in seen_sources:
+                seen_sources.add(src)
+                deduped.append(d)
+            if len(deduped) >= top_k:
+                break
+        final_docs = deduped
 
         return final_docs
 

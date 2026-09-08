@@ -13,6 +13,7 @@ import re
 from app.agents.personas import get_persona, build_system_prompt
 from app.agents.prompts import TRIAGE_SYSTEM, TRIAGE_USER_TEMPLATE
 from app.agents.state import AgentState
+from app.agents.nodes.intervention import check_reply_quality
 from app.core.llm import provider
 from app.core.safety import detect_crisis_with_words
 
@@ -108,17 +109,46 @@ async def _greeting_fast_path(
     """寒暄快速通道：用轻量 triage 模型生成简短问候回复，产出 final_reply 直接结束编排。
 
     调用方需自行 try/except：生成失败时回退到正常意图分类/倾诉流程。
+    质检：生成后复用 intervention 的 check_reply_quality（闭合问句/多问题/超长），
+    不合格附纠正提示重试 1 次，避免寒暄回复漏出"有什么想说的吗？"类闭合问句。
     """
     persona = get_persona(state.get("persona_id"))
+    system = (
+        build_system_prompt(persona)
+        + "\n请简洁地回应用户的打招呼或询问（50字以内），不要开启 RAG 或深度对话。"
+        + "\n禁止使用闭合问句（如'有什么想说的吗''你好吗'），用开放式表达收尾，如直接说'我在听'或'随时可以和我说说'。"
+    )
     greeting_reply = await provider.chat(
         role="triage",  # 复用轻量模型
         messages=[
-            {"role": "system", "content": build_system_prompt(persona) + "\n请简洁地回应用户的打招呼或询问，不要开启 RAG 或深度对话。"},
+            {"role": "system", "content": system},
             {"role": "user", "content": message},
         ],
         temperature=0.7,
         max_tokens=100,
     )
+    # 质检：闭合问句/多问题/超长 → 重试 1 次（降温提遵循率）
+    if not check_reply_quality(greeting_reply, history=None):
+        logger.info("triage: greeting quality check failed, retrying once")
+        try:
+            retry = await provider.chat(
+                role="triage",
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": message},
+                    {"role": "system", "content": (
+                        "【重试要求】上条回复不合格：可能用了'吗/吧'收尾的闭合问句，"
+                        "或提了多个问题，或超过50字。请重新生成：50字以内、最多一个问题、"
+                        "禁止闭合问句（不用'吗''吧'收尾），用开放式表达。直接输出回复正文。"
+                    )},
+                ],
+                temperature=0.35,
+                max_tokens=100,
+            )
+            if retry and retry.strip() and check_reply_quality(retry, history=None):
+                greeting_reply = retry
+        except Exception as e:
+            logger.warning("triage: greeting retry failed: %s", str(e))
     return {
         "is_crisis": False,
         "triage_intent": "寒暄",
