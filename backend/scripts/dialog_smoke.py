@@ -79,16 +79,16 @@ async def run_scenario(scenario: dict) -> None:
         ):
             tokens.append(token)
         reply = "".join(tokens).strip()
-        # 质检重试（与生产 intervention_node 同口径：最多重试 2 次）
+        # 质检重试（与生产 intervention_node 同口径：最多重试 1 次，
+        # 重试回复须重新质检，不合格则保留首次回复）
         history = [
             {"role": h["role"], "content": h["content"]}
             for h in (state.get("history") or [])
             if h.get("role") in ("user", "assistant")
         ][-20:]
         min_methods = 2 if detect_method_question(msg) else 1
-        for attempt in range(2):
-            if check_reply_quality(reply, history, min_method_categories=min_methods):
-                break
+        first_reply = reply
+        if not check_reply_quality(reply, history, min_method_categories=min_methods):
             retry_tokens: list[str] = []
             async for token in provider.stream(
                 role="dialog_stream",
@@ -97,8 +97,12 @@ async def run_scenario(scenario: dict) -> None:
             ):
                 retry_tokens.append(token)
             retry_reply = "".join(retry_tokens).strip()
-            if retry_reply:
+            if retry_reply and check_reply_quality(
+                retry_reply, history, min_method_categories=min_methods
+            ):
                 reply = retry_reply
+            else:
+                reply = first_reply
         rag = decision.get("rag", {})
         rag_desc = "skipped" if rag.get("skipped") else rag.get("count")
         print(f"用户({intent}): {msg}")

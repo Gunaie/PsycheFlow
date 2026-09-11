@@ -22,7 +22,7 @@ async def build_index():
 async def search(q: str = Query(..., description="检索词"), top_k: int = 3):
     """检索相关心理学知识片段。"""
     try:
-        return {"query": q, "results": await rag_service.search(q, top_k=top_k)}
+        return {"query": q, "results": await rag_service.search(q, top_k=top_k, caller="api")}
     except Exception as e:
         raise HTTPException(
             status_code=502,

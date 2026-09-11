@@ -126,12 +126,12 @@ class TestInterventionNodeRetry:
             p.chat = AsyncMock(
                 side_effect=[
                     "我听到你最近考试压力很大。我们聊聊。",
-                    "听起来这段时间很熬人，愿意说说最让你紧绷的是哪部分吗？",
+                    "听起来这段时间很熬人，愿意说说最让你紧绷的是哪部分？",
                 ]
             )
             rag.search = AsyncMock(return_value=[])
             out = await intervention_node(_state(history=history))
-            assert out["final_reply"] == "听起来这段时间很熬人，愿意说说最让你紧绷的是哪部分吗？"
+            assert out["final_reply"] == "听起来这段时间很熬人，愿意说说最让你紧绷的是哪部分？"
 
 
 def _stream_mock(*token_lists):

@@ -176,7 +176,9 @@ async def build_intervention_messages(state: AgentState) -> tuple[list[dict], li
         decision["rag"] = {"skipped": True, "reason": f"intent={triage_intent}"}
     else:
         try:
-            rag_sources = await rag_service.search(message, top_k=3)
+            rag_sources = await rag_service.search(
+                message, top_k=3, intent=triage_intent, caller="intervention"
+            )
             logger.info("intervention: rag retrieved %d chunks", len(rag_sources))
             decision["rag"] = {
                 "count": len(rag_sources),
@@ -302,24 +304,26 @@ async def stream_intervention(
         yield FALLBACK_REPLY
         return
 
-    # 质检不合格 → 附纠正提示重试最多 2 次（降温提高指令遵循）；重试异常或仍不合格则沿用首次回复
     # 求做法问题要求 ≥2 种不同做法类别
     from app.agents.nodes.triage import detect_method_question
     user_msg = state.get("user_message", "")
     min_methods = 2 if detect_method_question(user_msg) else 1
-    for attempt in range(2):
-        if check_reply_quality(text, history, min_method_categories=min_methods):
-            break
-        logger.info("intervention: quality check failed, retry %d/2 (stream)", attempt + 1)
+    # 质检不合格 → 附纠正提示重试 1 次（降温提高指令遵循）；重试异常或仍不合格则沿用首次回复
+    if not check_reply_quality(text, history, min_method_categories=min_methods):
+        logger.info("intervention: quality check failed, retry 1/1 (stream)")
         retry_tokens, retry_failed = await _collect(
             [*messages, {"role": "system", "content": RETRY_HINT}],
             temperature=0.35,
         )
         retry_text = "".join(retry_tokens)
-        if not retry_failed and retry_text.strip():
+        # 流中断/空回复：流已不可靠，沿用首次回复；重试回复须重新质检，
+        # 合格才采用，不合格同样沿用首次（不拿更差的回复覆盖）
+        if (
+            not retry_failed
+            and retry_text.strip()
+            and check_reply_quality(retry_text, history, min_method_categories=min_methods)
+        ):
             tokens, text = retry_tokens, retry_text
-        else:
-            break
 
     async for token in _paced(tokens):
         yield token
@@ -361,11 +365,11 @@ async def intervention_node(state: AgentState) -> dict:
         from app.agents.nodes.triage import detect_method_question
         user_msg = state.get("user_message", "")
         min_methods = 2 if detect_method_question(user_msg) else 1
-        for attempt in range(2):
-            if check_reply_quality(reply, history, min_method_categories=min_methods):
-                break
-            logger.info("intervention: quality check failed, retry %d/2", attempt + 1)
-            decision["llm"]["quality_retry"] = attempt + 1
+        first_reply = reply
+        # 最多重试 1 次：重试仍不合格/异常即保留首次回复（与 docstring 契约一致）
+        if not check_reply_quality(reply, history, min_method_categories=min_methods):
+            logger.info("intervention: quality check failed, retry 1/1")
+            decision["llm"]["quality_retry"] = True
             try:
                 retry = await provider.chat(
                     role="dialog",
@@ -373,13 +377,19 @@ async def intervention_node(state: AgentState) -> dict:
                     temperature=0.35,  # 重试降温：约束类指令低温下遵循率更高
                     max_tokens=3000,
                 )
-                if retry and retry.strip():
+                # 重试回复须重新质检：合格才采用，不合格保留首次回复
+                # （不拿同样不合格的回复覆盖首次）
+                if retry and retry.strip() and check_reply_quality(
+                    retry, history, min_method_categories=min_methods
+                ):
                     reply = retry
+                else:
+                    reply = first_reply
             except Exception as retry_err:
                 logger.warning(
                     "intervention: quality retry failed: %s, keep first reply", str(retry_err)
                 )
-                break
+                reply = first_reply
         logger.info("intervention: reply len=%d", len(reply))
     except Exception as e:
         logger.warning("intervention: LLM failed: %s", str(e))

@@ -258,7 +258,7 @@ async def triage_node(state: AgentState) -> dict:
             "decision": "fast_path_greeting",
             "type": "llm_classified",
             "intent": intent,
-            "model": "qwen2.5:0.5b"
+            "model": provider.model_for("triage")
         }
         try:
             return await _greeting_fast_path(state, message, trace, decisions)

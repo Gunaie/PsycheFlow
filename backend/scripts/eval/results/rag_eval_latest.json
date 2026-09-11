@@ -1,0 +1,144 @@
+{
+  "summary": {
+    "total": 65,
+    "hit@1": 0.7692,
+    "recall@3": 1.0,
+    "mrr": 0.8744,
+    "expected_files": 32,
+    "covered_files": 32,
+    "uncovered_files": [],
+    "miss_count": 0,
+    "elapsed_sec": 48.7
+  },
+  "misses": [],
+  "per_file": {
+    "01_情绪识别.txt": {
+      "total": 3,
+      "hit": 3
+    },
+    "02_共情技巧.txt": {
+      "total": 2,
+      "hit": 2
+    },
+    "03_危机转介.txt": {
+      "total": 2,
+      "hit": 2
+    },
+    "school_crisis_referral.md": {
+      "total": 5,
+      "hit": 5
+    },
+    "04_放松技术.txt": {
+      "total": 4,
+      "hit": 4
+    },
+    "relaxation_exercises.md": {
+      "total": 6,
+      "hit": 6
+    },
+    "05_睡眠卫生.txt": {
+      "total": 2,
+      "hit": 2
+    },
+    "cbti_manual.md": {
+      "total": 3,
+      "hit": 3
+    },
+    "06_焦虑科普.txt": {
+      "total": 3,
+      "hit": 3
+    },
+    "mood_disorder_guidelines.md": {
+      "total": 6,
+      "hit": 6
+    },
+    "07_抑郁自助.txt": {
+      "total": 2,
+      "hit": 2
+    },
+    "08_人际冲突与欺凌.txt": {
+      "total": 2,
+      "hit": 2
+    },
+    "09_亲子沟通.txt": {
+      "total": 4,
+      "hit": 4
+    },
+    "nvc_parent_scripts.md": {
+      "total": 3,
+      "hit": 3
+    },
+    "10_学业压力.txt": {
+      "total": 2,
+      "hit": 2
+    },
+    "11_网络与游戏成瘾.txt": {
+      "total": 2,
+      "hit": 2
+    },
+    "12_非自杀性自伤.txt": {
+      "total": 2,
+      "hit": 2
+    },
+    "13_创伤后心理调适.txt": {
+      "total": 3,
+      "hit": 3
+    },
+    "14_注意力与ADHD.txt": {
+      "total": 2,
+      "hit": 2
+    },
+    "15_进食障碍科普.txt": {
+      "total": 2,
+      "hit": 2
+    },
+    "16_哀伤辅导.txt": {
+      "total": 3,
+      "hit": 3
+    },
+    "17_青春期情感.txt": {
+      "total": 2,
+      "hit": 2
+    },
+    "18_考试焦虑调适.txt": {
+      "total": 3,
+      "hit": 3
+    },
+    "19_时间管理.txt": {
+      "total": 3,
+      "hit": 3
+    },
+    "cbt_intro.md": {
+      "total": 1,
+      "hit": 1
+    },
+    "cbt_techniques.md": {
+      "total": 4,
+      "hit": 4
+    },
+    "ccmd3_summary.md": {
+      "total": 2,
+      "hit": 2
+    },
+    "dbt_skills.md": {
+      "total": 2,
+      "hit": 2
+    },
+    "nhc_hotline_guide.md": {
+      "total": 2,
+      "hit": 2
+    },
+    "psych_case_glossary.md": {
+      "total": 4,
+      "hit": 4
+    },
+    "sadpersons_scale.md": {
+      "total": 1,
+      "hit": 1
+    },
+    "safety_plan_template.md": {
+      "total": 1,
+      "hit": 1
+    }
+  }
+}

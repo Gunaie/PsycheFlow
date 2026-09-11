@@ -11,14 +11,15 @@
   - 兜底链：百炼 cloud → Ollama 本地（ollama_base_url 配置时）→ 节点级硬编码话术
 
 - local：完全本地私有化，对话/分诊/报告/embedding 全走 Ollama，**不触云端**
-  （数据不出本机，可离线；语音 ASR/TTS 暂仍走百炼，后续本地化）
-  - intake/triage 用 local_model 基座；dialog/dialog_stream 用 local_model_dialog、report 用
-    local_model_report（3.B LoRA 微调合并模型，留空回退基座）；embed 用 local_embed_model（bge-m3）
+  （数据不出本机，可离线；语音由独立 VOICE_MODE 控制，local=faster-whisper+sherpa-onnx 全离线）
+  - intake/triage 用 local_model 基座（local_model_triage 可单独覆盖）；dialog/dialog_stream
+    用 local_model_dialog、report 用 local_model_report（3.B LoRA 微调合并模型，留空回退基座）；
+    embed 用 local_embed_model（bge-m3）
   - Ollama 失败时返回 "" / 上抛，由节点级硬编码话术兜底（不回退云端）
 
 注意：deepseek-v4 系列有 reasoning_content（思考链）字段，会先思考再输出 content，
 max_tokens 须足够容纳 reasoning + content（否则 content 为空、finish_reason=length）。
-温度按角色自动取用：计分场景确定性优先（0.1），对话场景放宽（0.35）。
+温度按角色自动取用：计分/分诊场景确定性优先（0.1），对话场景放宽（0.6，破 LoRA 模板复读）。
 """
 import logging
 from typing import Optional

@@ -1,15 +1,16 @@
 # PsycheFlow 项目交接文档
 
-> 最后更新：2026-09-09
-> 当前 commit：P2 知识库补齐 + RAG 检索策略重构（见 git log）
-> 阶段：D 五期全部完成 + 生产化准备 + SSE 首 token 优化（NFR-5 达标）+ Ollama 本地化 3.B 落地 + **寒暄闪电直达（0.5b 模型，毫秒级响应）** + **RAG 精度优化（阈值 0.75 + 向量距离主排序 + 关键词加权）** + **P2 知识库补齐（抑郁/欺凌/亲子/学业 4 主题）**
+> 最后更新：2026-09-11
+> 阶段：D 五期全部完成 + 生产化加固（TLS/HSTS/CSP）+ SSE 首 token 优化（NFR-5 达标）+ Ollama 本地化（3.A 基座 / 3.B LoRA 微调 / D5 语音全离线）+ RAG 知识库 32 文件 327 片（eval_rag 护栏 recall@3=100%）+ 检索埋点落地（以上均已入库）
 
-> ⚠️ **运行模式提示（2026-09-06）**：当前本机 `.env` 为 `LLM_MODE=local` 且 `VOICE_MODE=local`（100% 本地化，数据不出机）。
-> **3.B 阶段最终优化**：微调模型 `qwen2.5:dialog-lora` 已常驻，并引入 `qwen2.5:0.5b` 作为极速分诊器。
-> **RAG 优化（2026-09-09）**：检索阈值 0.75；弃用 RRF 排名融合，改以向量 L2 距离为主排序，BM25 仅用于补充召回（虚拟距离 0.72）+ 双重印证小幅加权（-0.03）；关键词加权 -0.05。解决了"焦虑怎么缓解"被仅含关键词的科普片段挤掉含做法片段、"很低落怎么办"被不相关 BM25 片段挤掉抑郁自助文件的问题。
-> **P2 知识库（2026-09-09）**：新增 07_抑郁自助.txt、08_人际冲突与欺凌.txt、09_亲子沟通.txt、10_学业压力.txt，索引 183→201 片。所有新文件含「适用场景」标签 + 来源标注，端到端验证 4/4 主题均能正确召回并生成含具体方法的回复。
+> ⚠️ **运行模式提示（2026-09-11）**：本机 `.env` 为 `LLM_MODE=local` + `VOICE_MODE=local`（对话/分诊/报告/embedding/语音全本地，数据不出机）。
 >
-> **工作区未提交内容**：仅本文件（3.B 云训练完成回写）。3.A/3.B 代码与脚本均已提交（3.A=ab0c512，3.B 预备=2447ece，云训练脚本系列修复至 562022f）；`问题,txt` 为旧账号临时草稿可自行处置。
+> - **本地模型现状**：dialog/report = `qwen2.5:dialog-lora` / `qwen2.5:report-lora`（2026-09-08 反模板重训版，各 4.7GB）；triage = `qwen2.5:7b`（0.5b 实测准确率仅 48.8% 已弃用，eval_triage 41/43、危机 8/8）；embedding = bge-m3；语音 = faster-whisper + sherpa-onnx。
+> - **危机/寒暄均为零 LLM 硬编码前置**：detect_crisis 危机词表 → detect_greeting 寒暄正则，命中即直接产出回复，不调 LLM；安全红线不依赖模型与 RAG。
+> - **RAG 检索**：阈值按嵌入模型自适应（云端 text-embedding-v3=0.75 / 本地 bge-m3=0.95），向量 L2 主排序 + BM25 补充召回；每次 search 落检索埋点 `logs/rag_search_YYYYMMDD.jsonl`（不记用户标识，周度聚类脚本待开发）。
+> - **知识库**：32 文件 / 327 片（19 内部编写科普 txt + 13 具名权威来源 md），改动后必须 `POST /api/rag/build` 重建索引并跑 eval_rag（recall@3 下降即阻断）。
+>
+> **2026-09-11 入库批次**：18.1 RAG 扩充批次（9 科普 txt + 4 权威 md + eval_rag 护栏 + 3 检索 bug 修复 + intervention 重试回退修复）+ 检索埋点（service.py `_write_search_trace` + 3 单测）+ 文档/注释同步 + 演示名单 + 仓库清理，已全部提交（详见 §7 对应批次）。
 
 ---
 
@@ -24,13 +25,13 @@ copy .env.example .env
 docker compose up -d --build
 
 # 3. 等后端起来后，重建 Chroma 向量索引（重要！compose up 会清 chroma 数据）
+#    知识库新增文件后同样跑此步（或 POST /api/rag/build，见 §3 命令表）
 docker exec psycheflow-backend uv run python -c "import asyncio; from app.rag.service import rag_service; print(asyncio.run(rag_service.build_index()))"
-# 期望：{'indexed': 201, 'collection_size': 201}
+# 期望：{'indexed': 327, 'collection_size': 327}（32 个知识库文件）
 
 # 4. 跑测试（验证全绿）
 docker exec psycheflow-backend uv run pytest -q --no-header
-# 期望：202 passed, 1 skipped, 0 failed
-# （df68bd0 时基线为 199 passed；5fd9f6e 新增 3 个批次端点测试。若实测数不一致属正常，以实测为准并回写本文档）
+# 期望：333 passed, 1 skipped, 0 failed（2026-09-10 基线；若实测数不一致属正常，以实测为准并回写本文档）
 
 # 5. 浏览器打开
 # 前端：http://localhost:5174/（三态门户：未登录选学生端/教师端，已登录显示身份条一键进工作台/切端确认）
@@ -118,8 +119,10 @@ OLLAMA_MODEL=qwen2.5:7b
 | 启动/重启 | `docker compose up -d --build` | **重建 chroma 容器会清空向量索引**，之后必须 build_index() |
 | 重启单服务 | `docker restart psycheflow-backend` | 仅重启进程，**不会重新读 .env**。改 .env 必须用 `docker compose up -d backend` |
 | 看后端日志 | `docker logs psycheflow-backend --tail 50` | 或加 `--since 10m` 看最近 10 分钟 |
-| 跑 pytest | `docker exec psycheflow-backend uv run pytest -q --no-header` | 202 passed + 1 skipped（5fd9f6e 基线，以实测为准） |
-| 重建 RAG 索引 | `docker exec psycheflow-backend uv run python -c "import asyncio; from app.rag.service import rag_service; print(asyncio.run(rag_service.build_index()))"` | chroma 被重建后必跑 |
+| 跑 pytest | `docker exec psycheflow-backend uv run pytest -q --no-header` | 333 passed + 1 skipped（2026-09-10 基线，以实测为准） |
+| 重建 RAG 索引 | `docker exec psycheflow-backend uv run python -c "import asyncio; from app.rag.service import rag_service; print(asyncio.run(rag_service.build_index()))"` | chroma 被重建后必跑；知识库新增/改动文件后也必跑 |
+| HTTP 重建索引 | `curl.exe -s -X POST http://localhost:8000/api/rag/build` | PowerShell 下必须用 `curl.exe`（裸 `curl` 是 Invoke-WebRequest 别名）；返回 indexed 片数 |
+| **RAG 检索护栏评测** | `docker exec psycheflow-backend uv run python scripts/eval_rag.py` | 65 条 query→期望文件：recall@3 应 100%、32/32 文件覆盖；结果写 `scripts/eval/results/rag_eval_latest.json` |
 | 跑验证脚本 | `docker exec psycheflow-backend uv run python scripts/verify_leftovers.py` | has_assessment + triage 抽样 |
 | 跑性能压测 | `docker exec psycheflow-backend uv run python scripts/perf_bench.py` | 50 并发 health + 10 并发 chat（脚本位于 `backend/scripts/`，容器内 `/app/scripts/`） |
 | **SSE 首 token 实测** | `docker exec psycheflow-backend uv run python scripts/sse_first_token.py` | NFR-5 验证：首 token 应 < 2s（寒暄路径 < 0.5s，对话路径 ~1.2s） |
@@ -217,8 +220,8 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 |---|---|---|---|---|---|
 | intake | `qwen3.8-2.4t-a95b` | 结构化提取/计分辅助（有思考链） | 0.1 | 2048 | ✅ |
 | triage | `qwen3.8-27b` | triage 意图分类（**关思考链，首 token 0.38s**） | 0.1 | 50 | ✅ |
-| dialog | `deepseek-v4-pro-0813` | intervention 非流式共情对话（有思考链） | 0.35 | 3000 | ✅ |
-| dialog_stream | `qwen3.8-max` | intervention **SSE 流式**共情对话（关思考链，首 token 0.58s） | 0.35 | 3000 | ✅ |
+| dialog | `deepseek-v4-pro-0813` | intervention 非流式共情对话（有思考链） | 0.6 | 3000 | ✅ |
+| dialog_stream | `qwen3.8-max` | intervention **SSE 流式**共情对话（关思考链，首 token 0.58s） | 0.6 | 3000 | ✅ |
 | report | `deepseek-v4-flash-0731` | 报告生成（有思考链） | 0.1 | 4000 | ✅ |
 | embed | `text-embedding-v3` | Chroma RAG 向量化 | — | — | ✅ |
 | asr | `qwen-audio-3.0-asr-flash` | 语音识别（DashScope HTTP） | — | — | ✅ |
@@ -244,18 +247,22 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 | [api/sessions.py](backend/app/api/sessions.py) | 会话与报告端点：GET /api/sessions 列表（只含有测评记录的 session）/ POST assessments / PDF 生成（inline）与下载（attachment） |
 | [agents/graph.py](backend/app/agents/graph.py) | StateGraph 四节点拓扑 |
 | [agents/state.py](backend/app/agents/state.py) | AgentState TypedDict |
-| [agents/nodes/triage.py](backend/app/agents/nodes/triage.py) | 分诊（detect_crisis 前置 + LLM） |
+| [agents/nodes/triage.py](backend/app/agents/nodes/triage.py) | 分诊（detect_crisis 危机词表 → detect_greeting 寒暄正则，双零 LLM 前置 + LLM 意图分类 + 方法问句纠偏） |
 | [agents/nodes/assessment.py](backend/app/agents/nodes/assessment.py) | 测评（纯 DB 查询 has_assessment） |
-| [agents/nodes/intervention.py](backend/app/agents/nodes/intervention.py) | 干预（RAG + LLM，空回复 fallback） |
+| [agents/nodes/intervention.py](backend/app/agents/nodes/intervention.py) | 干预（RAG + LLM，空回复 fallback，质检不合格最多重试 1 次且重试重新质检） |
+| [agents/nodes/case.py](backend/app/agents/nodes/case.py) | 案例上传分析（api/chat.py 直接调用，不走 LangGraph；RAG 检索 caller="case"） |
 | [agents/nodes/escalation.py](backend/app/agents/nodes/escalation.py) | 升级（零 LLM + crisis_message + audit） |
 | [agents/personas.py](backend/app/agents/personas.py) | D2：4 人格定义（default/sister/senior/listener） |
 | [agents/prompts.py](backend/app/agents/prompts.py) | 角色 prompt 模板 |
-| [core/llm.py](backend/app/core/llm.py) | 百炼 LLM Provider（按 role 路由） |
-| [core/voice.py](backend/app/core/voice.py) | D3：ASR/TTS 实现（DashScope HTTP） |
+| [core/llm.py](backend/app/core/llm.py) | LLM Provider（cloud 百炼 / local Ollama 双模式，按 role 路由） |
+| [core/voice.py](backend/app/core/voice.py) | ASR/TTS 云端实现（DashScope HTTP，按 voice_mode 路由） |
+| [core/voice_local.py](backend/app/core/voice_local.py) | D5：本地语音（faster-whisper ASR + sherpa-onnx TTS，VOICE_MODE=local 全离线） |
 | [core/config.py](backend/app/core/config.py) | 配置（读 .env） |
-| [core/safety.py](backend/app/core/safety.py) | detect_crisis_with_words / crisis_message |
-| [core/audit.py](backend/app/core/audit.py) | write_crisis_audit / write_report_audit |
-| [rag/service.py](backend/app/rag/service.py) | RAG build_index / search |
+| [core/safety.py](backend/app/core/safety.py) | detect_crisis_with_words / crisis_message / CRISIS_KEYWORDS（危机判定单一事实源） |
+| [core/audit.py](backend/app/core/audit.py) | write_crisis_audit / write_report_audit（文件 + DB 双写） |
+| [rag/service.py](backend/app/rag/service.py) | RAG build_index / search（自适应阈值 + 向量主排序/BM25 补召回 + 检索埋点） |
+| [rag/store.py](backend/app/rag/store.py) | Chroma 向量库封装（reset_namespace 等） |
+| [api/rag.py](backend/app/api/rag.py) | RAG 调试端点（POST /api/rag/build 重建索引等） |
 | [reports/service.py](backend/app/reports/service.py) | 单页报告生成（MHT 六章节风格 + 全量表子维度计算 `_compute_subdims` + 雷达图数据 + 测评用时 + LLM 发展建议空回复兜底） |
 | [reports/templates/report.html](backend/app/reports/templates/report.html) | MHT 报告 HTML 模板 |
 | [scales/](backend/app/scales/) | 量表库：PHQ-A / SCARED / SDQ / MHT |
@@ -297,8 +304,10 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 | [scripts/backup_db.py](backend/scripts/backup_db.py) | **运维**：SQLite 一致性备份 + AES-256-CBC 加密（需 BACKUP_PASSPHRASE） |
 | [scripts/export_report_finetune_data.py](backend/scripts/export_report_finetune_data.py) | **本地版 3.B 预备**：从历史测评/报告反向构造微调 JSONL（LLaMA-Factory 格式），默认输出 `data/finetune/finetune_report.jsonl`（未跟踪文件，配合 [docs/本地模型化方案.md](docs/本地模型化方案.md) 使用） |
 | [scripts/e2e_acceptance.py](backend/scripts/e2e_acceptance.py) | **验收**：端到端 7 步验收（健康→登录→对话→危机→报告→审计），7/7 PASS |
+| [scripts/dialog_smoke.py](backend/scripts/dialog_smoke.py) | **对话质量回归**：复用生产 build_intervention_messages（含 RAG + 逐轮 history），场景化 4 轮（独立咨询/倾诉转咨询），自动检查闭合问句与空历史幻觉归因；`DIALOG_SMOKE_TEMP` 可调温 |
 | [scripts/eval_triage.py](backend/scripts/eval_triage.py) + [scripts/eval/triage_dataset.json](backend/scripts/eval/triage_dataset.json) | **P2 评测**：triage 意图分诊评测（43 条标注样本，总体 97.7%，危机硬编码 8/8=100% 安全回归）；容器内 `uv run python scripts/eval_triage.py [--limit N] [--verbose]` |
 | [scripts/eval_report.py](backend/scripts/eval_report.py) | **P2 评测**：报告结构合规评测（5 场景×15 断言：六章节/个人信息/测评用时/雷达图/PDF 完整性/危机红框双向/建议无危机话术，100%）；复用计分引擎+真实 LLM 叙事，合成数据自动清理；容器内 `uv run python scripts/eval_report.py [--only key]` |
+| [scripts/eval_rag.py](backend/scripts/eval_rag.py) + [scripts/eval/rag_eval_dataset.json](backend/scripts/eval/rag_eval_dataset.json) | **18.1 检索护栏**：65 条 query→期望文件（expect 可为数组，多可接受文件），跑 `rag_service.search(top_k=3)` 统计 hit@1/recall@3/MRR/文件覆盖；2026-09-09 基线 **recall@3=100%（65/65）、hit@1=76.9%、MRR=0.874、32/32 文件覆盖**；知识库每次扩充后必跑，recall@3 下降即阻断 |
 | [scripts/eval/results/](backend/scripts/eval/results/) | 评测基线快照（`*_eval_latest.json` 入库，带时间戳明细 gitignore） |
 
 ### 部署文件
@@ -358,10 +367,10 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 ### SSE 流式 + 首 token 优化 ✅（commit 70d2917 → fe1a595 → 本地极致优化）
 - **SSE 骨架**（commit 70d2917）：POST /api/chat/stream（保留旧 /api/chat 向后兼容）。手动跑 triage→assessment 同步等结果，再 provider.stream() 边生成边推 token；危机路径不流式推完整 crisis_message 后 close；审计双写不破坏。SSE 事件：agent/sources/token/crisis/error/done。前端 streamChat（fetch+ReadableStream 解析 SSE，不用 EventSource 因不支持 POST+auth）+ ChatPage 边收 token 边显示
 - **首 token 优化**（commit fe1a595，NFR-5 达标）：首 token **18.08s → 1.72s**
-- **本地极致优化**（2026-09-06）：
-  - **寒暄闪电直达**：在 `triage_node` 中识别“寒暄”意图，利用 `qwen2.5:0.5b` 极速分诊模型实现毫秒级响应，直接返回 `final_reply` 结束 graph。
-  - **RAG 精度提升**：收紧检索阈值至 0.70，并引入关键词加权（减小 L2 距离 0.05），解决“知识参考”不相关问题。
-  - **UI 精简**：彻底移除前端 `StageStepper` 流程条，界面回归纯净对话体验。
+- **本地极致优化**（2026-09-06 起）：
+  - **寒暄闪电直达**：`detect_greeting` 白名单正则在 LLM 分类前硬编码识别纯寒暄短句（你好/你是谁/你是机器人吗等，混有其他内容不命中，>30 字排除），零 LLM 直接产出 `final_reply` 结束 graph；LLM 分类出的寒暄走同一快速通道。
+  - **UI 精简**：彻底移除前端 `StageStepper` 流程条，界面回归纯净对话（仅保留每条消息的 AgentBadge 标识）。
+  - **RAG 检索演进**：0.70 固定阈值 + 关键词加权方案已废弃，最终为阈值按嵌入模型自适应（云端 0.75/本地 bge-m3 0.95）+ 向量 L2 主排序 + BM25 补充召回，详见 §7「18.1 RAG 知识库扩充」批次。
   - 瓶颈定位：triage（intake=qwen3.8）+ intervention（dialog=deepseek-v4-pro）两节点都有 reasoning_content 思考链，stream 模式下先输出思考链 5-15s 再输出 content
   - 误判排查：qwen3.8 不支持 `enable_thinking=False`（百炼报 400 restricted to True）；以为关思考后 4.80s 达标，实际是 stream() 抛 BadRequestError 被 stream_intervention 捕获走 FALLBACK_REPLY 的假象
   - 解决：triage + dialog_stream 两个角色都换 **qwen-plus**（无思考链，首 content ~0.5s）。新增 `model_triage`/`temp_triage` 配置项 + role="triage" 映射。triage max_tokens 500→50。llm.py stream() 移除 extra_body
@@ -478,8 +487,8 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 - **训练数据**：
   - dialog：清华 **DeepWell-Adol**（EMNLP 2025 青少年积极心理对话数据集，云上自动 clone + [convert_deepwell.py](backend/scripts/finetune/convert_deepwell.py) 转 sharegpt 格式）
   - report：**52 条蒸馏数据**（云端 deepseek 对项目历史测评数据生成发展建议，`data/finetune/finetune_report.jsonl`，建议 474–1089 字，结构完整）
-- **训练配置**：QLoRA（bitsandbytes 4bit 基座 + LoRA rank16/alpha32/target all，cutoff 2048，3 epochs，effective batch 16；dialog lr 1e-4 / report lr 5e-5），AutoDL **RTX 4090 24GB**，两个 adapter 各 155MB
-- **导出链**：合并 LoRA → f16 GGUF（convert_hf_to_gguf）→ **llama-quantize 量化 Q4_K_M**（注意：convert 脚本不支持直接出 q4_k_m）→ 产物 `qwen2.5-dialog-lora-q4_k_m.gguf` + `qwen2.5-report-lora-q4_k_m.gguf`（各 **4.36GB**）已下载至 `E:\OllamaModels\gguf\`
+- **训练配置**：QLoRA（bitsandbytes 4bit 基座 + LoRA target all，cutoff 2048，effective batch 16，bf16，cosine），AutoDL **RTX 4090 24GB**。首训 rank16/alpha32、dialog lr 1e-4/3ep；**2026-09-08 反模板重训**（解决 LoRA 模板腔/闭合问句，详见 [docs/训练记录-2026-09-08.md](docs/训练记录-2026-09-08.md)）：dialog 语料扩至 **1386 条**（DeepWell 清洗 600 + 云端合成 500 + 改写 280，均注入 318 字 system prompt），rank 16→**32**、alpha 32→**64**、lr 1e-4→**5e-5**、epochs 3→**5**（train_loss 1.3355）；report 52 条 3ep（train_loss 2.2855）
+- **导出链**：合并 LoRA → f16 GGUF（convert_hf_to_gguf）→ **llama-quantize 量化 Q4_K_M**（token_embd/output 用 q6_K 保精度；convert 脚本不支持直接出 q4_k_m）→ 重训产物 `qwen2.5-dialog-lora-q4_k_m.gguf` + `qwen2.5-report-lora-q4_k_m.gguf`（各 **4.7GB**）经 [import_gguf.ps1](backend/scripts/finetune/import_gguf.ps1) 导入整机共享 Ollama 并覆盖旧 tag（`ollama list` 可见）
 - **一键脚本**：[backend/scripts/finetune/cloud_train.sh](backend/scripts/finetune/cloud_train.sh)（AutoDL 数据盘 /root/autodl-tmp/ft，断点自愈：已训 adapter/已合并目录/已产出 GGUF 均自动跳过；内含全链路导入探针）+ [import_gguf.ps1](backend/scripts/finetune/import_gguf.ps1)（本地注册进 Ollama）
 - **云上环境踩坑记录**（AutoDL 复现训练时的教训，脚本均已修复自愈）：
   1. 学术加速 `network_turbo` 开启会劫持 pip 流量导致找不到包 → 脚本改为**先装依赖后开代理**
@@ -499,6 +508,33 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 - **新增知识卡**：`data/knowledge/05_睡眠卫生.txt`（固定作息/床只睡觉/屏幕蓝光/担忧记下法/运动与咖啡因/腹式呼吸/就医提示 8 段），`POST /api/rag/build` 重建后 126 片，冒烟第 3 轮 RAG 命中
 - **验证**：容器内 290 passed / 1 skipped 全绿；新增 [dialog_smoke.py](backend/scripts/dialog_smoke.py) 多轮冒烟工具（复用生产 prompt 拼装含 RAG + 逐轮累积 history，`DIALOG_SMOKE_TEMP` 可调温）三轮实测零复读零闭合问句
 - **已知边界**：本地 dialog-lora（7B Q4）对 prompt 结构规则的遵循是随机的，「落具体做法」时有时无——模板腔根因是 3.B 微调语料风格，纯 prompt 已到天花板；云端模式（指令遵循更强）直接受益。根治方向见 §8 第 8 条
+
+### 18.1 RAG 知识库扩充 + 检索护栏批次 ✅（2026-09-09 实施，2026-09-11 入库；路线图第二批）
+
+按 [docs/数据与模型详解.md](docs/数据与模型详解.md) 第十八章 18.1 方案执行，知识库 19→**32 文件**、索引 201→**327 片**：
+
+- **9 个缺口主题科普 txt**（`data/knowledge/11_网络与游戏成瘾.txt` ~ `19_时间管理.txt`，内部编写科普层，格式同 07_抑郁自助：800–1500 字 + `来源：`/`适用场景：` 元数据行 + 受控词表标签）：网瘾、非自杀性自伤（NSSI，含危机求助段落但标签不含「危机」保证日常自助可检索）、创伤/PTSD 调适（grounding 5-4-3-2-1、4 吸 6 呼）、ADHD/注意力、进食障碍、哀伤辅导、青春期情感、考试焦虑（暴露练习/主动回忆/考场技术）、时间管理（番茄钟/四象限/两分钟法则）
+- **4 个具名权威来源 md 摘要层**（格式 `## 来源《...》（公开摘要）` + `适用场景：`）：[cbti_manual.md](data/knowledge/cbti_manual.md)（AASM/Edinger-Carney CBT-I：睡眠限制+刺激控制+认知重构）、[nvc_parent_scripts.md](data/knowledge/nvc_parent_scripts.md)（Gordon P.E.T. 积极倾听/我信息/第三法 + Rosenberg NVC 四步）、[school_crisis_referral.md](data/knowledge/school_crisis_referral.md)（校园四级转介链 + QPR 三步法 + 12355 + 保密例外）、[mood_disorder_guidelines.md](data/knowledge/mood_disorder_guidelines.md)（抑郁防治指南二版 + 精神障碍诊疗规范 2020：ICD-11 分级、惊恐/广泛焦虑/社交焦虑/强迫，强迫条目补口语化表现）
+- **既有文件补强**：[dbt_skills.md](data/knowledge/dbt_skills.md) 标签「危机」→「焦虑」（DBT 是通用情绪调节库，危机标签导致"发火怎么办"类日常 query 被危机过滤误杀）+ TIPP 章节补愤怒场景口语段；[cbt_techniques.md](data/knowledge/cbt_techniques.md) 认知重构工作表示例后补"被老师当众批评反刍"场景段
+- **检索层 3 个真实 bug 修复**（[rag/service.py](backend/app/rag/service.py)）：① **阈值按嵌入模型自适应**——bge-m3 向量已归一化（范数 1.0），相关片段 L2 实测 0.77–0.91、无关 ≥1.10，云端校准的 0.75 阈值对本地模型过严导致几乎全过滤；新增 `VEC_THRESHOLD_CLOUD=0.75`/`VEC_THRESHOLD_LOCAL=0.95`/`BM25_VIRTUAL_GAP=0.03` 常量 + `_default_threshold()`（`getattr(self.llm,"is_local",False)` 判本地，兼容 mock），`search(threshold=None)` 默认走自适应；② **BM25 补充召回 tags 透传**——`_init_bm25()` 的 corpus_docs 每项补 tags、BM25 独有命中 candidate 用 `doc.get("tags")`，修复非危机 query 经 BM25 路径漏入「危机」片段（新增单测 `test_bm25_unique_hit_carries_tags_for_crisis_filter`）；③ BM25 虚拟距离改为相对值 `threshold−0.03`，删除 BM25 独有命中的关键词加权（-0.05 会使其反超真实向量命中）；危机 query 判定改用 `app.core.safety.CRISIS_KEYWORDS`（单一事实源，替代节点内硬编码 7 词子集）
+- **检索评测护栏**（[eval_rag.py](backend/scripts/eval_rag.py) + [rag_eval_dataset.json](backend/scripts/eval/rag_eval_dataset.json)）：65 条 query→expect 文件（expect 可为数组，覆盖全部 32 文件），跑生产 `rag_service.search(top_k=3)` 统计 hit@1/recall@3/MRR/文件覆盖，结果写 `scripts/eval/results/rag_eval_<ts>.json` + `rag_eval_latest.json`。基线：**recall@3=100%（65/65）、hit@1=76.9%、MRR=0.874、32/32 文件覆盖**（唯一边界样本"惊恐发作"top3 为创伤呼吸着陆/DBT TIPP/放松技术——均为惊恐现场有效缓解，expect 已放宽为多可接受文件）
+- **intervention 质检重试回退 bug 修复**（[intervention.py](backend/app/agents/nodes/intervention.py)，流式 `stream_intervention` 与非流式 `intervention_node` 同源）：原逻辑重试回复无条件覆盖 `reply`/tokens——重试 LLM 异常或重试回复仍不合格时首次回复丢失（与日志 "keep first reply"、docstring"重试 1 次"及测试契约矛盾，该 3 个测试在改动前基线上即失败）。修复为：保存首次回复，质检不合格时附 RETRY_HINT 降温 0.35 **重试 1 次**，重试回复**重新质检**——合格才采用，异常/空/仍不合格一律保留首次；`decision["llm"]["quality_retry"]` 置 `True`（原为 attempt+1 整数）。[dialog_smoke.py](backend/scripts/dialog_smoke.py) 内同口径副本同步修正（原为 range(2) 无条件覆盖）。测试 fixture 一处"哪部分吗？"改为"哪部分？"（"吗？"收尾被闭合问句护栏正确拦截，开放式问法不应带"吗"）
+- **验证**：全量 pytest **333 passed / 1 skipped**（含 RAG 检索+埋点 + intervention_quality 重试全绿）；eval_rag recall@3 **65/65**；dialog_smoke 两轮 5 场景全绿（RAG 每轮 3 片、零闭合问句、方法具体：4-6 呼吸/担忧书写）；`POST /api/rag/build` 重建索引 327 片。**安全不依赖 RAG**：危机检测仍为硬编码前置层，RAG 片段仅作干预参考
+
+### RAG 检索埋点 ✅（2026-09-10，18.1.7 第 1 项，零命中/弱命中聚类制度化）
+
+- [rag/service.py](backend/app/rag/service.py) `_write_search_trace()`：每次 search best-effort 追加一行 JSON 到 `logs/rag_search_YYYYMMDD.jsonl`（UTC 日轮转，失败仅 warning 绝不阻断检索）；`search()` 新增 `intent`/`caller` 两个 kwargs，调用方已透传：intervention.py（真实对话）、case.py（案例上传，`intent="案例"`）、api/rag.py（调试端点 `caller="api"`）、eval_rag.py（`caller="eval"`，聚类时排除）
+- schema 固定 17 字段：ts/caller/intent/is_crisis/threshold/embed_mode/vec_hits/bm25_unique/top1_distance（被过滤也记）/top1_passed/result_count/drop_threshold/drop_crisis_tag/drop_dedup/results(source+tags+distance)/query（截 200 字）；**禁止记 session/账号/IP/token**（TestSearchTrace 三测守护：schema/隐私字段/零命中/写失败不阻断）
+- 待办：周度聚类脚本 `scripts/analyze_rag_gaps.py`（同主题簇单周 ≥5 次弱命中立项扩库，只统计 caller∈{intervention,case}）；详见 [docs/数据与模型详解.md](docs/数据与模型详解.md) 18.1.7
+
+### 文档同步与批次收尾 ✅（2026-09-11 入库）
+
+- **triage 决策 trace 去硬编码**：[triage.py](backend/app/agents/nodes/triage.py) LLM 分类寒暄快速通道的 `decisions["triage"]["model"]` 原硬编码 `"qwen2.5:0.5b"`（已弃用模型），改为 `provider.model_for("triage")` 动态取当前路由模型，trace 与实际调用一致
+- **教师批量筛查演示名单**：[data/demo/screening_roster_demo.csv](data/demo/screening_roster_demo.csv) 30 名学生（初二 2 班，学号唯一，UTF-8 BOM 兼容 Excel 直接打开），供教师后台 CSV 建批次导入测试；已用生产 `_parse_roster` 验证解析通过
+- **核心文档入库**：[docs/数据与模型详解.md](docs/数据与模型详解.md)（RAG 知识库/检索策略/模型微调/第十八章优化路线图全档，本文档 §7/§8 多处引用）、[docs/答辩全准备手册.md](docs/答辩全准备手册.md)、[docs/答辩速查手册.md](docs/答辩速查手册.md) 首次纳入版本库；README 相关文档区补「数据与模型详解」「本地模型化方案」链接
+- **配置模板/注释同步**：[.env.example](.env.example) 增 `VOICE_MODE` 独立开关块、`LOCAL_MODEL_TRIAGE` 补 0.5b 弃用说明（48.8% → 7b 基座 41/43）；[config.py](backend/app/core/config.py) / [llm.py](backend/app/core/llm.py) 头部 D5 前「语音仍需云端」旧注释更正为云/本地双模式现状
+- **仓库清理**：删除根目录旧账号临时草稿 `问题,txt`（其中试点反馈——学生端菜单泄漏/对话返回文件引用/量表标题重复/一量表一报告等——均已在历史批次修复）；[eval/results/.gitignore](backend/scripts/eval/results/.gitignore) 补 `rag_eval_2*.json`，带时间戳明细不入库、只保留 `rag_eval_latest.json`（与 triage/report 口径一致）
+- **验证**：全量 pytest 333 passed / 1 skipped；eval_rag recall@3=100%（65/65）
 
 ---
 
@@ -544,7 +580,13 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
    - **prod compose 复检** ✅：[docker-compose.prod.yml](docker-compose.prod.yml) backend `user:1000:1000`+4 worker+curl healthcheck（Dockerfile 已装 curl）+restart always；frontend nginx TLS(443)+HSTS+CSP+wget healthcheck。Ollama 不在 prod compose（整机共享独立容器，`.env` 配 `host.docker.internal`）。
    - **部署文档** [DEPLOY.md](DEPLOY.md)：新机器拉起全步骤（前置/`.env`必填项/开发模式/生产模式/TLS 证书/Ollama 可选/部署后验收/日常运维/常见问题）。
    - **`.env.example` Ollama 注释更新**：移除已删的 compose ollama 服务说明，改为整机共享独立容器启动命令 + Open WebUI。
-8. **对话 LoRA 反模板重训（未来项，未动手）**：dialog-lora 微调语料的共情模板（共情句 + 固定问句收尾）惯性会压过 prompt 指令——2026-09-08 实测强化 prompt 后「禁闭合问句/禁复读上轮」仍被部分无视（0.6 温度下缓解）。根治：训练集加入多样化回复样本（开放式问句/具体技巧融入/不同句式骨架）云 GPU 重训；过渡方案已落地（prompt 骨架规则 + 0.6 温度 + 睡眠卫生知识卡），用 `dialog_smoke.py` 可回归验证
+8. **对话 LoRA 反模板重训 + 统一模型 + RAG 扩充（未来项，方案已定版未动手）**：dialog-lora 微调语料的共情模板（共情句 + 固定问句收尾）惯性会压过 prompt 指令——2026-09-08 实测强化 prompt 后「禁闭合问句/禁复读上轮」仍被部分无视（0.6 温度下缓解）。**完整路线图见 [docs/数据与模型详解.md](docs/数据与模型详解.md) 第十八章「后续优化路线图（2026-09-09 答辩研讨定版）」**，五批执行顺序：
+   - 第一批 quick win（不依赖训练）：bge-m3 挪 CPU（建 `bge-m3-cpu` tag，`num_gpu 0`，索引不用重建）+ `OLLAMA_KEEP_ALIVE=-1` 单模型常驻，消除大部分冷切换；~~顺手更正 config.py / llm.py 头部「语音仍需云端」的 D5 前旧注释~~ ✅（2026-09-10 已更正：llm.py/config.py/.env.example 注释同步 VOICE_MODE 现状，0.5b 分诊弃用说明已补）；
+   - ~~第二批 RAG 扩充~~ ✅（2026-09-09 完成，详见 §7「18.1 RAG 知识库扩充 + 检索护栏批次」）：知识库 19→32 文件 / 201→327 片（9 缺口主题科普 + 4 权威来源摘要：CBT-I/NVC 亲子/校园危机转介/心境障碍指南）；65 条检索评测集护栏 recall@3=100%、32/32 文件覆盖；顺带修复阈值本地自适应（bge-m3 0.95）、BM25 tags 透传、intervention 重试回退 3 个真实 bug。**后续扩充仍按此流水线**：新文件入库 → `POST /api/rag/build` → 跑 eval_rag.py，recall@3 下降即阻断；
+   - 第三批 数据备料：dialog 1386→4000–6000（强 teacher + Best-of-4 + LLM 判官，评分标准与 dialog_smoke 同源）、report 52→200–300（量表×严重度矩阵全覆盖 + eval_report 断言过滤）、triage 0→800–1000（43 条人工集只做 test；硬负例与 detect_greeting/detect_method_question 规则对齐）；merge_datasets.py 改支持三套 system prompt；
+   - 第四批 云端重训（训练成本不计的效果上限方案）：基座升级 **Qwen3-8B-Instruct**（保底 Qwen2.5-7B Q6_K），**全参 SFT（A100 80GB，lr 1e-5/3epoch）+ DPO（~2000 对，lr 5e-6；rejected 池=280 条模板腔改写数据）**，导出 **Q5_K_M GGUF（~5.9GB）**；Qwen3 必须训练/Ollama 双侧全程关思考链（/no_think）；
+   - 第五批 本地部署验收：单模型统一路由（LOCAL_MODEL_DIALOG/REPORT/TRIAGE 留空回退）+ `OLLAMA_KV_CACHE_TYPE=q8_0`（KV 1.2→0.6GB）+ ASR 固定 CPU int8 让显存，总计 ~7GB 常驻零切换；验收闸门 eval_triage ≥41/43（危机 8/8）、eval_report 76/76、dialog_smoke 全过、无 `<think>` 残留、ollama ps 单模型 ~7GB、30 场景云本地盲评 ≥90%。
+   - 过渡方案（已落地）：prompt 骨架规则 + 0.6 温度 + 睡眠卫生知识卡，用 `dialog_smoke.py` 回归验证
 
 ---
 
@@ -601,13 +643,14 @@ dd853fb B 二期：LangGraph 四智能体编排 + RAG .md 修复 + ChatPage 阶�
 新账号完成 clone + .env + compose up 后，**逐项验证**：
 
 - [ ] `docker ps` 显示 3 容器 Up（psycheflow-backend / psycheflow-frontend / psycheflow-chroma）
-- [ ] 重建 RAG 索引：`docker exec psycheflow-backend uv run python -c "import asyncio; from app.rag.service import rag_service; print(asyncio.run(rag_service.build_index()))"` 输出 `{'indexed': 183, ...}`
-- [ ] 跑测试：`docker exec psycheflow-backend uv run pytest -q --no-header` → 202 passed / 1 skipped / 0 failed（5fd9f6e 基线；若实测不同以实测为准并回写文档）
+- [ ] 重建 RAG 索引：`docker exec psycheflow-backend uv run python -c "import asyncio; from app.rag.service import rag_service; print(asyncio.run(rag_service.build_index()))"` 输出 `{'indexed': 327, ...}`（32 个知识库文件；或 `curl.exe -s -X POST http://localhost:8000/api/rag/build`）
+- [ ] 跑测试：`docker exec psycheflow-backend uv run pytest -q --no-header` → 333 passed / 1 skipped / 0 failed（2026-09-10 基线；若实测不同以实测为准并回写文档）
+- [ ] **RAG 检索护栏**：`docker exec psycheflow-backend uv run python scripts/eval_rag.py` → recall@3 100%（65/65）、文件覆盖 32/32（知识库每次扩充后必跑）
 - [ ] 遗留项验证：`docker exec psycheflow-backend uv run python scripts/verify_leftovers.py` → has_assessment PASS + triage 9/9
 - [ ] **SSE 首 token 验证（NFR-5）**：`docker exec psycheflow-backend uv run python scripts/sse_first_token.py` → 首 token < 2s（实测 1.75s，triage=qwen3.8-27b/dialog_stream=qwen3.8-max 关思考链），事件序列 agent(triage)→agent(assessment)→agent(intervention)→sources→token×N→done
 - [ ] **SSE 危机验证**：`docker exec psycheflow-backend uv run python scripts/sse_first_token.py --message "我想自杀"` → 首 token N/A（危机不流式），crisis 事件含 12355
 - [x] **D5 本地语音验证**：`docker exec psycheflow-backend uv run python test_voice_local.py` → ASR/TTS 均加载成功，无 `ImportError`（2026-09-06 通过）；E2E 往返：`docker exec psycheflow-backend uv run python scripts/voice_e2e.py` → TTS 合成（含 12355）→ ASR 转写关键词命中 PASS（2026-09-07 通过）
-- [ ] 浏览器访问 http://localhost:5174/chat → 看到 StageStepper「1 分诊 2 测评 3 干预 4 升级」
+- [ ] 浏览器访问 http://localhost:5174/chat → 纯净对话界面（无流程条；每条消息带 AgentBadge 标识分诊/干预等阶段，危机时红色 CrisisBanner）
 - [ ] 输入「我最近压力大」→ 回复是共情内容（呼吸/放松建议），**不是**含 12355 的危机话术；**文字应逐字出现**（SSE 流式），非一次性出现
 - [ ] 输入「我想自杀」→ CrisisBanner 出现 + 回复含 12355 + sources 为空 + current_agent=escalation
 - [ ] 输入「重度抑郁症状」→ sources 里有 `ccmd3_summary.md`

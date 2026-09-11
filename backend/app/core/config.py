@@ -57,14 +57,15 @@ class Settings(BaseSettings):
     ollama_model: str = "qwen2.5:7b"
 
     # LLM 运行模式（双版本切换，见 docs/本地模型化方案.md）：
-    #   cloud = 阿里云百炼云端（默认，按量付费）
-    #   local = Ollama 完全本地（对话/分诊/报告/embedding 全走本地，数据不出本机，可离线；语音 ASR/TTS 仍需云端）
+    #   cloud = 阿里云百炼云端（默认，按量付费，效果稳定）
+    #   local = Ollama 完全本地（对话/分诊/报告/embedding 全走本地，数据不出本机，可离线；
+    #           语音 ASR/TTS 由独立 VOICE_MODE 控制，VOICE_MODE=local 时全离线）
     llm_mode: str = "cloud"
     # 本地模式（LLM_MODE=local）使用的 Ollama 模型
     local_model: str = "qwen2.5:7b"       # 默认基座（intake/triage 分诊用；RTX 4060 8GB 可跑 Q4 量化）
     local_embed_model: str = "bge-m3"     # RAG 向量化（Ollama /v1/embeddings 端点，1024 维）
     # 3.B 微调专用模型（留空 = 回退 local_model 基座）：dialog/report 可各自挂 LoRA 合并后的 GGUF
-    local_model_triage: str = ""          # 极速分诊模型（推荐 qwen2.5:0.5b）
+    local_model_triage: str = ""          # 分诊专用模型（留空回退基座；实测 qwen2.5:0.5b 准确率仅 48.8% 已弃用，用 7b 基座）
     local_model_dialog: str = ""          # 共情对话（intervention 节点 dialog/dialog_stream）
     local_model_report: str = ""          # 报告发展建议（report）
 

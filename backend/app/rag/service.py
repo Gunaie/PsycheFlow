@@ -4,7 +4,10 @@
 过短段落合并、超长段落按句子边界二次切分，保证每片"有头（章节）有尾（完整句）"。
 向量化用百炼 text-embedding-v3，存入 Chroma。
 """
+import datetime
 import glob
+import json
+import logging
 import os
 import re
 
@@ -12,9 +15,26 @@ import jieba
 from rank_bm25 import BM25Okapi
 
 from app.core.llm import provider
+from app.core.safety import CRISIS_KEYWORDS
 from app.rag.store import rag_store
 
+logger = logging.getLogger("psycheflow.rag")
+
 KNOWLEDGE_DIR = "/app/data/knowledge"
+
+# 检索埋点：query 文本最多保留 200 字（够主题聚类，控日志体积）
+TRACE_QUERY_MAX_CHARS = 200
+
+# 检索阈值按嵌入模型校准（L2 距离，向量均已归一化）：
+# - 云端 text-embedding-v3：相关片段实测 0.60–0.74，阈值 0.75
+# - 本地 bge-m3（Ollama）：相关片段实测 0.77–0.91、无关片段 ≥1.10
+#   （cos≈0.55 为 bge 系列常用检索下限），阈值 0.95；沿用 0.75 会把
+#   PTSD/ADHD 等新主题的语义命中整片过滤（2026-09-09 评测实测）
+VEC_THRESHOLD_CLOUD = 0.75
+VEC_THRESHOLD_LOCAL = 0.95
+# BM25 独有命中的虚拟距离：略低于阈值可过检，但弱于中等以上向量命中，
+# 保证"语义匹配优先、关键词仅补充"
+BM25_VIRTUAL_GAP = 0.03
 
 # 切片参数：句子级重切 + 章节前缀
 MAX_CHUNK_CHARS = 400   # 单片正文中段上限，超长按句子边界二次切分
@@ -129,6 +149,27 @@ def load_corpus(knowledge_dir: str = KNOWLEDGE_DIR) -> list:
     return docs
 
 
+def _write_search_trace(event: dict) -> None:
+    """检索埋点：best-effort 追加一行 JSON 到 logs/rag_search_YYYYMMDD.jsonl。
+
+    18.1.7 零命中/弱命中周度聚类的数据来源（同主题簇单周 ≥5 次弱命中即立项补文档）。
+    - 隐私纪律：只记 query 文本与检索指标，**不记 session/账号/IP 等任何用户标识**；
+    - caller 词表：intervention（真实对话）/ case（案例上传）/ api（调试端点）/
+      eval（评测脚本，周度聚类须排除）/ unknown（未透传，单测等）；
+    - 写入失败仅 warning，**绝不阻断检索主流程**。
+    """
+    try:
+        from app.core.config import settings
+
+        os.makedirs(settings.logs_dir, exist_ok=True)
+        day = datetime.datetime.now().strftime("%Y%m%d")
+        path = os.path.join(settings.logs_dir, f"rag_search_{day}.jsonl")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(event, ensure_ascii=False) + "\n")
+    except Exception as e:  # noqa: BLE001 - 埋点失败永不影响检索
+        logger.warning("rag-search trace 写入失败: %s", e)
+
+
 class RAGService:
     def __init__(self, store=None, llm=None, knowledge_dir=KNOWLEDGE_DIR):
         self.store = store or rag_store
@@ -160,7 +201,10 @@ class RAGService:
                 "id": ids[i],
                 "text": doc_text,
                 "source": meta.get("source", ""),
-                "chunk_id": meta.get("chunk_id", 0)
+                "chunk_id": meta.get("chunk_id", 0),
+                # tags 必须透传：BM25 独有命中也要参与「危机」标签过滤，
+                # 否则非危机查询会通过 BM25 补充召回漏入危机片段
+                "tags": meta.get("tags", []) or [],
             })
             # 使用 jieba 分词
             words = list(jieba.cut(doc_text))
@@ -188,22 +232,41 @@ class RAGService:
         self.bm25 = None
         return {"indexed": len(docs), "collection_size": self.store.count()}
 
-    async def search(self, query: str, top_k: int = 3, threshold: float = 0.75) -> list:
+    def _default_threshold(self) -> float:
+        """按嵌入模型返回 L2 距离阈值（is_local 须严格为 True，兼容测试 mock）。"""
+        return VEC_THRESHOLD_LOCAL if getattr(self.llm, "is_local", False) is True else VEC_THRESHOLD_CLOUD
+
+    async def search(
+        self,
+        query: str,
+        top_k: int = 3,
+        threshold: float | None = None,
+        intent: str = "",
+        caller: str = "unknown",
+    ) -> list:
         """混合检索：向量检索为主 + BM25 补充召回。
 
         排序策略：以向量 L2 距离为主排序信号，BM25 仅用于：
-        1）补充召回——向量未命中但 BM25 强关键词命中的片段（虚拟距离 0.55）；
+        1）补充召回——向量未命中但 BM25 强关键词命中的片段（虚拟距离 = 阈值-0.03，
+           不做关键词加权，保证永远弱于同尺度的向量真实命中）；
         2）小幅加权——同时出现在向量和 BM25 前列的片段，距离减 0.03（双重印证）。
 
         弃用 RRF 的原因：RRF 排名融合让 BM25 关键词命中权重过大，
         「焦虑怎么缓解」中仅含"缓解"关键词的科普片段会挤掉含具体做法、
         向量距离更近的片段。向量语义相似度比关键词命中更能反映相关性。
 
-        threshold: 相似度阈值（针对向量检索的 L2 距离）。
-        0.60 → 0.75 放宽：原 0.60 过严，把「04_放松技术.txt」（腹式呼吸 chunk 无
-        「焦虑」关键词，向量距离 0.71）过滤掉，导致求做法问题只召回 DBT 等间接
-        相关内容。放宽到 0.75 后放松/睡眠类直接做法能召回，由来源去重保证多样性。
+        threshold: 向量 L2 距离阈值；None 时按嵌入模型自适应
+        （云端 v3=0.75，本地 bge-m3=0.95——两模型距离尺度不同，实测见
+        VEC_THRESHOLD_LOCAL 注释）。
+        intent/caller: 检索埋点上下文（18.1.7）。intent 透传 triage 意图
+        （倾诉/咨询/危机/寒暄/求助/案例等）；caller 标识调用来源
+        （intervention/case/api/eval），周度弱命中聚类只统计真实流量。
+        每次检索无论命中与否都追加一行结构化 JSON 日志到
+        logs/rag_search_YYYYMMDD.jsonl（不记任何用户标识）。
         """
+        if threshold is None:
+            threshold = self._default_threshold()
+        bm25_virtual = threshold - BM25_VIRTUAL_GAP
         # 1. 向量检索
         q_emb = (await self.llm.embed([query]))[0]
         vec_results = self.store.query(q_emb, top_k=top_k * 3)  # 取多一点用于融合
@@ -257,45 +320,89 @@ class RAGService:
                 "distance": adjusted,
             })
 
-        # BM25 独有命中（向量未召回），虚拟距离 0.72
-        # 0.55→0.72：原 0.55 低于大部分真实向量命中（0.6-0.74），导致含常见词
-        # （如"低落""怎么办"）但不相关的 BM25 片段挤掉语义更相关的向量命中。
-        # 0.72 低于阈值 0.75 可过检，但弱于中等以上向量命中，让语义匹配优先。
+        # BM25 独有命中（向量未召回）：虚拟距离 = 阈值-0.03，可过检但弱于
+        # 中等以上向量命中，让语义匹配优先。不做关键词加权——加权会让它在
+        # bge-m3 尺度下（0.92-0.05=0.87）反超 0.86–0.90 的真实向量命中。
         for doc in bm25_unique:
-            text = doc["text"]
-            adjusted = 0.72
-            if any(kw in text for kw in keywords):
-                adjusted -= 0.05
             candidates.append({
                 "id": doc["id"],
-                "text": text,
+                "text": doc["text"],
                 "source": doc["source"],
                 "chunk_id": doc["chunk_id"],
                 "tags": doc.get("tags", []) or [],
-                "distance": adjusted,
+                "distance": bm25_virtual,
             })
 
         # 按调整后距离升序排序（越小越相关）
         candidates.sort(key=lambda x: x["distance"])
 
         # 4. 过滤 + 去重
-        _CRISIS_QUERY_WORDS = ("自杀", "自伤", "轻生", "不想活", "结束生命", "割腕", "跳楼")
-        query_is_crisis = any(w in query for w in _CRISIS_QUERY_WORDS)
+        # 危机 query 判定复用 safety.CRISIS_KEYWORDS 单一事实源
+        # （含自残/想死/了结自己/活不下去等，比硬编码子集更全）
+        query_is_crisis = any(w in query for w in CRISIS_KEYWORDS)
 
         seen_sources: set[str] = set()
         final_docs: list[dict] = []
+        # 埋点用过滤分支计数：区分零命中根因（距离超阈值 / 危机标签过滤 / 同源去重）
+        n_drop_threshold = 0
+        n_drop_crisis_tag = 0
+        n_drop_dedup = 0
         for c in candidates:
             if c["distance"] > threshold:
+                n_drop_threshold += 1
                 continue
             if not query_is_crisis and "危机" in c["tags"]:
+                n_drop_crisis_tag += 1
                 continue
             src = c["source"]
             if src in seen_sources:
+                n_drop_dedup += 1
                 continue
             seen_sources.add(src)
             final_docs.append(c)
             if len(final_docs) >= top_k:
                 break
+
+        # 5. 结构化检索埋点（18.1.7：零命中/弱命中周度聚类的数据来源，不记用户标识）
+        top1 = candidates[0] if candidates else None
+        embed_mode = "local" if getattr(self.llm, "is_local", False) is True else "cloud"
+        trace_event = {
+            "ts": datetime.datetime.now().isoformat(timespec="milliseconds"),
+            "caller": caller,
+            "intent": intent or "unknown",
+            "is_crisis": query_is_crisis,
+            "threshold": round(threshold, 4),
+            "embed_mode": embed_mode,
+            "vec_hits": len(vec_ids),
+            "bm25_unique": len(bm25_unique),
+            # top1 距离取融合排序后首候选（无论是否被过滤），零命中时据此判弱命中
+            "top1_distance": round(top1["distance"], 4) if top1 else None,
+            "top1_passed": bool(top1 and top1["distance"] <= threshold),
+            "result_count": len(final_docs),
+            "drop_threshold": n_drop_threshold,
+            "drop_crisis_tag": n_drop_crisis_tag,
+            "drop_dedup": n_drop_dedup,
+            "results": [
+                {
+                    "source": d.get("source", ""),
+                    "tags": d.get("tags", []) or [],
+                    "distance": round(d.get("distance", 0.0), 4),
+                }
+                for d in final_docs[:top_k]
+            ],
+            "query": (query or "")[:TRACE_QUERY_MAX_CHARS],
+        }
+        _write_search_trace(trace_event)
+        logger.info(
+            "rag-search caller=%s intent=%s mode=%s threshold=%.2f top1=%s passed=%s results=%d",
+            caller,
+            intent or "-",
+            embed_mode,
+            threshold,
+            f"{top1['distance']:.3f}" if top1 else "-",
+            trace_event["top1_passed"],
+            len(final_docs),
+        )
 
         return final_docs
 

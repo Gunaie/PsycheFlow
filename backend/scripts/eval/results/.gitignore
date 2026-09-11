@@ -1,3 +1,4 @@
 # 基线只保留 latest 快照入库，带时间戳的历史明细不入库
 triage_eval_2*.json
 report_eval_2*.json
+rag_eval_2*.json

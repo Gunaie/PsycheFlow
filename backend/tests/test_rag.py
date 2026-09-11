@@ -195,6 +195,168 @@ class TestSearch(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["source"], "a.txt")
 
+    async def test_bm25_unique_hit_carries_tags_for_crisis_filter(self):
+        """BM25 独有命中必须携带 tags：非危机 query 下「危机」标签片段即使
+        被 BM25 强命中也要过滤（回归 2026-09-09：BM25 补充召回漏传 tags，
+        导致非危机查询经关键词路径漏入危机片段）。"""
+        filler = "这句话是无关的填充内容。" * 30
+        docs = [
+            "日常作息安排规律，睡前不刷手机。",                 # 强命中「作息」，无标签→保留
+            "心理援助热线接线员的排班作息与危机干预流程规范。",  # 含「作息」但危机标签→过滤
+            "第二个语料段落讲的是营养搭配建议。",
+            "第三个语料段落介绍运动习惯的养成。",
+            "第四个语料段落记录情绪变化轨迹。",
+            "第五个语料段落讨论人际交往边界。",
+            f"第六个语料段落说明睡眠卫生要点。{filler}",
+            "第七个语料段落科普考试焦虑调适。",
+        ]
+        store = MagicMock()
+        store.collection.get.return_value = {
+            "documents": docs,
+            "metadatas": [
+                {"source": "a.txt", "chunk_id": 0, "tags": []},
+                {"source": "crisis.txt", "chunk_id": 0, "tags": ["危机"]},
+                {"source": "b.txt", "chunk_id": 0, "tags": []},
+                {"source": "c.txt", "chunk_id": 0, "tags": []},
+                {"source": "d.txt", "chunk_id": 0, "tags": []},
+                {"source": "e.txt", "chunk_id": 0, "tags": []},
+                {"source": "f.txt", "chunk_id": 0, "tags": []},
+                {"source": "g.txt", "chunk_id": 0, "tags": []},
+            ],
+            "ids": [f"{i}.txt#0" for i in ["a", "crisis", "b", "c", "d", "e", "f", "g"]],
+        }
+        store.query.return_value = {
+            "documents": [[]], "metadatas": [[]], "distances": [[]], "ids": [[]],
+        }
+        llm = MagicMock()
+        llm.embed = AsyncMock(return_value=[[0.5]])
+
+        svc = RAGService(store=store, llm=llm)
+        results = await svc.search("作息怎么安排比较规律", top_k=3)
+
+        sources = [r["source"] for r in results]
+        self.assertIn("a.txt", sources)
+        self.assertNotIn("crisis.txt", sources)
+
+
+class TestSearchTrace(unittest.IsolatedAsyncioTestCase):
+    """18.1.7 检索埋点：每次 search 追加一行结构化 JSON 到 logs/rag_search_*.jsonl。"""
+
+    def _make_svc(self) -> RAGService:
+        store = MagicMock()
+        store.query.return_value = {
+            "documents": [["段A", "段B"]],
+            "metadatas": [[
+                {"source": "a.txt", "chunk_id": 0, "tags": ["焦虑"]},
+                {"source": "b.txt", "chunk_id": 0, "tags": ["睡眠"]},
+            ]],
+            "distances": [[0.1, 0.2]],
+            "ids": [["a.txt#0", "b.txt#0"]],
+        }
+        llm = MagicMock()
+        llm.embed = AsyncMock(return_value=[[0.5]])
+        return RAGService(store=store, llm=llm)
+
+    async def test_search_writes_structured_trace_event(self):
+        import json as _json
+
+        from app.core.config import settings
+
+        svc = self._make_svc()
+        with tempfile.TemporaryDirectory() as tmp:
+            orig_logs_dir = settings.logs_dir
+            settings.logs_dir = tmp
+            try:
+                results = await svc.search(
+                    "焦虑怎么缓解", top_k=2, intent="咨询", caller="intervention"
+                )
+            finally:
+                settings.logs_dir = orig_logs_dir
+            trace_files = [
+                f for f in os.listdir(tmp)
+                if f.startswith("rag_search_") and f.endswith(".jsonl")
+            ]
+            self.assertEqual(len(trace_files), 1)
+            with open(os.path.join(tmp, trace_files[0]), encoding="utf-8") as f:
+                lines = f.readlines()
+            self.assertEqual(len(lines), 1)
+            event = _json.loads(lines[0])
+
+        self.assertEqual(len(results), 2)
+        # 固定 schema：周度聚类脚本依赖的字段一个都不能少
+        for key in (
+            "ts", "caller", "intent", "is_crisis", "threshold", "embed_mode",
+            "vec_hits", "bm25_unique", "top1_distance", "top1_passed",
+            "result_count", "drop_threshold", "drop_crisis_tag", "drop_dedup",
+            "results", "query",
+        ):
+            self.assertIn(key, event)
+        self.assertEqual(event["caller"], "intervention")
+        self.assertEqual(event["intent"], "咨询")
+        self.assertEqual(event["embed_mode"], "cloud")  # mock llm 无 is_local
+        self.assertEqual(event["threshold"], 0.75)
+        self.assertTrue(event["top1_passed"])
+        self.assertEqual(event["result_count"], 2)
+        self.assertEqual(event["results"][0]["source"], "a.txt")
+        self.assertEqual(event["results"][0]["tags"], ["焦虑"])
+        self.assertIn("distance", event["results"][0])
+        self.assertEqual(event["query"], "焦虑怎么缓解")
+        # 隐私纪律：埋点不得携带任何用户标识字段
+        for banned in ("session_id", "account_id", "user_id", "ip", "token"):
+            self.assertNotIn(banned, event)
+
+    async def test_search_trace_records_zero_hit(self):
+        """零命中也写埋点：top1_distance 超阈值、top1_passed=False、result_count=0。"""
+        import json as _json
+
+        from app.core.config import settings
+
+        store = MagicMock()
+        store.query.return_value = {
+            "documents": [["段A"]],
+            "metadatas": [[{"source": "a.txt", "chunk_id": 0, "tags": []}]],
+            "distances": [[0.99]],  # 云端阈值 0.75 下被过滤
+            "ids": [["a.txt#0"]],
+        }
+        llm = MagicMock()
+        llm.embed = AsyncMock(return_value=[[0.5]])
+        svc = RAGService(store=store, llm=llm)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            orig_logs_dir = settings.logs_dir
+            settings.logs_dir = tmp
+            try:
+                results = await svc.search("完全无关的内容xyz", caller="intervention")
+            finally:
+                settings.logs_dir = orig_logs_dir
+            trace_file = next(
+                f for f in os.listdir(tmp)
+                if f.startswith("rag_search_") and f.endswith(".jsonl")
+            )
+            with open(os.path.join(tmp, trace_file), encoding="utf-8") as f:
+                event = _json.loads(f.readline())
+
+        self.assertEqual(results, [])
+        self.assertEqual(event["result_count"], 0)
+        self.assertFalse(event["top1_passed"])
+        self.assertIsNotNone(event["top1_distance"])
+        self.assertGreaterEqual(event["drop_threshold"], 1)
+        self.assertEqual(event["results"], [])
+
+    async def test_search_trace_failure_never_blocks_search(self):
+        """埋点写入异常必须吞掉，检索结果正常返回（best-effort 契约）。
+
+        注入真实失败路径（open 抛错，模拟磁盘故障），验证 _write_search_trace
+        内部兜底生效，而不是替换掉整个函数——那样会绕过生产代码里的 guard。
+        """
+        from unittest.mock import patch
+
+        svc = self._make_svc()
+        with patch("builtins.open", side_effect=RuntimeError("disk full")):
+            results = await svc.search("焦虑", top_k=1)
+
+        self.assertEqual(len(results), 1)
+
 
 class TestLoadCorpus(unittest.TestCase):
     def test_load_real_files(self):

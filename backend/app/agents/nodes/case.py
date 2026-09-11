@@ -108,7 +108,7 @@ async def analyze_case(
     rag_context = "（无相关片段）"
     try:
         query = case_text[:500]
-        rag_sources = await rag_service.search(query, top_k=3)
+        rag_sources = await rag_service.search(query, top_k=3, intent="案例", caller="case")
         if rag_sources:
             parts = [
                 f"[{i}] 《{s.get('source') or '未知来源'}》:\n{(s.get('text') or '')[:200]}"
