@@ -76,7 +76,7 @@ async def test_integration_crisis_path_skips_assessment_intervention():
 
 @pytest.mark.asyncio
 async def test_integration_consult_path_with_rag_sources():
-    """咨询场景：triage→assessment→intervention + RAG sources 返回"""
+    """咨询场景（规则化分诊默认倾诉）：triage→assessment→intervention + RAG sources 返回"""
     initial_state = {
         "session_id": "test-int-sid-003",
         "account_id": "test-int-acc-003",
@@ -100,7 +100,8 @@ async def test_integration_consult_path_with_rag_sources():
 
     assert final_state["current_agent"] == "intervention"
     assert final_state["agent_trace"] == ["triage", "assessment", "intervention"]
-    assert final_state["triage_intent"] == "咨询"
+    # 规则化分诊：知识问句默认倾诉，由 intervention+RAG 回答
+    assert final_state["triage_intent"] == "倾诉"
     assert len(final_state["sources"]) == 2
     assert final_state["sources"][0]["source"] == "ccmd3_summary.md"
     assert "抑郁" in final_state["final_reply"]
@@ -108,7 +109,7 @@ async def test_integration_consult_path_with_rag_sources():
 
 @pytest.mark.asyncio
 async def test_integration_help_request_no_assessment_context():
-    """求助场景：Session 无 assessment → has_assessment=false"""
+    """求助场景：help fast-path 直达渠道话术，不经过 assessment/intervention"""
     initial_state = {
         "session_id": "test-int-sid-004-no-record",  # 不存在的 session
         "account_id": "test-int-acc-004",
@@ -124,11 +125,12 @@ async def test_integration_help_request_no_assessment_context():
         mock_rag.search = AsyncMock(return_value=[])
         final_state = await graph.ainvoke(initial_state)
 
-    assert final_state["current_agent"] == "intervention"
-    assert final_state["agent_trace"] == ["triage", "assessment", "intervention"]
+    # 求助渠道走 fast-path 直达，不经 assessment/intervention
+    assert final_state["current_agent"] == "triage"
+    assert final_state["agent_trace"] == ["triage"]
     assert final_state["triage_intent"] == "求助"
-    assert final_state["has_assessment"] is False
-    assert final_state["assessment_context"] == {}
+    assert "final_reply" in final_state
+    mock_intv_p.chat.assert_not_called()
 
 
 @pytest.mark.asyncio

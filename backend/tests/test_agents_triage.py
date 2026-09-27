@@ -17,17 +17,17 @@ from app.agents.state import AgentState
 
 @pytest.mark.asyncio
 async def test_triage_intent_help_request():
-    """「我想做测评」→ 求助"""
+    """「我想做测评」→ 求助渠道快速通道（硬编码渠道话术直达，零 LLM）"""
     state: AgentState = {"user_message": "我想做测评", "agent_trace": []}
     with patch("app.agents.nodes.triage.provider") as mock_provider:
         mock_provider.chat = AsyncMock(return_value="求助")
         result = await triage_node(state)
     assert result["triage_intent"] == "求助"
     assert result["is_crisis"] is False
-    assert result["crisis"] is False
-    assert result["detected_words"] == []
     assert result["current_agent"] == "triage"
     assert result["agent_trace"] == ["triage"]
+    assert "final_reply" in result  # 求助渠道直达话术
+    mock_provider.chat.assert_not_called()  # 零 LLM
 
 
 @pytest.mark.asyncio
@@ -43,12 +43,13 @@ async def test_triage_intent_venting():
 
 @pytest.mark.asyncio
 async def test_triage_intent_consult():
-    """「什么是抑郁」→ 咨询"""
+    """「什么是抑郁」→ 默认倾诉（规则化分诊：知识问句走 intervention，由 RAG+dialog 回答）"""
     state: AgentState = {"user_message": "什么是抑郁", "agent_trace": []}
     with patch("app.agents.nodes.triage.provider") as mock_provider:
         mock_provider.chat = AsyncMock(return_value="咨询")
         result = await triage_node(state)
-    assert result["triage_intent"] == "咨询"
+    assert result["triage_intent"] == "倾诉"
+    mock_provider.chat.assert_not_called()  # 规则化，不调 LLM
 
 
 @pytest.mark.asyncio
@@ -133,25 +134,25 @@ async def test_triage_greeting_hardcoded_fast_path():
 
 @pytest.mark.asyncio
 async def test_triage_greeting_with_content_not_hardcoded():
-    """「你好，我最近压力大」混有倾诉内容 → 不命中硬编码，走 LLM 意图分类"""
+    """「你好，我最近压力大」混有倾诉内容 → 不命中寒暄硬编码 → 默认倾诉（零 LLM）"""
     state: AgentState = {"user_message": "你好，我最近压力大", "agent_trace": []}
     with patch("app.agents.nodes.triage.provider") as mock_provider:
         mock_provider.chat = AsyncMock(return_value="倾诉")
         result = await triage_node(state)
-    mock_provider.chat.assert_awaited_once()  # 只有意图分类这一跳
+    mock_provider.chat.assert_not_called()  # 规则化分诊，不调 LLM
     assert result["triage_intent"] == "倾诉"
     assert "final_reply" not in result
 
 
 @pytest.mark.asyncio
 async def test_triage_greeting_fast_path_llm_failure_fallback():
-    """硬编码命中但问候生成失败 → 回退意图分类（同样失败）→ 倾诉正常链路"""
+    """硬编码命中但问候生成失败 → 回退默认倾诉（规则化分诊，不再二次调 LLM）"""
     state: AgentState = {"user_message": "你好", "agent_trace": []}
     with patch("app.agents.nodes.triage.provider") as mock_provider:
         mock_provider.chat = AsyncMock(side_effect=Exception("network error"))
         result = await triage_node(state)
-    # 调用 2 次：快速通道生成 + 意图分类，全部失败后兜底倾诉
-    assert mock_provider.chat.await_count == 2
+    # 只调用 1 次（问候生成失败），回退默认倾诉不调第二次 LLM
+    assert mock_provider.chat.await_count == 1
     assert result["triage_intent"] == "倾诉"
     assert "final_reply" not in result
     assert result["is_crisis"] is False
@@ -181,17 +182,18 @@ class TestDetectMethodQuestion:
 
 
 @pytest.mark.asyncio
-async def test_triage_method_question_overrides_help_request():
-    """「怎么缓解焦虑」LLM 误判求助（0.5b 实测行为）→ 方法问句纠偏改判咨询，
-    避免 intervention 对求助意图跳过 RAG 导致缓解方法知识卡被拦截"""
-    state: AgentState = {"user_message": "怎么缓解焦虑", "agent_trace": []}
+async def test_triage_method_question_overrides_help_plea():
+    """「帮帮我，有什么办法缓解焦虑」求助祈使 + 方法问句 → 咨询（求做法非求渠道）。
+    规则化分诊链路：默认倾诉 → help_plea 改判求助 → method_question 改判咨询。"""
+    state: AgentState = {"user_message": "帮帮我，有什么办法缓解焦虑", "agent_trace": []}
     with patch("app.agents.nodes.triage.provider") as mock_provider:
-        mock_provider.chat = AsyncMock(return_value="求助")
+        mock_provider.chat = AsyncMock(return_value="should_not_be_called")
         result = await triage_node(state)
     assert result["triage_intent"] == "咨询"
     assert result["node_decisions"]["triage"]["decision"] == "method_question_override"
     assert result["node_decisions"]["triage"]["original_intent"] == "求助"
     assert result["is_crisis"] is False
+    mock_provider.chat.assert_not_called()
 
 
 @pytest.mark.asyncio

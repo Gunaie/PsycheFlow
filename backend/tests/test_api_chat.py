@@ -68,10 +68,8 @@ class TestChatCrisis:
 
 class TestChatNormal:
     def test_normal_calls_rag_then_llm_dialog(self):
-        """正常消息 → triage 调 LLM 意图分类 → assessment → intervention 调 RAG + LLM dialog。"""
+        """正常消息 → 规则化分诊（零 LLM）→ assessment → intervention 调 RAG + LLM dialog。"""
         with _patch_chat_graph() as m:
-            # triage 意图分类 LLM 返回
-            m.triage_provider.chat = AsyncMock(return_value="倾诉")
             # intervention RAG 检索返回
             m.rag_service.search = AsyncMock(return_value=[
                 {"text": "深呼吸放松", "source": "04_放松技术.txt", "distance": 0.4},
@@ -92,9 +90,8 @@ class TestChatNormal:
             # intervention LLM 被调用 1 次，role=dialog（共情回应，不是分诊）
             m.intv_provider.chat.assert_awaited_once()
             assert m.intv_provider.chat.call_args.kwargs["role"] == "dialog"
-            # triage LLM 也被调用 1 次，role=triage（qwen-plus 无思考链意图分类）
-            m.triage_provider.chat.assert_awaited_once()
-            assert m.triage_provider.chat.call_args.kwargs["role"] == "triage"
+            # 规则化分诊：triage 不调 LLM
+            m.triage_provider.chat.assert_not_called()
 
     def test_rag_failure_degrades_to_plain_chat(self):
         """RAG 抛 RuntimeError → intervention 捕获，sources=[]，LLM 仍生成回复。"""
@@ -134,7 +131,7 @@ class TestChatNormal:
 
 class TestIntentSkipsRag:
     def test_help_intent_skips_rag(self):
-        """求助意图 → intervention 跳过 RAG 检索（测评引导无需知识库，防无关卡片）。"""
+        """求助渠道 → help fast-path 直达话术，不经 intervention（无 RAG、无 dialog LLM）。"""
         with _patch_chat_graph() as m:
             m.triage_provider.chat = AsyncMock(return_value="求助")
             m.rag_service.search = AsyncMock(return_value=[
@@ -146,8 +143,9 @@ class TestIntentSkipsRag:
             assert r.status_code == 200
             data = r.json()
             assert data["sources"] == []
+            # 求助渠道走 fast-path，不经 intervention
             m.rag_service.search.assert_not_awaited()
-            m.intv_provider.chat.assert_awaited_once()
+            m.intv_provider.chat.assert_not_called()
 
     def test_venting_intent_still_searches_rag(self):
         """倾诉意图 → RAG 正常检索（对照用例，确认跳过逻辑不误伤）。"""

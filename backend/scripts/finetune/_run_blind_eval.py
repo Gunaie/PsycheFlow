@@ -16,7 +16,7 @@ for s in scenarios:
         headers={"Content-Type": "application/json"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=60) as r:
+        with urllib.request.urlopen(req, timeout=120) as r:
             data = json.loads(r.read().decode("utf-8"))
             results.append({
                 "id": s["id"], "kind": s["kind"], "theme": s["theme"],
@@ -27,7 +27,7 @@ for s in scenarios:
     except Exception as e:
         results.append({"id": s["id"], "error": str(e), "status": "fail"})
         print(f"[{s['id']}/30] FAIL: {e}")
-    time.sleep(0.3)
+    time.sleep(7)  # chat 限流 10/60s，间隔 ≥6s 避免 429
 
 with open("scripts/finetune/blind_eval_results.json", "w", encoding="utf-8") as f:
     json.dump(results, f, ensure_ascii=False, indent=2)

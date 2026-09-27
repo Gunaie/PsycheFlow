@@ -138,6 +138,48 @@ def detect_service_question(message: str) -> bool:
     return bool(_SERVICE_Q_RE.search(message or ""))
 
 
+# ================= 硬编码求助渠道识别（零 LLM，2026-09-27） =================
+# 完全规则化分诊后，求助类（寻求测评/咨询渠道）不再走 triage-lora，改为硬编码
+# 渠道推荐话术直达。覆盖：测评/量表、心理老师/咨询室、援助资源、预约/渠道/平台。
+_HELP_CHANNEL_RE = re.compile(
+    r"(心理测评|心理评估|做.{0,3}测评|做.{0,3}评估|量表|自评|抑郁自评|焦虑自评|能不能测|能.{0,2}测)"
+    r"|(心理老师|心理咨询师|心理咨询室|心理中心|心理咨询|心理援助|援助热线|援助资源)"
+    r"|(预约.{0,4}(咨询|心理)|怎么.{0,4}(约|预约)|去哪里.{0,4}(咨询|聊|测)|哪里.{0,4}(咨询|测|聊))"
+    r"|(靠谱.{0,4}(渠道|平台|心理咨询)|线上.{0,4}(渠道|平台|咨询))"
+)
+
+
+def detect_help_channel(message: str) -> bool:
+    """硬编码求助渠道识别（零 LLM）：寻求测评/咨询渠道/量表的消息。"""
+    return bool(_HELP_CHANNEL_RE.search(message or ""))
+
+
+# 求助渠道快速通道话术（硬编码，零 LLM）
+_HELP_CHANNEL_REPLY = (
+    "如果你想做正式的心理评估或寻求专业帮助，可以试试这些渠道："
+    "①学校心理咨询中心（通常免费、保密）；"
+    "②当地精神卫生中心或三甲医院心理科；"
+    "③正规线上平台如简单心理、壹点灵。"
+    "先从学校心理中心开始通常最方便，预约时直接说想聊聊最近的情绪状态就好。"
+)
+
+
+def _help_fast_path(state: AgentState, trace: list, decisions: dict) -> dict:
+    """求助渠道快速通道：硬编码渠道推荐话术，产出 final_reply 直接结束编排（零 LLM）。"""
+    decisions["triage"] = {
+        "decision": "fast_path_help_channel",
+        "type": "keyword_match",
+    }
+    return {
+        "is_crisis": False,
+        "triage_intent": "求助",
+        "final_reply": _HELP_CHANNEL_REPLY,
+        "current_agent": "triage",
+        "agent_trace": trace,
+        "node_decisions": decisions,
+    }
+
+
 async def _greeting_fast_path(
     state: AgentState, message: str, trace: list, decisions: dict
 ) -> dict:
@@ -243,55 +285,25 @@ async def triage_node(state: AgentState) -> dict:
                 "reason": str(e)
             }
 
-    # 2b. 多轮对话优化：非首轮（history 非空）跳过 LLM 分诊，默认走「倾诉」。
-    # 危机/寒暄已在上面硬编码处理；后续轮次几乎都是倾诉追问，直接进 intervention。
-    # 避免每轮在 triage-lora ↔ dialog-lora 间切换加载（4.7GB 模型各需 ~45s 加载）。
-    history = state.get("history") or []
-    if history:
-        intent = "倾诉"
-        decisions["triage"] = {
-            "decision": "followup_default_vent",
-            "type": "rule",
-            "reason": "multi-turn skip LLM triage",
-            "intent": intent,
-        }
-        logger.info("triage: follow-up turn (history=%d), skip LLM, default 倾诉", len(history))
-    else:
-        # 3. LLM 意图分类（仅首轮）
-        intent = ""
-        try:
-            user_prompt = TRIAGE_USER_TEMPLATE.format(message=message)
-            reply = await provider.chat(
-                role="triage",
-                messages=[
-                    {"role": "system", "content": TRIAGE_SYSTEM},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.1,
-                max_tokens=50,
-            )
-            intent = reply.strip()
-            # 兜底：LLM 幻觉出非 5 类标签 → 默认走倾诉
-            if intent not in ("寒暄", "求助", "倾诉", "咨询", "危机"):
-                logger.warning("triage: unexpected intent %r, fallback to 倾诉", intent)
-                intent = "倾诉"
-            if "triage" not in decisions:
-                decisions["triage"] = {
-                    "decision": "intent_classified",
-                    "intent": intent
-                }
-        except Exception as e:
-            logger.warning("triage: LLM failed %s, fallback to 倾诉", str(e))
-            intent = "倾诉"
-            decisions["triage"] = {
-                "decision": "fallback",
-                "reason": str(e),
-                "intent": intent
-            }
+    # 2c. 求助渠道快速通道（零 LLM）：寻求测评/咨询渠道 → 硬编码渠道话术直达。
+    # 排除咨询服务边界问句（保密/能力等属咨询信息，非求助渠道）。
+    if not detect_service_question(message) and detect_help_channel(message):
+        logger.info("triage: help-channel fast-path")
+        return _help_fast_path(state, trace, decisions)
 
-    # 3.4 显式求助祈使句纠偏（零 LLM）：LLM 把「帮帮我」式直接求助判为倾诉 → 改判求助。
-    # 修 triage LoRA 求助类训练样本全是渠道型表述，未见过直接求助祈使句的盲区。
-    if intent == "倾诉" and detect_help_plea(message):
+    # 2d. 默认倾诉（不再调 triage-lora 意图分类）：
+    # 危机/寒暄/求助渠道已硬编码处理，其余一律走倾诉 → intervention(dialog-lora)。
+    # 彻底避免加载 triage-lora，首轮只需加载 dialog-lora（4.7GB，可装入 8GB 显存）。
+    intent = "倾诉"
+    decisions["triage"] = {
+        "decision": "default_vent",
+        "type": "rule",
+        "intent": intent,
+    }
+    logger.info("triage: default 倾诉 (skip LLM triage)")
+
+    # 2e. 显式求助祈使句纠偏（零 LLM）：「帮帮我」式直接求助 → 求助。
+    if detect_help_plea(message):
         logger.info("triage: help-plea override 倾诉→求助")
         decisions["triage"] = {
             "decision": "help_plea_override",
@@ -300,39 +312,17 @@ async def triage_node(state: AgentState) -> dict:
         }
         intent = "求助"
 
-    # 3.5 方法问句 / 服务边界问句纠偏（零 LLM 二次校验）：LLM 判求助且命中 → 改判咨询。
-    # - 方法问句：修 0.5b 把「怎么缓解焦虑」误判求助触发 RAG-skip 的误伤
-    # - 服务边界问句：修「咨询师会保密吗」「你这里能做什么」被误判求助（实为咨询服务信息）
-    if intent == "求助" and (detect_method_question(message) or detect_service_question(message)):
-        override_reason = "service_question" if detect_service_question(message) else "method_question"
-        logger.info("triage: %s override 求助→咨询", override_reason)
+    # 2f. 方法问句纠偏（零 LLM）：求助 + 方法问句 → 咨询（求做法非求渠道）。
+    if intent == "求助" and detect_method_question(message):
+        logger.info("triage: method-question override 求助→咨询")
         decisions["triage"] = {
-            "decision": f"{override_reason}_override",
+            "decision": "method_question_override",
             "type": "keyword_match",
             "original_intent": "求助"
         }
         intent = "咨询"
 
-    # 4. 极速直达路径：LLM 分类为寒暄 → 快速通道（跳过后续节点）
-    if intent == "寒暄":
-        logger.info("triage: greeting detected by LLM, using fast-path")
-        decisions["triage"] = {
-            "decision": "fast_path_greeting",
-            "type": "llm_classified",
-            "intent": intent,
-            "model": provider.model_for("triage")
-        }
-        try:
-            return await _greeting_fast_path(state, message, trace, decisions)
-        except Exception as e:
-            logger.warning("triage: greeting reply failed: %s, fallback to 倾诉", e)
-            intent = "倾诉"
-            decisions["triage"] = {
-                "decision": "fallback",
-                "reason": str(e),
-                "intent": intent
-            }
-
+    # 3. 返回分诊结果（危机/寒暄/求助渠道已在上面直达返回，此处为倾诉/求助/咨询）
     logger.info("triage: intent=%s", intent)
     return {
         "is_crisis": False,
