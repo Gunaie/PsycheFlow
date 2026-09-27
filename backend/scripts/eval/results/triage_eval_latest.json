@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-09-27 10:45:21",
+  "timestamp": "2026-09-27 13:21:33",
   "mode": "local",
   "model": "qwen2.5:triage-lora",
   "dataset": "triage_dataset.json",
   "total": 43,
-  "correct": 40,
-  "accuracy": 0.9302,
+  "correct": 43,
+  "accuracy": 1.0,
   "per_intent": {
     "危机": {
       "total": 8,
@@ -14,13 +14,13 @@
     },
     "咨询": {
       "total": 22,
-      "correct": 20,
-      "accuracy": 0.9091
+      "correct": 22,
+      "accuracy": 1.0
     },
     "求助": {
       "total": 1,
-      "correct": 0,
-      "accuracy": 0.0
+      "correct": 1,
+      "accuracy": 1.0
     },
     "倾诉": {
       "total": 12,
@@ -28,28 +28,6 @@
       "accuracy": 1.0
     }
   },
-  "failures": [
-    {
-      "index": 16,
-      "note": "被欺凌·明确求助",
-      "expected": "求助",
-      "got": "倾诉",
-      "message": "被同学起了难听的外号，全班都在笑，我不想上学了，帮帮我"
-    },
-    {
-      "index": 29,
-      "note": "保密边界",
-      "expected": "咨询",
-      "got": "求助",
-      "message": "心理咨询师会把我说的内容告诉学校和家长吗"
-    },
-    {
-      "index": 40,
-      "note": "边界·被安排来聊",
-      "expected": "咨询",
-      "got": "求助",
-      "message": "我妈让我来咨询，我觉得我没病，来都来了，你这里都能做什么"
-    }
-  ],
-  "elapsed_sec": 76.7
+  "failures": [],
+  "elapsed_sec": 84.5
 }

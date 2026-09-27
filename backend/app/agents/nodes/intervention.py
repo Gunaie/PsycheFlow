@@ -81,29 +81,41 @@ def _normalize(text: str) -> str:
     return re.sub(r"《[^》]*》", "", t)
 
 
-def check_reply_quality(reply: str, history: list[dict] | None, min_method_categories: int = 1) -> bool:
+def check_reply_quality(
+    reply: str,
+    history: list[dict] | None,
+    min_method_categories: int = 1,
+    min_len: int = 0,
+) -> bool:
     """回复质检：True=合格；False=不合格。
 
     检查项：
     - 封闭式问句：对吧/对吗/是不是/是吧/好吗/对不对/好不好/会不会/有没有/能不能 + 句末「吗？」「吧？」
     - 整轮最多一个问题：问号（?/？）超过 1 个即不合格
+    - 长度下限：min_len>0 时，短于 min_len 字不合格（prompt 要求 50-100，防止敷衍式短回复）
     - 长度上限：超过 120 字不合格（prompt 要求 50-100，留 20 字弹性）
     - 逐字重复：新回复与历史某条 assistant 回复存在 ≥12 字的逐字公共片段
     - 幻觉归因：「你说过…」引导的内容若未在用户历史消息中出现，即为编造
     - 同类做法重复：本轮做法类别与上一轮 assistant 回复有交集即不合格
     - 做法多样性：min_method_categories>1 时，回复须包含至少该数量的不同做法类别
       （求做法问题要求 ≥2 种，避免只给腹式呼吸一种）
+
+    注：寒暄快速通道调用时 min_len 保持 0（寒暄回复要求 50 字以内，与干预回复的 50-100 要求不同）。
     """
     if not reply or not reply.strip():
         return False
+    stripped = reply.strip()
     if _BANNED_CLOSE_Q.search(reply):
         return False
     # 整轮最多一个问题：问号计数（中英文问号）
     q_count = reply.count("?") + reply.count("？")
     if q_count > 1:
         return False
+    # 长度下限：min_len>0 时生效（干预回复要求 50-100，寒暄回复不设下限）
+    if min_len > 0 and len(stripped) < min_len:
+        return False
     # 长度上限：120 字（含标点，留 20 字弹性避免误伤正常表达）
-    if len(reply.strip()) > 120:
+    if len(stripped) > 120:
         return False
     # 做法多样性检测：求做法问题要求 ≥2 种不同类别
     cur_cats = _detect_method_categories(reply)
@@ -309,7 +321,7 @@ async def stream_intervention(
     user_msg = state.get("user_message", "")
     min_methods = 2 if detect_method_question(user_msg) else 1
     # 质检不合格 → 附纠正提示重试 1 次（降温提高指令遵循）；重试异常或仍不合格则沿用首次回复
-    if not check_reply_quality(text, history, min_method_categories=min_methods):
+    if not check_reply_quality(text, history, min_method_categories=min_methods, min_len=50):
         logger.info("intervention: quality check failed, retry 1/1 (stream)")
         retry_tokens, retry_failed = await _collect(
             [*messages, {"role": "system", "content": RETRY_HINT}],
@@ -321,7 +333,7 @@ async def stream_intervention(
         if (
             not retry_failed
             and retry_text.strip()
-            and check_reply_quality(retry_text, history, min_method_categories=min_methods)
+            and check_reply_quality(retry_text, history, min_method_categories=min_methods, min_len=50)
         ):
             tokens, text = retry_tokens, retry_text
 
@@ -367,7 +379,7 @@ async def intervention_node(state: AgentState) -> dict:
         min_methods = 2 if detect_method_question(user_msg) else 1
         first_reply = reply
         # 最多重试 1 次：重试仍不合格/异常即保留首次回复（与 docstring 契约一致）
-        if not check_reply_quality(reply, history, min_method_categories=min_methods):
+        if not check_reply_quality(reply, history, min_method_categories=min_methods, min_len=50):
             logger.info("intervention: quality check failed, retry 1/1")
             decision["llm"]["quality_retry"] = True
             try:
@@ -380,7 +392,7 @@ async def intervention_node(state: AgentState) -> dict:
                 # 重试回复须重新质检：合格才采用，不合格保留首次回复
                 # （不拿同样不合格的回复覆盖首次）
                 if retry and retry.strip() and check_reply_quality(
-                    retry, history, min_method_categories=min_methods
+                    retry, history, min_method_categories=min_methods, min_len=50
                 ):
                     reply = retry
                 else:

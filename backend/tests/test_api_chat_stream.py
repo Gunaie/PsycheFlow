@@ -21,6 +21,10 @@ PATCH_TRIAGE_PROVIDER = "app.agents.nodes.triage.provider"
 PATCH_INTV_PROVIDER = "app.agents.nodes.intervention.provider"
 PATCH_INTV_RAG = "app.agents.nodes.intervention.rag_service"
 
+# 合格长度的干预回复 token 列表（质检要求 50-100 字，避免触发 min_len 重试）
+_OK_TOKENS = ["我听到了你说的这些，最近考试的压力确实很大，", "让人有些喘不过气来，", "你愿意现在多和我说说你最担心的是哪部分吗"]
+_OK_REPLY = "".join(_OK_TOKENS)
+
 
 def _patch_chat_graph():
     """统一返回 contextmanager：mock triage + intervention 节点的 provider/rag_service。"""
@@ -78,7 +82,7 @@ class TestChatStreamNormal:
                 {"text": "深呼吸放松", "source": "04_放松技术.txt", "distance": 0.4},
             ])
             # mock provider.stream 为 async generator
-            m.intv_provider.stream = _make_fake_stream(["我", "听到", "你"])
+            m.intv_provider.stream = _make_fake_stream(_OK_TOKENS)
 
             r = client.post("/api/chat/stream", json={"message": "最近考试压力大"})
 
@@ -92,7 +96,7 @@ class TestChatStreamNormal:
 
             # done 事件 payload
             done = events[-1]["data"]
-            assert done["reply"] == "我听到你"
+            assert done["reply"] == _OK_REPLY
             assert done["current_agent"] == "intervention"
             assert done["crisis"] is False
             assert done["persona_id"] == "default"
@@ -104,7 +108,7 @@ class TestChatStreamNormal:
 
             # token 拼接 = 完整回复
             tokens = [e["data"]["token"] for e in events if e["event"] == "token"]
-            assert "".join(tokens) == "我听到你"
+            assert "".join(tokens) == _OK_REPLY
 
             # triage 调 LLM 分类 1 次（triage 角色配 qwen-plus 无思考链）
             m.triage_provider.chat.assert_awaited_once()
@@ -119,7 +123,7 @@ class TestChatStreamNormal:
         with _patch_chat_graph() as m:
             m.triage_provider.chat = AsyncMock(return_value="倾诉")
             m.rag_service.search = AsyncMock(return_value=[])
-            m.intv_provider.stream = _make_fake_stream(["嗯", "。"])
+            m.intv_provider.stream = _make_fake_stream(_OK_TOKENS)
 
             r = client.post("/api/chat/stream", json={"message": "我有点难过"})
             assert r.status_code == 200
@@ -208,7 +212,7 @@ class TestChatStreamPersona:
         with _patch_chat_graph() as m:
             m.triage_provider.chat = AsyncMock(return_value="倾诉")
             m.rag_service.search = AsyncMock(return_value=[])
-            m.intv_provider.stream = _make_fake_stream(["嗯"])
+            m.intv_provider.stream = _make_fake_stream(_OK_TOKENS)
 
             r = client.post(
                 "/api/chat/stream",

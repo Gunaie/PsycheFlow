@@ -88,7 +88,7 @@ async def run_scenario(scenario: dict) -> None:
         ][-20:]
         min_methods = 2 if detect_method_question(msg) else 1
         first_reply = reply
-        if not check_reply_quality(reply, history, min_method_categories=min_methods):
+        if not check_reply_quality(reply, history, min_method_categories=min_methods, min_len=50):
             retry_tokens: list[str] = []
             async for token in provider.stream(
                 role="dialog_stream",
@@ -98,7 +98,7 @@ async def run_scenario(scenario: dict) -> None:
                 retry_tokens.append(token)
             retry_reply = "".join(retry_tokens).strip()
             if retry_reply and check_reply_quality(
-                retry_reply, history, min_method_categories=min_methods
+                retry_reply, history, min_method_categories=min_methods, min_len=50
             ):
                 reply = retry_reply
             else:

@@ -17,6 +17,9 @@ PATCH_TRIAGE_PROVIDER = "app.agents.nodes.triage.provider"
 PATCH_INTV_PROVIDER = "app.agents.nodes.intervention.provider"
 PATCH_INTV_RAG = "app.agents.nodes.intervention.rag_service"
 
+# 合格长度的干预回复占位（质检要求 50-100 字，避免触发 min_len 重试）
+_OK_REPLY = "我听到了你说的这些，最近考试的压力确实很大，让人有些喘不过气来，你愿意现在多和我说说你最担心的是哪部分吗"
+
 
 def _patch_chat_graph():
     """统一返回 contextmanager：mock triage + intervention 节点的 provider/rag_service。
@@ -74,13 +77,13 @@ class TestChatNormal:
                 {"text": "深呼吸放松", "source": "04_放松技术.txt", "distance": 0.4},
             ])
             # intervention LLM 共情回应
-            m.intv_provider.chat = AsyncMock(return_value="我理解你的压力，试试深呼吸。")
+            m.intv_provider.chat = AsyncMock(return_value=_OK_REPLY)
 
             r = client.post("/api/chat", json={"message": "最近考试压力大"})
             assert r.status_code == 200
             data = r.json()
             assert data["crisis"] is False
-            assert data["reply"] == "我理解你的压力，试试深呼吸。"
+            assert data["reply"] == _OK_REPLY
             assert len(data["sources"]) == 1
             assert data["sources"][0]["source"] == "04_放松技术.txt"
 
@@ -98,7 +101,7 @@ class TestChatNormal:
         with _patch_chat_graph() as m:
             m.triage_provider.chat = AsyncMock(return_value="倾诉")
             m.rag_service.search = AsyncMock(side_effect=RuntimeError("chroma down"))
-            m.intv_provider.chat = AsyncMock(return_value="我在听你说。")
+            m.intv_provider.chat = AsyncMock(return_value=_OK_REPLY)
 
             r = client.post("/api/chat", json={"message": "我有点难过"})
             assert r.status_code == 200
@@ -113,7 +116,7 @@ class TestChatNormal:
         with _patch_chat_graph() as m:
             m.triage_provider.chat = AsyncMock(return_value="倾诉")
             m.rag_service.search = AsyncMock(return_value=[])
-            m.intv_provider.chat = AsyncMock(return_value="嗯。")
+            m.intv_provider.chat = AsyncMock(return_value=_OK_REPLY)
 
             r = client.post("/api/chat", json={
                 "message": "继续",
@@ -137,7 +140,7 @@ class TestIntentSkipsRag:
             m.rag_service.search = AsyncMock(return_value=[
                 {"text": "无关片段", "source": "x.md", "distance": 0.5},
             ])
-            m.intv_provider.chat = AsyncMock(return_value="建议你前往 /scale 完成测评。")
+            m.intv_provider.chat = AsyncMock(return_value=_OK_REPLY)
 
             r = client.post("/api/chat", json={"message": "我想做测评"})
             assert r.status_code == 200
@@ -153,7 +156,7 @@ class TestIntentSkipsRag:
             m.rag_service.search = AsyncMock(return_value=[
                 {"text": "深呼吸放松", "source": "04_放松技术.txt", "distance": 0.4},
             ])
-            m.intv_provider.chat = AsyncMock(return_value="我理解你。")
+            m.intv_provider.chat = AsyncMock(return_value=_OK_REPLY)
 
             r = client.post("/api/chat", json={"message": "我最近压力很大"})
             assert r.status_code == 200

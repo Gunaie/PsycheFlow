@@ -103,6 +103,41 @@ def detect_method_question(message: str) -> bool:
     return bool(_METHOD_Q_RE.search(text))
 
 
+# ================= 硬编码显式求助祈使句识别（零 LLM，2026-09-27） =================
+# 实测 triage LoRA 把「被起外号…帮帮我」明确求助判为倾诉：训练集求助类全是
+# 「想做测评/哪里可以约/有什么量表」渠道型表述，模型没见过「帮帮我」式直接求助。
+# 规则：含强求助祈使词 → 视为求助（仅在 LLM 判倾诉时纠偏，咨询/求助原判不动）。
+_HELP_PLEA_RE = re.compile(
+    r"(帮帮我|救救我|救命|谁来帮帮|谁能帮帮|求你帮|求你们帮|谁来救我|帮我一把|请帮帮我)"
+)
+
+
+def detect_help_plea(message: str) -> bool:
+    """硬编码显式求助祈使句识别（零 LLM）：含「帮帮我/救救我」等直接求助词。
+
+    不设长度守卫（求助句可长可短）；与 detect_method_question 互斥由调用顺序保证
+    （先把倾诉改判求助，再把方法/服务问句从求助改判咨询）。
+    """
+    return bool(_HELP_PLEA_RE.search(message or ""))
+
+
+# ================= 硬编码咨询服务边界问句识别（零 LLM，2026-09-27） =================
+# 实测 triage LoRA 把「心理咨询师会告诉学校家长吗」「你这里都能做什么」
+# 这类询问咨询服务本身（保密/能力/政策）的问题判为求助。按 TRIAGE_SYSTEM，
+# 询问信息属咨询（非寻求测评渠道）。规则：咨询服务边界问句 → 改判咨询。
+_SERVICE_Q_RE = re.compile(
+    r"(保密|隐私|泄密|泄露)"
+    r"|会不会[^，。！？!?；;]{0,6}(告诉|说出去|泄露)"
+    r"|告诉[^，。！？!?；;]{0,4}(学校|家长|老师|父母|别人|爸妈)"
+    r"|(你这里|你们这里|你这|你们这)[^，。！？!?；;]{0,8}(能做什么|提供什么|有什么服务|能帮什么|能干嘛|有什么用)"
+)
+
+
+def detect_service_question(message: str) -> bool:
+    """硬编码咨询服务边界问句识别（零 LLM）：询问保密/能力/政策等服务本身的问题。"""
+    return bool(_SERVICE_Q_RE.search(message or ""))
+
+
 async def _greeting_fast_path(
     state: AgentState, message: str, trace: list, decisions: dict
 ) -> dict:
@@ -240,12 +275,25 @@ async def triage_node(state: AgentState) -> dict:
             "intent": intent
         }
 
-    # 3.5 方法问句纠偏（零 LLM 二次校验）：LLM 判求助且方法问句命中 → 改判咨询。
-    # 修 0.5b 把「怎么缓解焦虑」误判求助触发 RAG-skip 的误伤；判倾诉/咨询保持原判。
-    if intent == "求助" and detect_method_question(message):
-        logger.info("triage: method-question override 求助→咨询")
+    # 3.4 显式求助祈使句纠偏（零 LLM）：LLM 把「帮帮我」式直接求助判为倾诉 → 改判求助。
+    # 修 triage LoRA 求助类训练样本全是渠道型表述，未见过直接求助祈使句的盲区。
+    if intent == "倾诉" and detect_help_plea(message):
+        logger.info("triage: help-plea override 倾诉→求助")
         decisions["triage"] = {
-            "decision": "method_question_override",
+            "decision": "help_plea_override",
+            "type": "keyword_match",
+            "original_intent": "倾诉"
+        }
+        intent = "求助"
+
+    # 3.5 方法问句 / 服务边界问句纠偏（零 LLM 二次校验）：LLM 判求助且命中 → 改判咨询。
+    # - 方法问句：修 0.5b 把「怎么缓解焦虑」误判求助触发 RAG-skip 的误伤
+    # - 服务边界问句：修「咨询师会保密吗」「你这里能做什么」被误判求助（实为咨询服务信息）
+    if intent == "求助" and (detect_method_question(message) or detect_service_question(message)):
+        override_reason = "service_question" if detect_service_question(message) else "method_question"
+        logger.info("triage: %s override 求助→咨询", override_reason)
+        decisions["triage"] = {
+            "decision": f"{override_reason}_override",
             "type": "keyword_match",
             "original_intent": "求助"
         }

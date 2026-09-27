@@ -13,6 +13,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+# 合格长度的干预回复占位（质检要求 50-100 字，避免触发 min_len 重试）
+_OK_REPLY = "我听到了你说的这些，最近考试的压力确实很大，让人有些喘不过气来，你愿意现在多和我说说你最担心的是哪部分吗"
+
 from app.agents.nodes.assessment import assessment_node
 from app.agents.nodes.case import CASE_FALLBACK_REPLY, analyze_case
 from app.core.case_parser import (
@@ -196,7 +199,7 @@ class TestChatHistoryEndpoint:
         )
         p_intv = patch.multiple(
             "app.agents.nodes.intervention",
-            provider=MagicMock(chat=AsyncMock(return_value="我在听你说。")),
+            provider=MagicMock(chat=AsyncMock(return_value=_OK_REPLY)),
             rag_service=MagicMock(search=AsyncMock(return_value=[])),
         )
         with p_triage, p_intv:
@@ -208,7 +211,7 @@ class TestChatHistoryEndpoint:
         assert len(items) == 2
         assert items[0]["role"] == "user"
         assert items[1]["role"] == "assistant"
-        assert items[1]["content"] == "我在听你说。"
+        assert items[1]["content"] == _OK_REPLY
 
     def test_history_unknown_session_404(self, client):
         r = client.get("/api/chat/history", params={"session_id": "no-such-session"})
@@ -222,7 +225,7 @@ class TestChatHistoryEndpoint:
         )
         p_intv = patch.multiple(
             "app.agents.nodes.intervention",
-            provider=MagicMock(chat=AsyncMock(return_value="我在听你说。")),
+            provider=MagicMock(chat=AsyncMock(return_value=_OK_REPLY)),
             rag_service=MagicMock(search=AsyncMock(return_value=[])),
         )
         with p_triage, p_intv:
@@ -253,7 +256,7 @@ class TestChatGuardrails:
              patch("app.agents.nodes.intervention.provider") as ip, \
              patch("app.agents.nodes.intervention.rag_service") as rag:
             tp.chat = AsyncMock(return_value="倾诉")
-            ip.chat = AsyncMock(return_value="嗯。")
+            ip.chat = AsyncMock(return_value=_OK_REPLY)
             rag.search = AsyncMock(return_value=[])
             history = [
                 {"role": "user" if i % 2 == 0 else "assistant", "content": f"m{i}"}

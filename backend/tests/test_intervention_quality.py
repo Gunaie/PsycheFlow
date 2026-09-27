@@ -78,10 +78,13 @@ class TestInterventionNodeRetry:
     @pytest.mark.asyncio
     async def test_closed_question_triggers_retry_and_adopts_retry(self):
         with patch(PATCH_PROVIDER) as p, patch(PATCH_RAG) as rag:
-            p.chat = AsyncMock(side_effect=["这样说你能理解对吧？", "我听到了，愿意多说说你的感受吗"])
+            p.chat = AsyncMock(side_effect=[
+                "这样说你能理解对吧？",
+                "我听到了你说的这些，最近考试的压力确实很大，让人有些喘不过气来，你愿意现在多和我说说你最担心的是哪部分吗",
+            ])
             rag.search = AsyncMock(return_value=[])
             out = await intervention_node(_state())
-            assert out["final_reply"] == "我听到了，愿意多说说你的感受吗"
+            assert out["final_reply"] == "我听到了你说的这些，最近考试的压力确实很大，让人有些喘不过气来，你愿意现在多和我说说你最担心的是哪部分吗"
             assert p.chat.await_count == 2
             # 重试请求末尾附带纠正提示
             retry_messages = p.chat.await_args_list[1].kwargs["messages"]
@@ -100,10 +103,10 @@ class TestInterventionNodeRetry:
     @pytest.mark.asyncio
     async def test_clean_reply_no_retry(self):
         with patch(PATCH_PROVIDER) as p, patch(PATCH_RAG) as rag:
-            p.chat = AsyncMock(return_value="我理解你的压力，愿意多说说吗")
+            p.chat = AsyncMock(return_value="我完全理解你最近承受的压力，考试临近确实容易让人感到焦虑不安，你愿意现在多和我说说具体是哪方面让你最困扰吗")
             rag.search = AsyncMock(return_value=[])
             out = await intervention_node(_state())
-            assert out["final_reply"] == "我理解你的压力，愿意多说说吗"
+            assert out["final_reply"] == "我完全理解你最近承受的压力，考试临近确实容易让人感到焦虑不安，你愿意现在多和我说说具体是哪方面让你最困扰吗"
             assert p.chat.await_count == 1
 
     @pytest.mark.asyncio
@@ -126,12 +129,12 @@ class TestInterventionNodeRetry:
             p.chat = AsyncMock(
                 side_effect=[
                     "我听到你最近考试压力很大。我们聊聊。",
-                    "听起来这段时间很熬人，愿意说说最让你紧绷的是哪部分？",
+                    "听起来你这段时间确实过得很熬人，考试压力加上周围人的期待一定让你紧绷，愿意说说最让你紧绷的是哪部分？",
                 ]
             )
             rag.search = AsyncMock(return_value=[])
             out = await intervention_node(_state(history=history))
-            assert out["final_reply"] == "听起来这段时间很熬人，愿意说说最让你紧绷的是哪部分？"
+            assert out["final_reply"] == "听起来你这段时间确实过得很熬人，考试压力加上周围人的期待一定让你紧绷，愿意说说最让你紧绷的是哪部分？"
 
 
 def _stream_mock(*token_lists):
@@ -148,20 +151,24 @@ class TestStreamInterventionRetry:
     @pytest.mark.asyncio
     async def test_closed_question_triggers_retry_and_yields_retry(self):
         with patch(PATCH_PROVIDER) as p, patch(PATCH_RAG) as rag:
-            p.stream = _stream_mock(["这样说你能理解", "对吧？"], ["我听到了，", "愿意多说说吗"])
+            p.stream = _stream_mock(
+                ["这样说你能理解", "对吧？"],
+                ["我听到了你说的这些，最近考试的压力确实很大，", "让人有些喘不过气来，", "你愿意现在多和我说说你最担心的是哪部分吗"],
+            )
             rag.search = AsyncMock(return_value=[])
             tokens = [t async for t in stream_intervention(_state())]
-            assert "".join(tokens) == "我听到了，愿意多说说吗"
+            assert "".join(tokens) == "我听到了你说的这些，最近考试的压力确实很大，让人有些喘不过气来，你愿意现在多和我说说你最担心的是哪部分吗"
             assert p.stream.call_count == 2
 
     @pytest.mark.asyncio
     async def test_clean_reply_streams_original_tokens_once(self):
         with patch(PATCH_PROVIDER) as p, patch(PATCH_RAG) as rag:
-            p.stream = _stream_mock(["我", "听到", "你"])
+            clean_tokens = ["我听到了你说的这些，最近考试的压力确实很大，", "让人有些喘不过气来，", "你愿意现在多和我说说你最担心的是哪部分吗"]
+            p.stream = _stream_mock(clean_tokens)
             rag.search = AsyncMock(return_value=[])
             tokens = [t async for t in stream_intervention(_state())]
             # 保持原始 token 粒度（SSE token 事件语义不变），不重试
-            assert tokens == ["我", "听到", "你"]
+            assert tokens == clean_tokens
             assert p.stream.call_count == 1
 
     @pytest.mark.asyncio
