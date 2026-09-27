@@ -41,6 +41,10 @@ data/backups/
 **/data/finetune/*.jsonl
 **/data/finetune/*.json
 
+# 云端训练打包产物（上传 AutoDL 的冗余副本，内容与 backend/scripts/finetune/ 重复）
+/cloud_ft_bundle/
+/cloud_ft_bundle.zip
+
 # IDE
 .vscode/
 .idea/
