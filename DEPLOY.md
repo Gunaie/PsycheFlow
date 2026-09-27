@@ -35,7 +35,9 @@ cp .env.example .env
 | 变量 | 说明 |
 |---|---|
 | `OLLAMA_BASE_URL` | 空=禁用（cloud-only）；填 `http://host.docker.internal:11434/v1` 启用 |
-| `OLLAMA_MODEL` | 本地模型名，默认 `qwen2.5:7b` |
+| `OLLAMA_MODEL` | 本地兜底模型名，默认 `qwen2.5:7b` |
+
+> 完全本地模式（`LLM_MODE=local`，非仅灾备）的完整变量见 `.env.example`：`LOCAL_MODEL` / `LOCAL_EMBED_MODEL` / `LOCAL_MODEL_{TRIAGE,DIALOG,REPORT}`（2026-09-27 起推荐三角色独立 LoRA + bge-m3-cpu，详见 [docs/本地模型化方案.md](docs/本地模型化方案.md) 顶部 2026-09-27 导读）。
 
 模型配置（`MODEL_*`）已预置可用模型，无需改动。
 

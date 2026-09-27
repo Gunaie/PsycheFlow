@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-09-08 13:27:25",
+  "timestamp": "2026-09-27 10:47:06",
   "mode": "local",
   "model_report": "qwen2.5:report-lora",
   "scenarios": [
@@ -7,8 +7,8 @@
       "scenario": "phq_a",
       "passed": 15,
       "total": 15,
-      "narrative_len": 644,
-      "pdf_bytes": 137467,
+      "narrative_len": 389,
+      "pdf_bytes": 127103,
       "checks": {
         "章节_1_测评工具介绍": true,
         "章节_2_解读注意事项": true,
@@ -32,8 +32,8 @@
       "scenario": "scared",
       "passed": 15,
       "total": 15,
-      "narrative_len": 707,
-      "pdf_bytes": 145160,
+      "narrative_len": 372,
+      "pdf_bytes": 129891,
       "checks": {
         "章节_1_测评工具介绍": true,
         "章节_2_解读注意事项": true,
@@ -57,8 +57,8 @@
       "scenario": "sdq",
       "passed": 15,
       "total": 15,
-      "narrative_len": 753,
-      "pdf_bytes": 140970,
+      "narrative_len": 428,
+      "pdf_bytes": 127971,
       "checks": {
         "章节_1_测评工具介绍": true,
         "章节_2_解读注意事项": true,
@@ -82,8 +82,8 @@
       "scenario": "mht",
       "passed": 15,
       "total": 15,
-      "narrative_len": 835,
-      "pdf_bytes": 157006,
+      "narrative_len": 362,
+      "pdf_bytes": 145396,
       "checks": {
         "章节_1_测评工具介绍": true,
         "章节_2_解读注意事项": true,
@@ -107,8 +107,8 @@
       "scenario": "combined",
       "passed": 16,
       "total": 16,
-      "narrative_len": 715,
-      "pdf_bytes": 169157,
+      "narrative_len": 409,
+      "pdf_bytes": 156765,
       "checks": {
         "章节_1_测评工具介绍": true,
         "章节_2_解读注意事项": true,
@@ -133,5 +133,5 @@
   "total_checks": 76,
   "passed_checks": 76,
   "pass_rate": 1.0,
-  "elapsed_sec": 98.3
+  "elapsed_sec": 88.5
 }

@@ -1,6 +1,5 @@
-### report 角色：评估报告发展建议（项目历史测评数据，云端 deepseek 蒸馏）
+### report 角色：评估报告发展建议（18.2 矩阵备料 243 条，merge_datasets 注入生产 REPORT_SYSTEM）
 ### 在云 GPU（4090 24GB）上：llamafactory-cli train train_report.yaml
-### 数据量小（~50 条），用更小 batch、更低学习率防过拟合
 
 ### model
 model_name_or_path: Qwen/Qwen2.5-7B-Instruct
@@ -15,8 +14,8 @@ lora_dropout: 0.05
 lora_target: all
 quantization_bit: 4
 
-### dataset
-dataset: psycheflow_report
+### dataset（18.2：report_merged，sharegpt + 生产 REPORT_SYSTEM 注入）
+dataset: report_merged
 dataset_dir: /root/autodl-tmp/ft/data
 template: qwen
 cutoff_len: 2048
@@ -30,7 +29,7 @@ save_steps: 200
 plot_loss: true
 overwrite_output_dir: true
 
-### train
+### train（243 条，3 epoch，effective batch=16）
 per_device_train_batch_size: 1
 gradient_accumulation_steps: 16
 learning_rate: 5.0e-5

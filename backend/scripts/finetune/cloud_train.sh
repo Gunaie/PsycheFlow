@@ -7,14 +7,18 @@
 #   - 训练包 / LoRA / 合并模型 / GGUF → /root/autodl-tmp/ft
 #
 # 用法（在云实例终端，先把训练包上传到 /root/autodl-tmp/ft/，
-#       finetune_report.jsonl 放到 /root/autodl-tmp/ft/data/）：
+#       18.2 起把本地 merge 好的三个 jsonl 放到 /root/autodl-tmp/ft/data/）：
+#   dialog_merged.jsonl  report_merged.jsonl  triage_merged.jsonl
 #   cd /root/autodl-tmp/ft
-#   sed -i 's/\r$//' cloud_train.sh convert_deepwell.py   # 防 Windows CRLF
+#   sed -i 's/\r$//' cloud_train.sh   # 防 Windows CRLF
 #   bash cloud_train.sh
 #
-# 产出（下载这两个 GGUF 回本地即可）：
+# 旧 3.B 流程（DeepWell 云端合成）仅当三套 merged 缺失时回退，只训 dialog。
+#
+# 产出（下载 GGUF 回本地即可）：
 #   /root/autodl-tmp/ft/gguf/qwen2.5-dialog-lora-q4_k_m.gguf
-#   /root/autodl-tmp/ft/gguf/qwen2.5-report-lora-q4_k_m.gguf
+#   /root/autodl-tmp/ft/gguf/qwen2.5-report-lora-q4_k_m.gguf（有 report 数据时）
+#   /root/autodl-tmp/ft/gguf/qwen2.5-triage-lora-q4_k_m.gguf（有 triage 数据时）
 #
 # 跑完后记得在 AutoDL 控制台【关机】停止计费。
 #==============================================================================
@@ -52,8 +56,10 @@ pip install -q llamafactory bitsandbytes \
   || pip install -q llamafactory bitsandbytes -i https://mirrors.aliyun.com/pypi/simple
 
 # 修复 torch CUDA：pip 装 llamafactory 可能把镜像自带的 CUDA 版 torch 覆盖成 +cpu 版，
-# 导致 bf16 训练报 "Your setup doesn't support bf16/gpu"。检测到 CPU 版则强制装回 cu128。
-if ! python3 -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
+# 导致 bf16 训练报 "Your setup doesn't support bf16/gpu"。torchaudio 同理但更隐蔽：
+# 镜像自带 wheel 可能绑定 CUDA13（libcudart.so.13 缺失），torch.cuda 正常但 import torchaudio 炸，
+# 故探针必须同时 import torch/torchvision/torchaudio，检测到任一异常就强制装回 cu128 三件套。
+if ! python3 -c "import torch, torchvision, torchaudio; assert torch.cuda.is_available()" 2>/dev/null; then
   TORCH_VER=$(python3 -c "import torch; print(torch.__version__.split('+')[0])" 2>/dev/null || echo "2.8.0")
   echo "[WARN] torch 无 CUDA，重装 CUDA ${TORCH_VER} 版（pytorch 官方源需学术加速）..."
   if [ -f /etc/network_turbo ]; then source /etc/network_turbo || true; fi
@@ -65,8 +71,19 @@ python3 -c "import torch; print('[OK] torch', torch.__version__, 'CUDA 可用:',
 
 llamafactory-cli version || true
 
-echo "================ [2/6] 准备 dialog 数据（DeepWell-Adol + 云端扩样 + 改写）================"
-# git clone github 需要 AutoDL 学术加速（pip 已装完，此刻开代理不影响）
+echo "================ [2/6] 训练数据（18.2 本地打包 merged 优先）================"
+HAS_DIALOG=0
+HAS_REPORT=0
+HAS_TRIAGE=0
+if [ -s "$DATA/dialog_merged.jsonl" ] && [ -s "$DATA/report_merged.jsonl" ] \
+   && [ -s "$DATA/triage_merged.jsonl" ]; then
+  HAS_DIALOG=1; HAS_REPORT=1; HAS_TRIAGE=1
+  echo "  dialog_merged.jsonl : $(wc -l < "$DATA/dialog_merged.jsonl") 条"
+  echo "  report_merged.jsonl : $(wc -l < "$DATA/report_merged.jsonl") 条"
+  echo "  triage_merged.jsonl : $(wc -l < "$DATA/triage_merged.jsonl") 条"
+else
+  echo "[回退] 未发现完整三套 merged，走旧 3.B dialog 单任务流程（DeepWell + 云端合成）"
+# git clone github 需要 AutoDL 学术加速（pip 源已装完，此刻开代理不影响）
 if [ -f /etc/network_turbo ]; then source /etc/network_turbo || true; fi
 if [ ! -d "$FT/DeepWell-Adolescent" ]; then
   git clone --depth 1 https://github.com/DeepWell-Adol/DeepWell-Adolescent.git "$FT/DeepWell-Adolescent"
@@ -100,15 +117,18 @@ MERGE_INPUTS="$DATA/deepwell_dialog.jsonl"
 python3 "$FT/merge_datasets.py" $MERGE_INPUTS -o "$DATA/dialog_merged.jsonl"
 echo "合并后样本数：$(wc -l < "$DATA/dialog_merged.jsonl")"
 
-# report 数据（用户上传）
-HAS_REPORT=0
+# report 数据（旧流程用户上传的 alpaca 文件；新流程 report_merged 已在上面识别）
 if [ -s "$DATA/finetune_report.jsonl" ]; then
-  HAS_REPORT=1
-  echo "检测到 finetune_report.jsonl：$(wc -l < "$DATA/finetune_report.jsonl") 条"
-else
-  echo "[提示] 未找到 $DATA/finetune_report.jsonl —— 跳过 report 微调，只训 dialog。"
+  echo "检测到旧版 finetune_report.jsonl：$(wc -l < "$DATA/finetune_report.jsonl") 条"
+  echo "[提示] train_report.yaml 18.2 起改用 report_merged.jsonl，旧文件不再参与训练。"
 fi
+fi  # end 旧 3.B 回退分支
+# 部分上传（只补某个任务）也识别
+[ -s "$DATA/dialog_merged.jsonl" ] && HAS_DIALOG=1
+[ -s "$DATA/report_merged.jsonl" ] && HAS_REPORT=1
+[ -s "$DATA/triage_merged.jsonl" ] && HAS_TRIAGE=1
 cp "$FT/dataset_info.json" "$DATA/dataset_info.json"
+echo "本次训练：dialog=$HAS_DIALOG report=$HAS_REPORT triage=$HAS_TRIAGE"
 
 echo "================ [2.5/6] 预下载基座 Qwen2.5-7B-Instruct ================"
 # 下模型走国内源（modelscope 阿里源最快），关掉学术代理
@@ -130,14 +150,18 @@ fi
 echo "基座就绪：$MODEL_DIR（$(du -sh "$MODEL_DIR" | cut -f1)）"
 # 训练 yaml 指向本地模型目录，LLaMA-Factory 不再联网下载
 sed -i "s#^model_name_or_path:.*#model_name_or_path: $MODEL_DIR#" \
-  "$FT/train_dialog.yaml" "$FT/train_report.yaml"
+  "$FT/train_dialog.yaml" "$FT/train_report.yaml" "$FT/train_triage.yaml"
 
+if [ "$HAS_DIALOG" = "1" ]; then
 echo "================ [3/6] 训练 dialog LoRA ================"
 # 断点续跑：适配器已存在则跳过（重跑脚本不会重训）
 if [ -f "$FT/lora_dialog/adapter_model.safetensors" ]; then
   echo "[跳过] $FT/lora_dialog 已有训练好的适配器"
 else
   llamafactory-cli train "$FT/train_dialog.yaml"
+fi
+else
+  echo "[3/6] 无 dialog_merged.jsonl，跳过 dialog 训练"
 fi
 
 if [ "$HAS_REPORT" = "1" ]; then
@@ -147,10 +171,24 @@ if [ "$HAS_REPORT" = "1" ]; then
   else
     llamafactory-cli train "$FT/train_report.yaml"
   fi
+else
+  echo "[4/6] 无 report_merged.jsonl，跳过 report 训练"
+fi
+
+if [ "$HAS_TRIAGE" = "1" ]; then
+  echo "================ [4.5/6] 训练 triage LoRA ================"
+  if [ -f "$FT/lora_triage/adapter_model.safetensors" ]; then
+    echo "[跳过] $FT/lora_triage 已有训练好的适配器"
+  else
+    llamafactory-cli train "$FT/train_triage.yaml"
+  fi
+else
+  echo "[4.5/6] 无 triage_merged.jsonl，跳过 triage 训练"
 fi
 
 # 训练全部完成，清理 checkpoint 中间产物（含 optimizer state，每个 1-2GB），只留最终 adapter
-rm -rf "$FT/lora_dialog"/checkpoint-* "$FT/lora_report"/checkpoint-* 2>/dev/null || true
+rm -rf "$FT/lora_dialog"/checkpoint-* "$FT/lora_report"/checkpoint-* \
+       "$FT/lora_triage"/checkpoint-* 2>/dev/null || true
 echo "[清理] checkpoint 中间产物已删除，剩余空间：$(df -h /root/autodl-tmp | tail -1 | awk '{print $4}')"
 
 echo "================ [5/6] 准备 llama.cpp（转 GGUF 用）================"
@@ -206,7 +244,9 @@ python3 -c "import numpy; assert numpy.__version__.startswith('1.'), numpy.__ver
 # llama.cpp 转换依赖会把 torch 升到最新版并拆散 torchvision/torchaudio 配对
 # （RuntimeError: operator torchvision::nms does not exist）→ 全家族对齐回 2.8.0。
 # 注意 pip 比较版本时看不见 +cpu/+cu128 后缀，必须先卸载强制重装正确的构建。
-if [ -f "$FT/lora_dialog/adapter_model.safetensors" ]; then
+if [ -f "$FT/lora_dialog/adapter_model.safetensors" ] \
+   || [ -f "$FT/lora_report/adapter_model.safetensors" ] \
+   || [ -f "$FT/lora_triage/adapter_model.safetensors" ]; then
   echo "[对齐] torch 家族 → 2.8.0 CPU 版（训练已完成，合并/转换不碰 GPU）"
   pip uninstall -y torch torchvision torchaudio || true
   pip install -q torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 \
@@ -234,9 +274,34 @@ if [ ! -x "$WORK/llama.cpp/build/bin/llama-quantize" ]; then
     && cmake --build build --config Release -j"$(nproc)" --target llama-quantize)
 fi
 
+# 磁盘瘦身：50GB 数据盘在第 3 个模型转换时必然爆满——基座 15G 全程常驻，
+# 与 merged 15G + f16 15G + 已完成的 q4（每个 4.5G）并存峰值约 54G。
+# 所有 LoRA 合并完成后基座权重不再有用（config.json/tokenizer 保留以通过
+# [2.5/6] 的「基座已存在」检查，训练段也早已跳过），可安全删 15G safetensors。
+_all_merges_done() {
+  [ "$HAS_DIALOG" != "1" ] || [ -f "$WORK/merged_dialog/config.json" ] || return 1
+  [ "$HAS_REPORT" != "1" ] || [ -f "$WORK/merged_report/config.json" ] || return 1
+  [ "$HAS_TRIAGE" != "1" ] || [ -f "$WORK/merged_triage/config.json" ] || return 1
+  return 0
+}
+
+_strip_base_weights() {
+  # 幂等：权重已删则静默
+  if [ -d "$MODEL_DIR" ] && ls "$MODEL_DIR"/*.safetensors >/dev/null 2>&1; then
+    local sz
+    sz=$(du -sh "$MODEL_DIR" | cut -f1)
+    rm -f "$MODEL_DIR"/*.safetensors "$MODEL_DIR"/*.pth
+    echo "[瘦身] 所有 LoRA 已合并，删基座权重释放空间（释放前 $sz，保留 config/tokenizer）"
+  fi
+}
+
 # 合并 LoRA → 完整 HF 模型 → 转 f16 GGUF → llama-quantize 量化 Q4_K_M → 清理中间产物
 merge_and_gguf() {
   local adapter=$1 merged=$2 gguf=$3
+  if [ ! -f "$adapter/adapter_model.safetensors" ] && [ ! -d "$merged" ]; then
+    echo "[跳过] $adapter 不存在（该任务未训练），无 GGUF 产出"
+    return 0
+  fi
   if [ -f "$gguf" ]; then
     echo "[跳过] 已存在 $gguf"
     return 0
@@ -256,6 +321,8 @@ export_legacy_format: false
 EOF
     llamafactory-cli export "$WORK/export_tmp.yaml"
   fi
+  # 最后一个 merge 完成（或断点续跑时三个 merged 均已在）→ 立刻删基座权重
+  if _all_merges_done; then _strip_base_weights; fi
   local f16="${gguf%.gguf}-f16.gguf"
   echo "---- 转 GGUF(f16) → $f16 ----"
   python3 "$WORK/llama.cpp/convert_hf_to_gguf.py" "$merged" \
@@ -291,18 +358,25 @@ PY
   python3 -c "import numpy, torch; torch.from_numpy(numpy.zeros(3, dtype=numpy.float32)); print('[OK] numpy', numpy.__version__, 'from_numpy 正常')"
 fi
 
-merge_and_gguf "$FT/lora_dialog" "$WORK/merged_dialog" \
-  "$GGUF/qwen2.5-dialog-lora-q4_k_m.gguf"
+if [ "$HAS_DIALOG" = "1" ]; then
+  merge_and_gguf "$FT/lora_dialog" "$WORK/merged_dialog" \
+    "$GGUF/qwen2.5-dialog-lora-q4_k_m.gguf"
+fi
 if [ "$HAS_REPORT" = "1" ]; then
   merge_and_gguf "$FT/lora_report" "$WORK/merged_report" \
     "$GGUF/qwen2.5-report-lora-q4_k_m.gguf"
+fi
+if [ "$HAS_TRIAGE" = "1" ]; then
+  merge_and_gguf "$FT/lora_triage" "$WORK/merged_triage" \
+    "$GGUF/qwen2.5-triage-lora-q4_k_m.gguf"
 fi
 
 echo ""
 echo "================ 全部完成 ================"
 ls -lh "$GGUF"
 echo "下载以下 GGUF 回本地（AutoDL 网页文件管理器进 autodl-tmp/ft/gguf 右键下载，或 scp）："
-echo "  $GGUF/qwen2.5-dialog-lora-q4_k_m.gguf"
+[ "$HAS_DIALOG" = "1" ] && echo "  $GGUF/qwen2.5-dialog-lora-q4_k_m.gguf"
 [ "$HAS_REPORT" = "1" ] && echo "  $GGUF/qwen2.5-report-lora-q4_k_m.gguf"
+[ "$HAS_TRIAGE" = "1" ] && echo "  $GGUF/qwen2.5-triage-lora-q4_k_m.gguf"
 echo ""
 echo "下载后回 AutoDL 控制台【关机】停止计费。"

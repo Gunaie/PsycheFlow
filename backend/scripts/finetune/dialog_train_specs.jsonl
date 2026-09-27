@@ -1,0 +1,16 @@
+{"kind": "vent_traj", "theme": "亲子关系", "idx": 2, "grade": "高一", "voice": "表达絮叨，细节很多", "core": "父母吵架/闹离婚，在家很窒息", "turns": 4, "id": "vent_traj:亲子关系:2"}
+{"kind": "vc_traj", "theme": "亲子关系", "idx": 2, "grade": "大学", "voice": "语气冲、带防备", "core": "父母吵架/闹离婚，在家很窒息", "question": "为什么和父母一说话就容易吵起来", "method": false, "turns": 4, "id": "vc_traj:亲子关系:2"}
+{"kind": "consult", "theme": "亲子关系", "idx": 2, "grade": "职校", "voice": "带点网络口语但不夸张", "question": "为什么和父母一说话就容易吵起来", "method": false, "core": "为什么和父母一说话就容易吵起来", "turns": 1, "id": "consult:亲子关系:2"}
+{"kind": "help", "theme": "亲子关系", "idx": 2, "grade": "大学", "voice": "表达简短克制，多用短句", "core": "学校的心理辅导怎么预约，流程是什么", "turns": 1, "id": "help:亲子关系:2"}
+{"kind": "crisis", "theme": "亲子关系", "idx": 2, "grade": "初二", "voice": "带点网络口语但不夸张", "core": "已经准备好割伤自己的工具", "turns": 1, "id": "crisis:亲子关系:2"}
+{"kind": "crisis_traj", "theme": "亲子关系", "idx": 2, "grade": "高二", "voice": "表达简短克制，多用短句", "core": "已经准备好割伤自己的工具", "turns": 2, "id": "crisis_traj:亲子关系:2"}
+{"kind": "vent_traj", "theme": "人际关系", "idx": 1, "grade": "高二", "voice": "表达絮叨，细节很多", "core": "和最好的朋友因为小事冷战", "turns": 4, "id": "vent_traj:人际关系:1"}
+{"kind": "vc_traj", "theme": "人际关系", "idx": 1, "grade": "高三", "voice": "表达絮叨，细节很多", "core": "和最好的朋友因为小事冷战", "question": "被同学孤立时，哪些反应算正常", "method": false, "turns": 4, "id": "vc_traj:人际关系:1"}
+{"kind": "consult", "theme": "人际关系", "idx": 1, "grade": "大学", "voice": "表达简短克制，多用短句", "question": "被同学孤立时，哪些反应算正常", "method": false, "core": "被同学孤立时，哪些反应算正常", "turns": 1, "id": "consult:人际关系:1"}
+{"kind": "help", "theme": "人际关系", "idx": 1, "grade": "高一", "voice": "表达絮叨，细节很多", "core": "在哪里可以做正规的心理量表", "turns": 1, "id": "help:人际关系:1"}
+{"kind": "crisis", "theme": "人际关系", "idx": 1, "grade": "初二", "voice": "表达絮叨，细节很多", "core": "想过从教学楼天台/窗户跳下去", "turns": 1, "id": "crisis:人际关系:1"}
+{"kind": "crisis_traj", "theme": "人际关系", "idx": 1, "grade": "大学", "voice": "语气冲、带防备", "core": "想过从教学楼天台/窗户跳下去", "turns": 2, "id": "crisis_traj:人际关系:1"}
+{"kind": "vent_traj", "theme": "创伤事件", "idx": 9, "grade": "高一", "voice": "自嘲、用玩笑掩饰", "core": "被校园霸凌过，看到施暴者就发抖", "turns": 4, "id": "vent_traj:创伤事件:9"}
+{"kind": "vc_traj", "theme": "创伤事件", "idx": 9, "grade": "大学", "voice": "表达简短克制，多用短句", "core": "被校园霸凌过，看到施暴者就发抖", "question": "什么是创伤后应激反应", "method": false, "turns": 4, "id": "vc_traj:创伤事件:9"}
+{"kind": "consult", "theme": "创伤事件", "idx": 9, "grade": "大学", "voice": "语气冲、带防备", "question": "什么是创伤后应激反应", "method": false, "core": "什么是创伤后应激反应", "turns": 1, "id": "consult:创伤事件:9"}
+{"kind": "help", "theme": "创伤事件", "idx": 9, "grade": "初二", "voice": "小心翼翼、不太敢直接说", "core": "想让家长带自己看心理科但不知道怎么说", "turns": 1, "id": "help:创伤事件:9"}

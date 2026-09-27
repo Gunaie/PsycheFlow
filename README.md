@@ -22,7 +22,7 @@
 - **后端**：Python + FastAPI + Pydantic + LangGraph + SQLAlchemy
 - **数据库**：SQLite3（MVP）→ PostgreSQL（规模化）
 - **向量库**：Chroma
-- **模型**：阿里云百炼云端 API（intake=qwen3.8-2.4t-a95b / triage=qwen3.8-27b / dialog=deepseek-v4-pro-0813 / dialog_stream=qwen3.8-max / report=deepseek-v4-flash-0731 / embed=text-embedding-v3 / ASR+TTS=qwen-audio-3.0）+ Ollama 本地兜底（可选）
+- **模型**：阿里云百炼云端 API（intake=qwen3.8-2.4t-a95b / triage=qwen3.8-27b / dialog=deepseek-v4-pro-0813 / dialog_stream=qwen3.8-max / report=deepseek-v4-flash-0731 / embed=text-embedding-v3 / ASR+TTS=qwen-audio-3.0）；本地 Ollama 模式（当前 .env 默认）：dialog/report/triage 三角色独立 LoRA（**qwen2.5:{dialog,report,triage}-lora**，2026-09-27 三任务重训）+ bge-m3-cpu 向量 + faster-whisper/sherpa-onnx 语音，全链路离线
 - **报告 PDF**：WeasyPrint + Jinja2
 - **部署**：Docker Compose（chroma + backend + frontend；prod 叠加非 root + 4 worker + nginx TLS）
 
@@ -32,9 +32,10 @@
 
 | 维度 | 指标 | 数值 |
 |---|---|---|
-| **LLM 输出评估** | Triage 意图分诊准确率（43 条标注样本，qwen3.8-27b） | **97.7%**（42/43） |
+| **LLM 输出评估** | Triage 意图分诊准确率（43 条标注样本，云端 qwen3.8-27b） | **97.7%**（42/43） |
+| | └ 本地 triage-lora（2026-09-27 18.3 重训） | **93.0%**（40/43，危机仍 8/8） |
 | | └ 危机类命中（硬编码词表，安全回归） | **100%**（8/8） |
-| | 报告结构合规率（5 场景 × 15 项断言，deepseek-v4-flash） | **100%**（76/76） |
+| | 报告结构合规率（5 场景共 76 项断言：15/15/15/15/16，云端 flash / 本地 report-lora 均通过） | **100%**（76/76） |
 | **性能（NFR）** | SSE 对话首 token 延迟（关思考链模型 + 寒暄/危机零 LLM 硬编码前置） | **寒暄 < 0.5s / 对话 ~1.2s** |
 | | `/api/health` 50 并发 | QPS 361，P95 128ms |
 | **测试** | 后端 pytest | 333 passed / 1 skipped |
@@ -67,7 +68,7 @@ flowchart TB
 
     subgraph llm["LLM 层（三级降级链）"]
         CLOUD["云端：阿里云百炼<br/>8 模型按角色分配"]
-        LOCAL["本地：Ollama<br/>GPU 直通 qwen2.5:7b"]
+        LOCAL["本地：Ollama<br/>三角色 LoRA · bge-m3-cpu"]
         FALLBACK["节点级硬编码话术"]
     end
 

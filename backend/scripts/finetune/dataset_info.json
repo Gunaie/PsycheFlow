@@ -26,11 +26,39 @@
       "assistant_tag": "gpt"
     }
   },
+  "report_merged": {
+    "file_name": "report_merged.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations",
+      "system": "system"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "human",
+      "assistant_tag": "gpt"
+    }
+  },
   "psycheflow_report": {
     "file_name": "finetune_report.jsonl",
     "columns": {
       "prompt": "instruction",
       "response": "output"
+    }
+  },
+  "triage_merged": {
+    "file_name": "triage_merged.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations",
+      "system": "system"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "human",
+      "assistant_tag": "gpt"
     }
   }
 }

@@ -1,0 +1,40 @@
+### triage 角色：意图五分类（18.2 新增，1010 条，merge_datasets 注入生产 TRIAGE_SYSTEM）
+### 在云 GPU（4090 24GB）上：llamafactory-cli train train_triage.yaml
+### 输出为单个标签词（寒暄/求助/倾诉/咨询/危机），短上下文，小 LoRA + 3 epoch
+
+### model
+model_name_or_path: Qwen/Qwen2.5-7B-Instruct
+
+### method（QLoRA）
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_rank: 16
+lora_alpha: 32
+lora_dropout: 0.05
+lora_target: all
+quantization_bit: 4
+
+### dataset（18.2：triage_merged，sharegpt + 生产 TRIAGE_SYSTEM 注入）
+dataset: triage_merged
+dataset_dir: /root/autodl-tmp/ft/data
+template: qwen
+cutoff_len: 1024
+overwrite_cache: true
+preprocessing_num_workers: 4
+
+### output
+output_dir: /root/autodl-tmp/ft/lora_triage
+logging_steps: 10
+save_steps: 200
+plot_loss: true
+overwrite_output_dir: true
+
+### train
+per_device_train_batch_size: 2
+gradient_accumulation_steps: 8
+learning_rate: 5.0e-5
+num_train_epochs: 3.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.05
+bf16: true

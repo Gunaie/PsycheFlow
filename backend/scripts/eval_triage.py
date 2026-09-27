@@ -4,7 +4,8 @@
 对 scripts/eval/triage_dataset.json 中的标注样本逐条调用真实 triage_node，
 统计 4 类意图（求助/倾诉/咨询/危机）的总体与分类别准确率。
 
-用法（容器内，需 .env 有真实 DASHSCOPE_API_KEY）：
+用法（容器内；云/本地模式均可，按 .env 的 LLM_MODE 走真实路由——
+       local 下即 LOCAL_MODEL_TRIAGE，无需 DASHSCOPE_API_KEY）：
   docker exec psycheflow-backend uv run python scripts/eval_triage.py           # 全量
   docker exec psycheflow-backend uv run python scripts/eval_triage.py --limit 8 # 冒烟
   docker exec psycheflow-backend uv run python scripts/eval_triage.py --verbose # 打印每条对错

@@ -1,17 +1,19 @@
-﻿#==============================================================================
+#==============================================================================
 # PsycheFlow 3.B 本地导入：把云 GPU 微调产出的 GGUF 注册进 Ollama
 #
 # 前置：
 #   1) 已从云实例下载 GGUF，放到 E:\OllamaModels\gguf\（Ollama 容器挂载 /root/.ollama）
 #        qwen2.5-dialog-lora-q4_k_m.gguf
 #        qwen2.5-report-lora-q4_k_m.gguf（若训了 report）
+#        qwen2.5-triage-lora-q4_k_m.gguf（18.2 起，若训了 triage）
 #   2) Ollama 容器在运行（docker ps 能看到 ollama）
 #
 # 用法：在项目根目录 PowerShell 执行
 #   powershell -ExecutionPolicy Bypass -File backend\scripts\finetune\import_gguf.ps1
 #
 # 导入后：.env 设 LOCAL_MODEL_DIALOG=qwen2.5:dialog-lora、
-#         LOCAL_MODEL_REPORT=qwen2.5:report-lora，再 docker compose up -d backend
+#         LOCAL_MODEL_REPORT=qwen2.5:report-lora、
+#         LOCAL_MODEL_TRIAGE=qwen2.5:triage-lora，再 docker compose up -d backend
 #==============================================================================
 
 $ErrorActionPreference = "Stop"
@@ -21,7 +23,8 @@ $HostGfufDir = "E:\OllamaModels\gguf"
 
 $models = @(
     @{ Gguf = "qwen2.5-dialog-lora-q4_k_m.gguf"; Name = "qwen2.5:dialog-lora" },
-    @{ Gguf = "qwen2.5-report-lora-q4_k_m.gguf"; Name = "qwen2.5:report-lora" }
+    @{ Gguf = "qwen2.5-report-lora-q4_k_m.gguf"; Name = "qwen2.5:report-lora" },
+    @{ Gguf = "qwen2.5-triage-lora-q4_k_m.gguf"; Name = "qwen2.5:triage-lora" }
 )
 
 Write-Host "=== 检查 Ollama 容器 ===" -ForegroundColor Cyan
@@ -53,4 +56,5 @@ Write-Host ""
 Write-Host "下一步：编辑 .env 加入（取消注释）：" -ForegroundColor Cyan
 Write-Host "  LOCAL_MODEL_DIALOG=qwen2.5:dialog-lora"
 Write-Host "  LOCAL_MODEL_REPORT=qwen2.5:report-lora"
+Write-Host "  LOCAL_MODEL_TRIAGE=qwen2.5:triage-lora"
 Write-Host "然后重建后端：docker compose up -d backend"
