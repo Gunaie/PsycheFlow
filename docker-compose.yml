@@ -50,7 +50,8 @@ services:
 
   # ---------- Ollama 本地兜底（整机共享，不在本项目 compose 内） ----------
   # Ollama 作为宿主级共享服务独立运行（多项目共用一份模型库），不在本 compose 内：
-  #   docker run -d --name ollama --gpus all -p 11434:11434 -v E:/OllamaModels:/root/.ollama --restart always ollama/ollama:latest
+  #   docker run -d --name ollama --gpus all -p 11434:11434 -v E:/OllamaModels:/root/.ollama -e OLLAMA_KEEP_ALIVE=-1 -e OLLAMA_KV_CACHE_TYPE=q8_0 --restart always ollama/ollama:latest
+  #   - OLLAMA_KV_CACHE_TYPE=q8_0：KV cache 量化为 int8，显存占用减半（7B/32K 从 12.8GB→6.4GB；配合 num_ctx 缩小后可完全装入 8GB 显存）
   # 图形界面 Open WebUI：docker run -d -p 3001:8080 -e OLLAMA_BASE_URL=http://host.docker.internal:11434 -v open-webui:/app/backend/data --name open-webui --restart always ghcr.io/open-webui/open-webui:main
   # 后端容器经 .env OLLAMA_BASE_URL=http://host.docker.internal:11434/v1 访问（见 .env.example）
 

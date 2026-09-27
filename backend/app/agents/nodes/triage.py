@@ -243,37 +243,51 @@ async def triage_node(state: AgentState) -> dict:
                 "reason": str(e)
             }
 
-    # 3. LLM 意图分类
-    intent = ""
-    try:
-        user_prompt = TRIAGE_USER_TEMPLATE.format(message=message)
-        reply = await provider.chat(
-            role="triage",
-            messages=[
-                {"role": "system", "content": TRIAGE_SYSTEM},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.1,
-            max_tokens=50,
-        )
-        intent = reply.strip()
-        # 兜底：LLM 幻觉出非 5 类标签 → 默认走倾诉
-        if intent not in ("寒暄", "求助", "倾诉", "咨询", "危机"):
-            logger.warning("triage: unexpected intent %r, fallback to 倾诉", intent)
-            intent = "倾诉"
-        if "triage" not in decisions:
-            decisions["triage"] = {
-                "decision": "intent_classified",
-                "intent": intent
-            }
-    except Exception as e:
-        logger.warning("triage: LLM failed %s, fallback to 倾诉", str(e))
+    # 2b. 多轮对话优化：非首轮（history 非空）跳过 LLM 分诊，默认走「倾诉」。
+    # 危机/寒暄已在上面硬编码处理；后续轮次几乎都是倾诉追问，直接进 intervention。
+    # 避免每轮在 triage-lora ↔ dialog-lora 间切换加载（4.7GB 模型各需 ~45s 加载）。
+    history = state.get("history") or []
+    if history:
         intent = "倾诉"
         decisions["triage"] = {
-            "decision": "fallback",
-            "reason": str(e),
-            "intent": intent
+            "decision": "followup_default_vent",
+            "type": "rule",
+            "reason": "multi-turn skip LLM triage",
+            "intent": intent,
         }
+        logger.info("triage: follow-up turn (history=%d), skip LLM, default 倾诉", len(history))
+    else:
+        # 3. LLM 意图分类（仅首轮）
+        intent = ""
+        try:
+            user_prompt = TRIAGE_USER_TEMPLATE.format(message=message)
+            reply = await provider.chat(
+                role="triage",
+                messages=[
+                    {"role": "system", "content": TRIAGE_SYSTEM},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.1,
+                max_tokens=50,
+            )
+            intent = reply.strip()
+            # 兜底：LLM 幻觉出非 5 类标签 → 默认走倾诉
+            if intent not in ("寒暄", "求助", "倾诉", "咨询", "危机"):
+                logger.warning("triage: unexpected intent %r, fallback to 倾诉", intent)
+                intent = "倾诉"
+            if "triage" not in decisions:
+                decisions["triage"] = {
+                    "decision": "intent_classified",
+                    "intent": intent
+                }
+        except Exception as e:
+            logger.warning("triage: LLM failed %s, fallback to 倾诉", str(e))
+            intent = "倾诉"
+            decisions["triage"] = {
+                "decision": "fallback",
+                "reason": str(e),
+                "intent": intent
+            }
 
     # 3.4 显式求助祈使句纠偏（零 LLM）：LLM 把「帮帮我」式直接求助判为倾诉 → 改判求助。
     # 修 triage LoRA 求助类训练样本全是渠道型表述，未见过直接求助祈使句的盲区。

@@ -112,17 +112,32 @@ class LLMProvider:
             raise ValueError(f"未知角色: {role}，可用: {list(mapping)}")
         return mapping[role]
 
+    def num_ctx_for(self, role: str) -> int:
+        """本地 Ollama 上下文窗口（num_ctx），按角色最小化以节省 KV cache 显存。
+
+        7B Q4_K_M 在默认 32768 上下文下 KV cache 约 12.8GB，远超 8GB 显存，导致
+        大量 CPU 卸载、推理极慢。按角色实际所需设小窗口：KV cache 降至 ~0.4-0.8GB，
+        模型可完全装入显存，单轮推理从 ~60-90s 降至个位数秒。
+        """
+        return {
+            "intake": 1024,
+            "triage": 512,        # 单条消息 + system，输出一个标签词
+            "dialog": 2048,       # 匹配训练 cutoff_len=2048，覆盖约 6-8 轮
+            "dialog_stream": 2048,
+            "report": 2048,       # case summary + system，输出结构化报告
+        }.get(role, 2048)
+
     def _primary_for(self, role: str):
         """返回主调用三元组 (client, model, extra_body)。
 
-        local 模式：Ollama client + 本地模型名 + 无 extra_body（enable_thinking 是百炼参数）；
+        local 模式：Ollama client + 本地模型名 + num_ctx（按角色最小化 KV cache）；
         cloud 模式：百炼 client + 角色模型 + triage/dialog_stream 关思考链。
         """
         if self.is_local:
             if not self.ollama_enabled:
                 # config 校验理论上已拦截，此处双保险（不静默回退云端）
                 raise RuntimeError("LLM_MODE=local 但 OLLAMA_BASE_URL 未配置")
-            return self.ollama_client, self.model_for(role), {}
+            return self.ollama_client, self.model_for(role), {"num_ctx": self.num_ctx_for(role)}
         return self.client, self.model_for(role), self._extra_body_for(role)
 
     def temp_for(self, role: str) -> float:

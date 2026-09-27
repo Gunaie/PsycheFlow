@@ -84,8 +84,11 @@ Ollama 作为**整机共享独立容器**运行（多项目复用一份模型库
 
 ```bash
 # 1. 起共享 Ollama（需 NVIDIA GPU；无 GPU 去掉 --gpus all，CPU 也能跑但 7B 慢）
+#    OLLAMA_KV_CACHE_TYPE=q8_0：KV cache 量化为 int8，显存减半（7B 模型可装入 8GB 显存）
 docker run -d --name ollama --gpus all -p 11434:11434 \
-  -v E:/OllamaModels:/root/.ollama --restart always ollama/ollama:latest
+  -v E:/OllamaModels:/root/.ollama \
+  -e OLLAMA_KEEP_ALIVE=-1 -e OLLAMA_KV_CACHE_TYPE=q8_0 \
+  --restart always ollama/ollama:latest
 
 # 2. 拉模型（首次）
 docker exec ollama ollama pull qwen2.5:7b
