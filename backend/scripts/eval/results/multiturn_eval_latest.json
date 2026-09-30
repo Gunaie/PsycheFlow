@@ -1,0 +1,354 @@
+{
+  "meta": {
+    "generated_at": "2026-09-30T16:09:00.979711+00:00",
+    "api": "http://localhost:8000/api/chat",
+    "engine": "生产管线 HTTP /api/chat（规则 triage + RAG + 质检重试）",
+    "scenarios": 4,
+    "turns_per_scenario": 4
+  },
+  "summary": {
+    "turn_total": 16,
+    "turn_pass": 15,
+    "turn_pass_rate": 0.9375,
+    "scenario_pass": 3,
+    "warn_count": 1,
+    "quality_retry_count": 6,
+    "issue_counts": {
+      "生产质检口径不合格": 1,
+      "≥12字逐字复读": 1
+    }
+  },
+  "scenarios": [
+    {
+      "name": "倾诉多轮延续（考试压力）",
+      "turns": [
+        {
+          "turn": 1,
+          "user": "最近期末考试压力大，晚上都睡不好",
+          "reply": "听起来晚上睡不好，白天还要硬撑着复习，确实很辛苦。这种时候越逼自己睡着越容易清醒。你一般几点躺下的？",
+          "reply_len": 50,
+          "triage_intent": "倾诉",
+          "rag": 3,
+          "quality_retry": false,
+          "retry_modes": [],
+          "method_categories": [],
+          "latency_sec": 3.0,
+          "issues": [],
+          "warns": [],
+          "pass": true
+        },
+        {
+          "turn": 2,
+          "user": "而且越临近考试越烦躁，上课也听不进去",
+          "reply": "越临近考试烦躁感越重，上课也跟着受累了。这种时候硬撑着听讲反而更累。你最近一次觉得稍微放松一点是什么时候？",
+          "reply_len": 53,
+          "triage_intent": "倾诉",
+          "rag": 3,
+          "quality_retry": false,
+          "retry_modes": [],
+          "method_categories": [],
+          "latency_sec": 3.1,
+          "issues": [],
+          "warns": [],
+          "pass": true
+        },
+        {
+          "turn": 3,
+          "user": "感觉跟爸妈也没法说，他们只会让我别紧张",
+          "reply": "压力堆到快溢出来的时候，硬压着确实很难受。今晚睡前可以试试把烦的事写在纸上，写完就合上本子，告诉自己明天再处理；也可以离开床躺十分钟，做几次很慢很慢的深呼吸，吸气数四秒、呼气数六秒。你更想先试哪一个？",
+          "reply_len": 100,
+          "triage_intent": "倾诉",
+          "rag": 3,
+          "quality_retry": true,
+          "retry_modes": [
+            "hint",
+            "rag_refresh"
+          ],
+          "method_categories": [
+            "breathing",
+            "journaling"
+          ],
+          "latency_sec": 9.0,
+          "issues": [],
+          "warns": [],
+          "pass": true
+        },
+        {
+          "turn": 4,
+          "user": "你说我这样下去是不是会考砸啊",
+          "reply": "你怕考砸的这份担心，压着你挺累的。今晚睡前可以试试握紧拳头五秒再慢慢松开，重复几次，让身体知道现在可以放松下来；另外也可以把担心的考试内容拆成小块，只挑最紧的那个去想。你最近哪一科的压力最大？",
+          "reply_len": 96,
+          "triage_intent": "倾诉",
+          "rag": 3,
+          "quality_retry": true,
+          "retry_modes": [
+            "hint",
+            "rag_refresh"
+          ],
+          "method_categories": [
+            "muscle_relax",
+            "planning"
+          ],
+          "latency_sec": 9.2,
+          "issues": [],
+          "warns": [],
+          "pass": true
+        }
+      ],
+      "method_category_union": [
+        "breathing",
+        "journaling",
+        "muscle_relax",
+        "planning"
+      ],
+      "scenario_issues": [],
+      "pass": true
+    },
+    {
+      "name": "情绪跟进（被嘲笑委屈）",
+      "turns": [
+        {
+          "turn": 1,
+          "user": "今天被同学当众嘲笑了，很难受",
+          "reply": "被当众嘲笑了，心里一定很不是滋味。那种当众难堪的感觉，真的很难受。先让自己喘口气，慢慢说，我在这儿听。",
+          "reply_len": 51,
+          "triage_intent": "倾诉",
+          "rag": 3,
+          "quality_retry": false,
+          "retry_modes": [],
+          "method_categories": [],
+          "latency_sec": 3.7,
+          "issues": [],
+          "warns": [],
+          "pass": true
+        },
+        {
+          "turn": 2,
+          "user": "其实这已经不是第一次了，最近总是这样",
+          "reply": "被嘲笑了很多次，心里肯定又累又委屈。这种难受不是矫情。先别一个人扛着，去找一位你信任的老师或家长说说，哪怕就一句“我最近压力大”。也可以把想说的话写在本子上，写完撕掉也行。这些事里，哪一件最让你难受？",
+          "reply_len": 100,
+          "triage_intent": "倾诉",
+          "rag": 3,
+          "quality_retry": false,
+          "retry_modes": [],
+          "method_categories": [
+            "journaling"
+          ],
+          "latency_sec": 4.6,
+          "issues": [],
+          "warns": [],
+          "pass": true
+        },
+        {
+          "turn": 3,
+          "user": "我不想让爸妈担心，一直没跟他们讲",
+          "reply": "一直忍着没跟爸妈说，那种憋着的感觉很难受。先慢慢呼吸几次，把胸口那团闷气先松开一点。也可以试着把想对他们说的话先说给信任的老师或同学听，让别人陪着你。你心里最担心他们听到后会怎么反应？",
+          "reply_len": 92,
+          "triage_intent": "倾诉",
+          "rag": 3,
+          "quality_retry": true,
+          "retry_modes": [
+            "hint"
+          ],
+          "method_categories": [
+            "breathing"
+          ],
+          "latency_sec": 6.4,
+          "issues": [],
+          "warns": [],
+          "pass": true
+        },
+        {
+          "turn": 4,
+          "user": "跟你说了这些，心里好像好受了一点",
+          "reply": "能说出来，说明你已经在试着照顾自己了。如果现在还难受，可以试试把注意力放在手心，慢慢感受它的温度，像在和它说说话。这种时候，你最希望有人怎么对待你？",
+          "reply_len": 74,
+          "triage_intent": "倾诉",
+          "rag": 3,
+          "quality_retry": false,
+          "retry_modes": [],
+          "method_categories": [],
+          "latency_sec": 3.3,
+          "issues": [],
+          "warns": [],
+          "pass": true
+        }
+      ],
+      "method_category_union": [
+        "breathing",
+        "journaling"
+      ],
+      "scenario_issues": [],
+      "pass": true
+    },
+    {
+      "name": "话题切换（失眠→体测焦虑）",
+      "turns": [
+        {
+          "turn": 1,
+          "user": "我最近总是失眠，躺在床上翻来覆去睡不着",
+          "reply": "听起来你躺在床上很煎熬，这种翻来覆去的感觉挺难受的。很多失眠的人心里都憋着一股劲，好像躺着就是错的。你最近一般几点躺下，躺下后多久能睡着？",
+          "reply_len": 69,
+          "triage_intent": "倾诉",
+          "rag": 2,
+          "quality_retry": false,
+          "retry_modes": [],
+          "method_categories": [],
+          "latency_sec": 3.6,
+          "issues": [],
+          "warns": [],
+          "pass": true
+        },
+        {
+          "turn": 2,
+          "user": "睡不着的时候我就会一直刷手机，越刷越精神",
+          "reply": "听起来你躺在床上像被按了暂停键，越刷越精神反而更清醒。这种时候盯着手机屏幕确实会越看越焦虑。你最近一次躺下睡不着，是什么时候开始意识到越刷越清醒的？",
+          "reply_len": 74,
+          "triage_intent": "倾诉",
+          "rag": 3,
+          "quality_retry": false,
+          "retry_modes": [],
+          "method_categories": [],
+          "latency_sec": 3.3,
+          "issues": [],
+          "warns": [],
+          "pass": true
+        },
+        {
+          "turn": 3,
+          "user": "对了，其实我更烦的是下周要体测，一想到就紧张",
+          "reply": "一想到体测就紧张，这种感觉挺磨人的。你可以试试把担心的事一条条写在纸上，写完就合上本子，告诉自己明天再处理。你最怕体测里的哪一科？",
+          "reply_len": 65,
+          "triage_intent": "倾诉",
+          "rag": 3,
+          "quality_retry": false,
+          "retry_modes": [],
+          "method_categories": [
+            "journaling"
+          ],
+          "latency_sec": 3.5,
+          "issues": [],
+          "warns": [],
+          "pass": true
+        },
+        {
+          "turn": 4,
+          "user": "体测完了马上又是期末，感觉事情一件接一件",
+          "reply": "事情一件接一件压过来，确实容易让人喘不过气。你可以先试试把明天要做的复习拆成两三个小任务，只完成眼前这一个，心里会踏实一点。你今晚最想先放下哪一科的事？",
+          "reply_len": 76,
+          "triage_intent": "倾诉",
+          "rag": 3,
+          "quality_retry": false,
+          "retry_modes": [],
+          "method_categories": [
+            "planning"
+          ],
+          "latency_sec": 3.3,
+          "issues": [],
+          "warns": [
+            "话题延续待人工复核（未出现新话题关键词）"
+          ],
+          "pass": true
+        }
+      ],
+      "method_category_union": [
+        "journaling",
+        "planning"
+      ],
+      "scenario_issues": [],
+      "pass": true
+    },
+    {
+      "name": "求做法后追问（做法不重复）",
+      "turns": [
+        {
+          "turn": 1,
+          "user": "马上要考试了，焦虑得不行，有什么办法能缓解吗",
+          "reply": "考前焦虑确实让人难受，身体一紧绷脑子也容易空白。你可以试试先做几次慢呼吸，吸气数四秒、呼气数六秒，让身体先松下来；也可以把担心的事写在纸上，写完就放一边，告诉自己明天再处理。这种紧张是从什么时候开始变明显的？",
+          "reply_len": 104,
+          "triage_intent": "咨询",
+          "rag": 3,
+          "quality_retry": false,
+          "retry_modes": [],
+          "method_categories": [
+            "breathing",
+            "journaling"
+          ],
+          "latency_sec": 4.1,
+          "issues": [],
+          "warns": [],
+          "pass": true
+        },
+        {
+          "turn": 2,
+          "user": "你说的方式我都试过了，还是紧张，有没有别的办法",
+          "reply": "紧张一直不散的话，可以试试让身体先动一动。比如去楼下走十分钟，让脚步带动心跳慢下来；也可以把最担心的一科里的重点条目随便翻一翻，只扫一眼，让脑子有个接触的感觉。你更想先试试哪一种？",
+          "reply_len": 90,
+          "triage_intent": "倾诉",
+          "rag": 3,
+          "quality_retry": true,
+          "retry_modes": [
+            "hint"
+          ],
+          "method_categories": [],
+          "latency_sec": 7.5,
+          "issues": [],
+          "warns": [],
+          "pass": true
+        },
+        {
+          "turn": 3,
+          "user": "那考试前一晚特别慌怎么办",
+          "reply": "考前一晚慌，确实容易越躺越清醒。可以试试把担心的事写在纸上，写完就放一边；也可以做几次缓慢的腹式呼吸，吸气四秒、呼气六秒，让身体先松下来。你平时躺下后脑子里一般会转些什么念头？",
+          "reply_len": 88,
+          "triage_intent": "咨询",
+          "rag": 3,
+          "quality_retry": true,
+          "retry_modes": [
+            "hint",
+            "rag_refresh",
+            "context_trim"
+          ],
+          "method_categories": [
+            "breathing",
+            "journaling"
+          ],
+          "latency_sec": 13.9,
+          "issues": [
+            "生产质检口径不合格",
+            "≥12字逐字复读"
+          ],
+          "warns": [],
+          "pass": false
+        },
+        {
+          "turn": 4,
+          "user": "嗯，那如果明天进考场前突然心慌，当场怎么快速平静下来",
+          "reply": "考前心慌时，先别硬扛。可以试试把注意力放在脚底，感受鞋底贴着地面的触感，也可以站起来慢慢拉伸一下胳膊和腿。你更想先试哪一种？",
+          "reply_len": 62,
+          "triage_intent": "倾诉",
+          "rag": 3,
+          "quality_retry": true,
+          "retry_modes": [
+            "hint",
+            "rag_refresh"
+          ],
+          "method_categories": [
+            "exercise"
+          ],
+          "latency_sec": 8.7,
+          "issues": [],
+          "warns": [],
+          "pass": true
+        }
+      ],
+      "method_category_union": [
+        "breathing",
+        "exercise",
+        "journaling"
+      ],
+      "scenario_issues": [],
+      "pass": false
+    }
+  ]
+}

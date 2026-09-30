@@ -9,8 +9,11 @@
 两者共享 build_intervention_messages 的 prompt 拼接逻辑，保证行为一致。
 
 回复质检重试层（零 LLM 成本）：生成后用正则检测封闭式问句（对吧/对吗/是不是等）
-与历史逐字重复，不合格附纠正提示重试 1 次；流式先缓冲完整生成再质检，
-通过后按原始 token 粒度匀速补推（恢复打字机流式感，避免 UI 闪烁）。
+与历史逐字重复，不合格走三级重试阶梯（hint 针对性禁令 → rag_refresh 换检索片段
+→ context_trim 剔除历史 assistant 回复）；重试温度 0.6/0.7（0.35 下本地 LoRA 会
+复读），禁令按本条回复的实际违规点动态生成（点名复读原句/上轮做法类别）。
+流式先缓冲完整生成再质检，通过后按原始 token 粒度匀速补推（恢复打字机流式感，
+避免 UI 闪烁）。
 """
 import asyncio
 import logging
@@ -48,9 +51,12 @@ _FABRICATED_ATTR_RE = re.compile(r"(你说过|你之前说|你上次说|你以�
 _METHOD_CATEGORIES = {
     "breathing": ("呼吸", "肚子", "吸气", "呼气", "腹式", "喘气", "气息"),
     "journaling": ("写", "本子", "日记", "记下来", "纸笔", "写下来"),
-    "muscle_relax": ("肌肉", "紧张再放松", "渐进式", "握拳", "绷紧"),
+    "muscle_relax": ("肌肉", "紧张再放松", "渐进式", "握拳", "握紧", "绷紧"),
     "mindfulness": ("正念", "冥想", "观察", "当下", "感受身体"),
     "exercise": ("运动", "跑步", "散步", "拉伸", "走动"),
+    # 任务拆解与呼吸放松同列 prompt 骨架示例做法（prompts.py REPLY_SKELETON_CONSULT），
+    # QC 分类学必须与 prompt 示例一致，否则模型照骨架给任务拆解会被误判「做法类别<2」
+    "planning": ("任务拆解", "拆成", "拆解", "清单", "列出来", "计划表"),
 }
 
 
@@ -64,13 +70,17 @@ def _detect_method_categories(text: str) -> set[str]:
     return found
 
 # 质检不合格时附加在 messages 末尾的重试纠正提示
-# 注意：不引用违禁词原文（列出「对吧/对吗」等 token 反而会诱导模型复现它们）
+# 注意：不引用违禁词原文（列出「对吧/对吗」等 token 反而会诱导模型复现它们），
+# 同理也不给具体做法示例——7B 模型会照抄示例句（如「把担心的事写在纸上」）
+# 并补完库存句式，成为跨轮逐字复读的种子（2026-09-30 多轮评测实证）。
 RETRY_HINT = (
     "【重试要求】你上一次的回复不合格。请严格按以下要求重新生成，直接输出回复正文："
     "1）整轮最多一个开放式问题（用「什么/怎么/哪些/哪里」提问，禁止用「吗/吧/会不会/有没有」收尾）；"
     "2）50-100字、不超过3句；"
-    "3）如果用户问缓解/改善方法，必须给出2种不同类型的具体做法（如「试试腹式呼吸：吸4秒呼6秒；再试试把担心的事写在纸上」），两种做法用「也可以」「另外」连接；"
-    "4）上轮用过的做法本轮必须换成完全不同类型（如上轮用了呼吸，本轮用写日记或肌肉放松）；"
+    "3）如果用户问缓解/改善方法，必须给出2种不同类别的具体做法（例如一类身体放松、"
+    "一类换个方式表达心情），全部用你自己组织的全新表述，禁止照搬本提示或之前任何轮次"
+    "出现过的句子，两种做法用「也可以」「另外」连接；"
+    "4）上轮用过的做法本轮必须换成完全不同类型；"
     "5）「你说过…」只能指用户历史中真实说过的内容，不确定就不要用这个句式。"
 )
 
@@ -79,6 +89,113 @@ def _normalize(text: str) -> str:
     """去空白 + 剔除《书名号》段归一化（同源多轮引用「来源：《xxx》」属合法，不算复读）。"""
     t = re.sub(r"\s+", "", text or "")
     return re.sub(r"《[^》]*》", "", t)
+
+
+# 呼吸参数公式（项目硬约束：基础科普层统一 4 吸/6 呼口径）。LoRA 表达呼吸法只有这一种
+# 标准句式，跨轮提及呼吸法必然逐字重现该公式——参数口径属标准化表述而非复读，
+# 逐字重复检测前剥离（用哨兵字符占位防止剥离后前后文拼接出虚假重叠）。
+_BREATH_FORMULA_RE = re.compile(r"吸气[数一二三四五六七八九十\d]{0,2}秒[、,，]?呼气[数一二三四五六七八九十\d]{0,2}秒")
+_FORMULA_SENTINEL = "·"
+
+
+def _strip_breath_formula(norm_text: str) -> str:
+    """在 _normalize 之后的文本上剥离呼吸参数公式（仅用于逐字重复检测）。"""
+    return _BREATH_FORMULA_RE.sub(_FORMULA_SENTINEL, norm_text)
+
+
+# 做法类别的中文标签（重试禁令中点名用，7B 模型对具体名词遵循度高于抽象要求）
+_METHOD_CATEGORY_LABELS = {
+    "breathing": "呼吸调节",
+    "journaling": "书写表达（写在纸上/日记本）",
+    "muscle_relax": "肌肉放松",
+    "mindfulness": "正念觉察",
+    "exercise": "运动",
+    "planning": "任务拆解（列清单/分步骤）",
+}
+
+
+def _find_verbatim_overlap(reply: str, history: list[dict] | None) -> str:
+    """新回复与历史 assistant 回复间最长 ≥12 字逐字重叠片段（无则空串）。
+
+    用于质检重试时向模型点名具体复读句：从每个候选起点向右扩展，
+    遍历全部起点即覆盖最大重叠。仅统计归一化文本（_normalize 口径，
+    与 check_reply_quality 的逐字重复判定一致），呼吸参数公式先行剥离。
+    """
+    norm_reply = _strip_breath_formula(_normalize(reply))
+    if len(norm_reply) < _REPEAT_MIN_LEN:
+        return ""
+    hist_norms = [
+        _strip_breath_formula(_normalize(h.get("content", "")))
+        for h in (history or [])
+        if h.get("role") == "assistant"
+    ]
+    hist_norms = [h for h in hist_norms if h]
+    if not hist_norms:
+        return ""
+    best = ""
+    for i in range(len(norm_reply) - _REPEAT_MIN_LEN + 1):
+        window = norm_reply[i:i + _REPEAT_MIN_LEN]
+        if not any(window in hn for hn in hist_norms):
+            continue
+        cand = window
+        j = i + _REPEAT_MIN_LEN
+        while j < len(norm_reply) and any((cand + norm_reply[j]) in hn for hn in hist_norms):
+            cand += norm_reply[j]
+            j += 1
+        if len(cand) > len(best):
+            best = cand
+    return best
+
+
+def build_retry_hint(reply: str, history: list[dict] | None) -> str:
+    """质检重试用的纠正提示：RETRY_HINT + 按本条回复实际违规点追加针对性禁令。
+
+    泛化要求（「换成不同类型」）7B 模型遵循度差，复读发生时点名具体复读句
+    与上轮做法类别（如「书写表达（写在纸上/日记本）」）能显著提升换法成功率。
+    """
+    bans: list[str] = []
+    overlap = _find_verbatim_overlap(reply, history)
+    if overlap:
+        shown = overlap[:60]
+        bans.append(f"禁止重复你之前轮次说过的句子（尤其「{shown}」），必须用全新的表述")
+    cur_cats = _detect_method_categories(reply)
+    last_assistant = next(
+        (h for h in reversed(history or []) if h.get("role") == "assistant"),
+        None,
+    )
+    if cur_cats and last_assistant:
+        prev_cats = cur_cats & _detect_method_categories(last_assistant.get("content", ""))
+        if prev_cats:
+            labels = "、".join(_METHOD_CATEGORY_LABELS[c] for c in sorted(prev_cats))
+            bans.append(
+                f"上一轮你已建议过{labels}，本轮禁止再提这类做法，必须换成完全不同的类型"
+            )
+    if not bans:
+        return RETRY_HINT
+    return RETRY_HINT + "【针对本条回复的禁令】" + "；".join(bans) + "。"
+
+
+async def _refresh_rag_sources(state: AgentState, cited_sources: list) -> list:
+    """重试换片：检索 top_k=6 并排除首轮回复已引用的切片，返回新片段（≤3 条）。
+
+    多轮对话下复读的主因是同一 RAG 片段每轮被召回并被逐字照抄；重试时换一批
+    切片比仅换措辞更根治。检索失败或新片段不足时按剩余数量返回
+    （空列表 = 无 RAG 上下文兜底，模型改用自己的知识组织回复）。
+    """
+    cited_ids = {s.get("chunk_id") for s in (cited_sources or [])}
+    try:
+        hits = await rag_service.search(
+            state.get("user_message", ""),
+            top_k=6,
+            intent=state.get("triage_intent", ""),
+            caller="intervention",
+        )
+    except Exception as e:
+        logger.warning("intervention: rag refresh search failed: %s", str(e))
+        return []
+    fresh = [s for s in hits if s.get("chunk_id") not in cited_ids]
+    logger.info("intervention: rag refresh got %d fresh chunks (excluded %d cited)", len(fresh[:3]), len(cited_ids))
+    return fresh[:3]
 
 
 def check_reply_quality(
@@ -149,11 +266,11 @@ def check_reply_quality(
             if cur_cats & prev_cats:
                 return False
     hist_norms = [
-        _normalize(h.get("content", ""))
+        _strip_breath_formula(_normalize(h.get("content", "")))
         for h in (history or [])
         if h.get("role") == "assistant"
     ]
-    norm_reply = _normalize(reply)
+    norm_reply = _strip_breath_formula(_normalize(reply))
     for clause in re.split(r"[。！？!?\n]+", norm_reply):
         if len(clause) < _REPEAT_MIN_LEN:
             continue
@@ -164,11 +281,16 @@ def check_reply_quality(
     return True
 
 
-async def build_intervention_messages(state: AgentState) -> tuple[list[dict], list, list, dict]:
+async def build_intervention_messages(
+    state: AgentState, rag_override: list | None = None
+) -> tuple[list[dict], list, list, dict]:
     """拼接 intervention 的 LLM messages + formatted_sources + rag_sources。
 
     流式与非流式复用同一套 prompt 拼接逻辑，保证行为一致。
     返回 (messages, formatted_sources, rag_sources, decision)。
+
+    rag_override：质检重试换片路径传入已检索好的片段（可为空列表=无 RAG 上下文），
+    传 None（默认）时按原逻辑执行检索。
     """
     message = state.get("user_message", "")
     decision = {}
@@ -183,7 +305,11 @@ async def build_intervention_messages(state: AgentState) -> tuple[list[dict], li
     #    避免向量检索凑近推送无关来源卡片，如"你好，你是谁"也能召回 ≤0.70 距离片段）
     triage_intent = state.get("triage_intent", "")
     rag_sources: list = []
-    if triage_intent in ("寒暄", "求助"):
+    if rag_override is not None:
+        rag_sources = list(rag_override)
+        decision["rag"] = {"count": len(rag_sources), "override": True}
+        logger.info("intervention: using %d overridden rag chunks", len(rag_sources))
+    elif triage_intent in ("寒暄", "求助"):
         logger.info("intervention: skip rag for intent=%s", triage_intent)
         decision["rag"] = {"skipped": True, "reason": f"intent={triage_intent}"}
     else:
@@ -259,8 +385,9 @@ async def _paced(tokens: list[str]) -> AsyncIterator[str]:
 async def stream_intervention(
     state: AgentState,
     prebuilt_messages: list[dict] | None = None,
+    prebuilt_rag_sources: list | None = None,
 ) -> AsyncIterator[str]:
-    """流式干预：先缓冲完整生成 → 质检 → 不合格重试 1 次 → 按原始 token 粒度匀速补推。
+    """流式干预：先缓冲完整生成 → 质检 → 不合格最多重试 2 次 → 按原始 token 粒度匀速补推。
 
     为什么先缓冲：token 一旦推给前端就无法撤回，流式质检后重试会造成
     「回复被替换」的 UI 闪烁；故先收集完整回复，质检通过后再推出
@@ -275,8 +402,14 @@ async def stream_intervention(
 
     prebuilt_messages：若 SSE 端点已调 build_intervention_messages 拿到 messages
     和 sources（避免 RAG 重复检索），可直接传入复用；None 则内部构建。
+    prebuilt_rag_sources：与 prebuilt_messages 配套的首轮 RAG 片段，
+    供质检重试换片时排除已引用切片；prebuilt_messages 为 None 时内部构建自动获得。
     """
-    messages = prebuilt_messages or (await build_intervention_messages(state))[0]
+    if prebuilt_messages is not None:
+        messages = prebuilt_messages
+        first_rag = list(prebuilt_rag_sources or [])
+    else:
+        messages, _, first_rag, _ = await build_intervention_messages(state)
     # 质检用历史（与 build_intervention_messages 同口径：最近 20 条 user/assistant）
     history = [
         {"role": h["role"], "content": h["content"]}
@@ -320,15 +453,31 @@ async def stream_intervention(
     from app.agents.nodes.triage import detect_method_question
     user_msg = state.get("user_message", "")
     min_methods = 2 if detect_method_question(user_msg) else 1
-    # 质检不合格 → 附纠正提示重试（最多 2 次）；全部不合格则沿用首次回复
-    max_retries = 2
+    # 质检不合格 → 重试阶梯（与非流式 intervention_node 同口径）：全部不合格则沿用首次回复
+    max_retries = 3
+    alt_chunks: list | None = None
     for attempt in range(1, max_retries + 1):
         if check_reply_quality(text, history, min_method_categories=min_methods, min_len=50):
             break
         logger.info("intervention: quality check failed, retry %d/%d (stream)", attempt, max_retries)
+        mode = ("hint", "rag_refresh", "context_trim")[attempt - 1]
+        if mode == "context_trim":
+            trim_state = {
+                **state,
+                "history": [h for h in (state.get("history") or []) if h.get("role") == "user"],
+            }
+            if alt_chunks is None:
+                alt_chunks = await _refresh_rag_sources(state, first_rag)
+            retry_base, _, _, _ = await build_intervention_messages(trim_state, rag_override=alt_chunks)
+        elif mode == "rag_refresh":
+            if alt_chunks is None:
+                alt_chunks = await _refresh_rag_sources(state, first_rag)
+            retry_base, _, _, _ = await build_intervention_messages(state, rag_override=alt_chunks)
+        else:
+            retry_base = messages
         retry_tokens, retry_failed = await _collect(
-            [*messages, {"role": "system", "content": RETRY_HINT}],
-            temperature=0.35,
+            [*retry_base, {"role": "system", "content": build_retry_hint(text, history)}],
+            temperature=0.6 if mode == "hint" else 0.7,
         )
         retry_text = "".join(retry_tokens)
         if (
@@ -352,7 +501,7 @@ async def intervention_node(state: AgentState) -> dict:
     流程：
     1. build_intervention_messages 拼 prompt
     2. provider.chat(role="dialog", temp=0.6) 生成共情回应
-    3. 回复质检（封闭式问句/逐字重复）→ 不合格附纠正提示重试 1 次
+    3. 回复质检（封闭式问句/逐字重复）→ 不合格走三级重试阶梯（hint/rag_refresh/context_trim）
     4. 空回复/异常 → FALLBACK_REPLY
     5. sources 字段返回供前端渲染
     """
@@ -383,20 +532,45 @@ async def intervention_node(state: AgentState) -> dict:
         user_msg = state.get("user_message", "")
         min_methods = 2 if detect_method_question(user_msg) else 1
         first_reply = reply
-        # 质检重试：不合格时最多重试 2 次（共 3 次尝试），采用首个合格回复；
-        # 全部不合格则保留首次回复（不拿更差的覆盖）。实测单轮重试仍有 ~3% 长度不达标，
-        # 第 2 次重试基本能把短回复拉到 50 字以上。
-        max_retries = 2
+        # 质检重试阶梯（最多 3 次，采用首个合格回复；全部不合格保留首次回复，不拿更差的覆盖）：
+        # ① hint：同 prompt + 针对性禁令（temp 0.6，0.35 下本地 LoRA 复读加剧）；
+        # ② rag_refresh：换 RAG 片段重拼 prompt（排除首轮已引用切片）——多轮复读主因之一
+        #    是同一 RAG 片段被逐字照抄，换片段比换措辞更根治；
+        # ③ context_trim：终极重试，history 剔除 assistant 历史回复（保留用户消息保连贯）——
+        #    实测复读主因是照抄自己此前的回复（历史锚点），剔除后模型无从照抄；
+        #    质检仍按真实 history 校验（复读/幻觉归因/闭合问句），不合格照样回退首次回复。
+        max_retries = 3
+        retry_modes: list[str] = []
+        alt_chunks: list | None = None
         for attempt in range(1, max_retries + 1):
             if check_reply_quality(reply, history, min_method_categories=min_methods, min_len=50):
                 break
             logger.info("intervention: quality check failed, retry %d/%d", attempt, max_retries)
             decision["llm"]["quality_retry"] = True
+            mode = ("hint", "rag_refresh", "context_trim")[attempt - 1]
+            retry_modes.append(mode)
             try:
+                if mode == "context_trim":
+                    trim_state = {
+                        **state,
+                        "history": [h for h in (state.get("history") or []) if h.get("role") == "user"],
+                    }
+                    if alt_chunks is None:
+                        alt_chunks = await _refresh_rag_sources(state, rag_sources)
+                    retry_base, _, _, _ = await build_intervention_messages(trim_state, rag_override=alt_chunks)
+                elif mode == "rag_refresh":
+                    if alt_chunks is None:
+                        alt_chunks = await _refresh_rag_sources(state, rag_sources)
+                    retry_base, _, _, _ = await build_intervention_messages(state, rag_override=alt_chunks)
+                else:
+                    retry_base = messages
                 retry = await provider.chat(
                     role="dialog",
-                    messages=[*messages, {"role": "system", "content": RETRY_HINT}],
-                    temperature=0.35,
+                    messages=[
+                        *retry_base,
+                        {"role": "system", "content": build_retry_hint(first_reply, history)},
+                    ],
+                    temperature=0.6 if mode == "hint" else 0.7,
                     max_tokens=3000,
                 )
                 if retry and retry.strip() and check_reply_quality(
@@ -409,6 +583,7 @@ async def intervention_node(state: AgentState) -> dict:
                     "intervention: quality retry %d failed: %s, keep first reply", attempt, str(retry_err)
                 )
                 break
+        decision["llm"]["retry_modes"] = retry_modes
         # 所有重试均不合格：回退首次回复（模型的原始输出，不拿不合格重试覆盖）
         if not check_reply_quality(reply, history, min_method_categories=min_methods, min_len=50):
             reply = first_reply

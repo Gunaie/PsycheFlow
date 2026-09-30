@@ -302,14 +302,17 @@ async def chat_stream(
 
                 # 提前推 sources（让前端在 token 到来前先渲染知识卡片）
                 # 同一次 build 拿到 messages，传给 stream_intervention 避免重复 RAG 检索
-                messages, formatted_sources, _, _ = await build_intervention_messages(state)
+                messages, formatted_sources, rag_srcs, _ = await build_intervention_messages(state)
                 final_sources = formatted_sources
                 if final_sources:
                     yield _sse("sources", {"sources": final_sources})
 
-                # 流式 yield token（复用 prebuilt messages，避免重复 RAG 检索）
+                # 流式 yield token（复用 prebuilt messages，避免重复 RAG 检索；
+                # 传入首轮 RAG 片段供质检重试换片时排除已引用切片）
                 collected: list[str] = []
-                async for token in stream_intervention(state, prebuilt_messages=messages):
+                async for token in stream_intervention(
+                    state, prebuilt_messages=messages, prebuilt_rag_sources=rag_srcs
+                ):
                     collected.append(token)
                     yield _sse("token", {"token": token})
                 final_reply = "".join(collected)

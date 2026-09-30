@@ -20,7 +20,7 @@ import sys
 
 sys.path.insert(0, "/app")
 
-from app.agents.nodes.intervention import build_intervention_messages, check_reply_quality, RETRY_HINT  # noqa: E402
+from app.agents.nodes.intervention import build_intervention_messages, build_retry_hint, check_reply_quality  # noqa: E402
 from app.agents.nodes.triage import detect_method_question  # noqa: E402
 from app.agents.state import AgentState  # noqa: E402
 from app.core.llm import provider  # noqa: E402
@@ -79,8 +79,10 @@ async def run_scenario(scenario: dict) -> None:
         ):
             tokens.append(token)
         reply = "".join(tokens).strip()
-        # 质检重试（与生产 intervention_node 同口径：最多重试 1 次，
-        # 重试回复须重新质检，不合格则保留首次回复）
+        # 质检重试（与生产 intervention_node 同口径：动态针对性禁令 + 重试温度 0.6；
+        # 冒烟脚本从简只重试 1 次，生产为三级阶梯最多 3 次：hint 针对性禁令 →
+        # rag_refresh 换检索片段 → context_trim 剔除历史 assistant 回复；
+        # 重试回复须重新质检，全部不合格则保留首次回复）
         history = [
             {"role": h["role"], "content": h["content"]}
             for h in (state.get("history") or [])
@@ -92,8 +94,8 @@ async def run_scenario(scenario: dict) -> None:
             retry_tokens: list[str] = []
             async for token in provider.stream(
                 role="dialog_stream",
-                messages=[*messages, {"role": "system", "content": RETRY_HINT}],
-                temperature=0.35, max_tokens=3000,
+                messages=[*messages, {"role": "system", "content": build_retry_hint(first_reply, history)}],
+                temperature=0.6, max_tokens=3000,
             ):
                 retry_tokens.append(token)
             retry_reply = "".join(retry_tokens).strip()
