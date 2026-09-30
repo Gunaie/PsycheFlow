@@ -25,10 +25,8 @@ async def test_integration_normal_path_talk_venting():
         "history": [],
         "agent_trace": [],
     }
-    with patch("app.agents.nodes.triage.provider") as mock_triage_p, \
-         patch("app.agents.nodes.intervention.provider") as mock_intv_p, \
+    with patch("app.agents.nodes.intervention.provider") as mock_intv_p, \
          patch("app.agents.nodes.intervention.rag_service") as mock_rag:
-        mock_triage_p.chat = AsyncMock(return_value="倾诉")
         mock_intv_p.chat = AsyncMock(return_value="我听到你最近压力很大，我陪你聊聊。")
         mock_rag.search = AsyncMock(return_value=[
             {"text": "压力管理技巧", "source": "cbt_techniques.md", "chunk_id": 0, "distance": 0.5},
@@ -54,16 +52,12 @@ async def test_integration_crisis_path_skips_assessment_intervention():
         "history": [],
         "agent_trace": [],
     }
-    with patch("app.agents.nodes.triage.provider") as mock_triage_p, \
-         patch("app.agents.nodes.intervention.provider") as mock_intv_p, \
+    with patch("app.agents.nodes.intervention.provider") as mock_intv_p, \
          patch("app.agents.nodes.escalation.write_crisis_audit") as mock_audit:
-        mock_triage_p.chat = AsyncMock(return_value="should_not_be_called_for_crisis")
         mock_intv_p.chat = AsyncMock(return_value="should_not_be_called_for_crisis")
         mock_audit.return_value = "/tmp/crisis_test.json"
         final_state = await graph.ainvoke(initial_state)
 
-    # triage 命中 crisis 应跳过 LLM 意图分类
-    mock_triage_p.chat.assert_not_called()
     # intervention 节点不应被调用
     mock_intv_p.chat.assert_not_called()
     # 验证路由
@@ -76,7 +70,7 @@ async def test_integration_crisis_path_skips_assessment_intervention():
 
 @pytest.mark.asyncio
 async def test_integration_consult_path_with_rag_sources():
-    """咨询场景（规则化分诊默认倾诉）：triage→assessment→intervention + RAG sources 返回"""
+    """咨询场景（知识问句规则 → 咨询）：triage→assessment→intervention + RAG sources 返回"""
     initial_state = {
         "session_id": "test-int-sid-003",
         "account_id": "test-int-acc-003",
@@ -84,10 +78,8 @@ async def test_integration_consult_path_with_rag_sources():
         "history": [],
         "agent_trace": [],
     }
-    with patch("app.agents.nodes.triage.provider") as mock_triage_p, \
-         patch("app.agents.nodes.intervention.provider") as mock_intv_p, \
+    with patch("app.agents.nodes.intervention.provider") as mock_intv_p, \
          patch("app.agents.nodes.intervention.rag_service") as mock_rag:
-        mock_triage_p.chat = AsyncMock(return_value="咨询")
         mock_intv_p.chat = AsyncMock(return_value=(
             "抑郁是持续心境低落的状态。"
             "来源：《ccmd3_summary.md》"
@@ -100,8 +92,8 @@ async def test_integration_consult_path_with_rag_sources():
 
     assert final_state["current_agent"] == "intervention"
     assert final_state["agent_trace"] == ["triage", "assessment", "intervention"]
-    # 规则化分诊：知识问句默认倾诉，由 intervention+RAG 回答
-    assert final_state["triage_intent"] == "倾诉"
+    # 知识问句规则路由 → 咨询（先答问骨架 + RAG）
+    assert final_state["triage_intent"] == "咨询"
     assert len(final_state["sources"]) == 2
     assert final_state["sources"][0]["source"] == "ccmd3_summary.md"
     assert "抑郁" in final_state["final_reply"]
@@ -117,10 +109,8 @@ async def test_integration_help_request_no_assessment_context():
         "history": [],
         "agent_trace": [],
     }
-    with patch("app.agents.nodes.triage.provider") as mock_triage_p, \
-         patch("app.agents.nodes.intervention.provider") as mock_intv_p, \
+    with patch("app.agents.nodes.intervention.provider") as mock_intv_p, \
          patch("app.agents.nodes.intervention.rag_service") as mock_rag:
-        mock_triage_p.chat = AsyncMock(return_value="求助")
         mock_intv_p.chat = AsyncMock(return_value="建议你前往 /scale 完成测评。")
         mock_rag.search = AsyncMock(return_value=[])
         final_state = await graph.ainvoke(initial_state)
@@ -143,10 +133,8 @@ async def test_integration_empty_llm_reply_triggers_fallback():
         "history": [],
         "agent_trace": [],
     }
-    with patch("app.agents.nodes.triage.provider") as mock_triage_p, \
-         patch("app.agents.nodes.intervention.provider") as mock_intv_p, \
+    with patch("app.agents.nodes.intervention.provider") as mock_intv_p, \
          patch("app.agents.nodes.intervention.rag_service") as mock_rag:
-        mock_triage_p.chat = AsyncMock(return_value="倾诉")
         mock_intv_p.chat = AsyncMock(return_value="")  # 空回复
         mock_rag.search = AsyncMock(return_value=[])
         final_state = await graph.ainvoke(initial_state)

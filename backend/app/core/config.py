@@ -65,9 +65,13 @@ class Settings(BaseSettings):
     local_model: str = "qwen2.5:7b"       # 默认基座（intake/triage 分诊用；RTX 4060 8GB 可跑 Q4 量化）
     local_embed_model: str = "bge-m3"     # RAG 向量化（Ollama /v1/embeddings 端点，1024 维）
     # 3.B 微调专用模型（留空 = 回退 local_model 基座）：dialog/report 可各自挂 LoRA 合并后的 GGUF
-    local_model_triage: str = ""          # 分诊专用模型（留空回退基座；实测 qwen2.5:0.5b 准确率仅 48.8% 已弃用，用 7b 基座）
+    local_model_triage: str = ""          # 2026-09-30 起 triage 已全规则化，该模型不再参与生产路由，仅留作资产
     local_model_dialog: str = ""          # 共情对话（intervention 节点 dialog/dialog_stream）
     local_model_report: str = ""          # 报告发展建议（report）
+    # 本地模式启动预热：后端启动后后台异步加载 dialog-lora + embed 模型到显存/内存，
+    # 消除首个真实用户的模型加载等待（8GB 显存下 7B Q4 冷加载约 50s）。
+    # 设 LOCAL_WARMUP=false 关闭；pytest 下自动跳过。
+    local_warmup: bool = True
 
     # LLM 温度：计分场景确定性优先，对话场景放宽
     temp_intake: float = 0.1

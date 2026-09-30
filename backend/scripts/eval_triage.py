@@ -1,19 +1,19 @@
 # -*- coding: utf-8 -*-
-"""Triage 意图分类评测脚本（P2 LLM 输出评估体系）。
+"""Triage 分诊路由评测脚本（2026-09-30 起 triage 为全规则路由，零 LLM）。
 
 对 scripts/eval/triage_dataset.json 中的标注样本逐条调用真实 triage_node，
-统计 4 类意图（求助/倾诉/咨询/危机）的总体与分类别准确率。
+统计 5 类路由（求助/倾诉/咨询/危机/寒暄）的总体与分类别准确率。
 
-用法（容器内；云/本地模式均可，按 .env 的 LLM_MODE 走真实路由——
-       local 下即 LOCAL_MODEL_TRIAGE，无需 DASHSCOPE_API_KEY）：
+用法（容器内；无需任何 API key，纯规则执行）：
   docker exec psycheflow-backend uv run python scripts/eval_triage.py           # 全量
   docker exec psycheflow-backend uv run python scripts/eval_triage.py --limit 8 # 冒烟
   docker exec psycheflow-backend uv run python scripts/eval_triage.py --verbose # 打印每条对错
 
 说明：
-  - 危机类样本命中 detect_crisis_with_words 硬编码词表（零 LLM），是安全回归——
+  - 本评测测的是规则路由（detect_crisis/detect_greeting/咨询规则/求助渠道/默认倾诉），
+    不调用任何模型；结果 JSON 的 engine=rule_based，model 字段不再适用
+  - 危机类命中 detect_crisis_with_words 硬编码词表，是安全回归——
     期望其准确率恒为 100%，任何下降即阻断发布
-  - LLM 类样本（求助/倾诉/咨询）受模型与温度影响，准确率波动属正常，重点看相对基线的变化
   - 结果写入 scripts/eval/results/triage_eval_<时间戳>.json 并同步覆盖 triage_eval_latest.json
 """
 import argparse
@@ -26,7 +26,6 @@ import time
 sys.path.insert(0, "/app")
 
 from app.agents.nodes.triage import triage_node  # noqa: E402
-from app.core.config import settings  # noqa: E402
 
 DATASET_PATH = "/app/scripts/eval/triage_dataset.json"
 RESULTS_DIR = "/app/scripts/eval/results"
@@ -68,11 +67,10 @@ async def run(dataset_path: str, limit: int | None, verbose: bool) -> dict:
 
     total = len(cases)
     correct = total - len(failures)
-    is_local = str(settings.llm_mode).strip().lower() == "local"
     summary = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "mode": settings.llm_mode,
-        "model": (settings.local_model_triage or settings.local_model) if is_local else settings.model_triage,
+        "engine": "rule_based",
+        "model": None,
         "dataset": os.path.basename(dataset_path),
         "total": total,
         "correct": correct,
@@ -88,15 +86,11 @@ async def run(dataset_path: str, limit: int | None, verbose: bool) -> dict:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Triage 意图分类评测")
+    parser = argparse.ArgumentParser(description="Triage 分诊路由评测（全规则，零 LLM）")
     parser.add_argument("--limit", type=int, default=None, help="只评测前 N 条（冒烟用）")
     parser.add_argument("--verbose", action="store_true", help="打印每条判定结果")
     parser.add_argument("--dataset", default=DATASET_PATH, help="数据集路径")
     args = parser.parse_args()
-
-    if not settings.dashscope_api_key:
-        print("[中止] 未配置 DASHSCOPE_API_KEY：本评测调用真实 LLM，请在有凭据的环境（容器）运行", file=sys.stderr)
-        return 2
 
     summary = asyncio.run(run(args.dataset, args.limit, args.verbose))
 
@@ -109,7 +103,7 @@ def main() -> int:
     with open(latest_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
 
-    print(f"\n===== Triage 评测结果（{summary['mode']} 模式，模型 {summary['model']}）=====")
+    print(f"\n===== Triage 分诊路由评测结果（规则路由，零 LLM）=====")
     print(f"总体: {summary['correct']}/{summary['total']} = {summary['accuracy']:.1%}（耗时 {summary['elapsed_sec']}s）")
     for intent, v in summary["per_intent"].items():
         print(f"  {intent}: {v['correct']}/{v['total']} = {v['accuracy']:.1%}")

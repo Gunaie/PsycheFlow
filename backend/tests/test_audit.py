@@ -187,12 +187,9 @@ class TestAudit:
 class TestConversationTurns:
     def test_two_rounds_insert_four_rows_alternating(self, env_setup):
         d = env_setup; c = d["client"]
-        # B 二期：chat 走 LangGraph，triage+intervention 节点各自调 LLM
-        # triage 固定返回"倾诉"意图，intervention 用 side_effect 给 2 轮不同回复
-        with patch("app.agents.nodes.triage.provider") as mt, \
-             patch("app.agents.nodes.intervention.provider") as mi, \
+        # B 二期：chat 走 LangGraph；triage 为规则路由（零 LLM），只 mock intervention
+        with patch("app.agents.nodes.intervention.provider") as mi, \
              patch("app.agents.nodes.intervention.rag_service") as mr:
-            mt.chat = AsyncMock(return_value="倾诉")
             mr.search = AsyncMock(return_value=[])
             mi.chat = AsyncMock(side_effect=[
                 "你好呀，今天感觉怎么样？",
@@ -221,11 +218,9 @@ class TestConversationTurns:
     def test_old_payload_no_session_account_still_200(self, env_setup):
         d = env_setup; c = d["client"]
         # 传最原始结构：只有 message, history；兼容（TR-7.3）
-        # B 二期：chat 走 LangGraph，patch triage+intervention 节点
-        with patch("app.agents.nodes.triage.provider") as mt, \
-             patch("app.agents.nodes.intervention.provider") as mi, \
+        # B 二期：chat 走 LangGraph；triage 为规则路由（零 LLM），只 mock intervention
+        with patch("app.agents.nodes.intervention.provider") as mi, \
              patch("app.agents.nodes.intervention.rag_service") as mr:
-            mt.chat = AsyncMock(return_value="倾诉")
             mi.chat = AsyncMock(return_value="好的我收到了")
             mr.search = AsyncMock(return_value=[])
             r = c.post("/api/chat", json={"message": "就是试试历史请求格式", "history": []})

@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-09-27 13:50:36",
-  "mode": "local",
-  "model": "qwen2.5:triage-lora",
+  "timestamp": "2026-09-30 13:18:26",
+  "engine": "rule_based",
+  "model": null,
   "dataset": "triage_dataset.json",
-  "total": 50,
-  "correct": 50,
+  "total": 53,
+  "correct": 53,
   "accuracy": 1.0,
   "per_intent": {
     "危机": {
@@ -26,8 +26,13 @@
       "total": 12,
       "correct": 12,
       "accuracy": 1.0
+    },
+    "寒暄": {
+      "total": 3,
+      "correct": 3,
+      "accuracy": 1.0
     }
   },
   "failures": [],
-  "elapsed_sec": 91.2
+  "elapsed_sec": 0.0
 }

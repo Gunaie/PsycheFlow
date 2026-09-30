@@ -193,16 +193,12 @@ class TestChatHistoryEndpoint:
     def test_history_roundtrip(self, client):
         # 真实流程：前端先 POST /api/sessions 创建会话，再在会话内对话
         sid = client.post("/api/sessions", json={"label": "对话"}).json()["session_id"]
-        p_triage = patch.multiple(
-            "app.agents.nodes.triage",
-            provider=MagicMock(chat=AsyncMock(return_value="倾诉")),
-        )
         p_intv = patch.multiple(
             "app.agents.nodes.intervention",
             provider=MagicMock(chat=AsyncMock(return_value=_OK_REPLY)),
             rag_service=MagicMock(search=AsyncMock(return_value=[])),
         )
-        with p_triage, p_intv:
+        with p_intv:
             r = client.post("/api/chat", json={"message": "我最近压力大", "session_id": sid})
             assert r.status_code == 200
         r2 = client.get("/api/chat/history", params={"session_id": sid})
@@ -219,16 +215,12 @@ class TestChatHistoryEndpoint:
 
     def test_delete_history_roundtrip(self, client):
         sid = client.post("/api/sessions", json={"label": "对话"}).json()["session_id"]
-        p_triage = patch.multiple(
-            "app.agents.nodes.triage",
-            provider=MagicMock(chat=AsyncMock(return_value="倾诉")),
-        )
         p_intv = patch.multiple(
             "app.agents.nodes.intervention",
             provider=MagicMock(chat=AsyncMock(return_value=_OK_REPLY)),
             rag_service=MagicMock(search=AsyncMock(return_value=[])),
         )
-        with p_triage, p_intv:
+        with p_intv:
             r = client.post("/api/chat", json={"message": "我最近压力大", "session_id": sid})
             assert r.status_code == 200
 
@@ -252,10 +244,8 @@ class TestChatGuardrails:
 
     def test_history_clipped_to_20_messages(self, client):
         """上送 25 条 history → intervention 只收到最近 20 条（system+20+user=22）。"""
-        with patch("app.agents.nodes.triage.provider") as tp, \
-             patch("app.agents.nodes.intervention.provider") as ip, \
+        with patch("app.agents.nodes.intervention.provider") as ip, \
              patch("app.agents.nodes.intervention.rag_service") as rag:
-            tp.chat = AsyncMock(return_value="倾诉")
             ip.chat = AsyncMock(return_value=_OK_REPLY)
             rag.search = AsyncMock(return_value=[])
             history = [

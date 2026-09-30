@@ -1,20 +1,22 @@
-"""Triage 分诊节点：detect_crisis 硬编码短路 + 硬编码寒暄识别 + LLM 意图分类
-+ 方法问句纠偏（求助→咨询，修 0.5b 意图误判触发 RAG-skip 的误伤）。
+"""Triage 分诊节点（2026-09-30 起完全规则化，零 LLM）。
 
-安全原则：detect_crisis_with_words 在任何 LLM 调用前执行，命中即直接设置
-is_crisis=true 跳过 LLM（Escalation 节点处理），不进入意图分类 LLM 调用。
-寒暄同理：纯打招呼/身份询问短句由 detect_greeting 硬编码识别（零 LLM），
-规避 LLM 意图误判（实测"你好，你是谁"被误分类为「求助」，走进完整编排
-链路还推送无关 RAG 知识卡片）。
+路由顺序（任何 LLM 调用前先跑硬编码安全规则）：
+1. detect_crisis_with_words 危机词前置短路 → escalation（安全底线，不可降级）
+2. detect_greeting 寒暄识别 → 静态寒暄话术直达（不加载任何模型）
+3. 咨询规则：服务边界问句 / 方法问句 / 知识问句 → intent=咨询（intervention 先答问骨架 + RAG）
+4. 求助渠道规则：测评/量表/咨询渠道/援助资源 → 静态渠道话术直达
+5. 显式求助祈使（帮帮我/救救我）→ intent=求助（intervention 求助骨架，跳过 RAG）
+6. 其余默认 → intent=倾诉（intervention 先接情绪骨架 + RAG）
+
+历史：2026-09-27 前为 triage-lora 五分类 + 规则纠偏；为消除 8GB 显存下
+triage-lora ↔ dialog-lora 双模型反复加载（单轮 56-97s），改为全规则路由，
+生产路径不再调用 triage 模型。
 """
 import logging
 import re
 
-from app.agents.personas import get_persona, build_system_prompt
-from app.agents.prompts import TRIAGE_SYSTEM, TRIAGE_USER_TEMPLATE
+from app.agents.personas import get_persona
 from app.agents.state import AgentState
-from app.agents.nodes.intervention import check_reply_quality
-from app.core.llm import provider
 from app.core.safety import detect_crisis_with_words
 
 logger = logging.getLogger("psycheflow.agents.triage")
@@ -79,14 +81,10 @@ def detect_greeting(message: str) -> bool:
     return bool(segments) and all(_seg_is_greeting(s) for s in segments)
 
 
-# ================= 硬编码方法问句识别（零 LLM，2026-09-08） =================
-# 实测 0.5b triage 把「怎么缓解焦虑」误判为「求助」，触发 intervention 对求助
-# 意图的 RAG-skip，导致缓解方法知识卡被拦截、答非所问反问（检索实测 dist=0.45
-# 内容就在库里）。方法问句（求做法/求建议）按 TRIAGE_SYSTEM 定义属「咨询」。
-# 采用最小侵入纠偏：仅当 LLM 判为求助且方法问句命中时改判咨询；LLM 判倾诉/
-# 咨询时保持原判（倾诉骨架同样给做法且 RAG 不跳过，无需干预）。
+# ================= 硬编码方法问句识别（零 LLM，2026-09-08；2026-09-30 升级为一级路由） =================
+# 求做法/求建议的消息按 TRIAGE_SYSTEM 定义属「咨询」，intervention 用先答问骨架 + RAG。
 _METHOD_Q_RE = re.compile(
-    r"(怎么|如何|怎样)[^，。！？!?；;]{0,10}(缓解|改善|克服|应对|调节|治疗|解决)"
+    r"(怎么|如何|怎样)[^，。！？!?；;]{0,10}(缓解|改善|克服|应对|调节|调整|治疗|解决|控制|沟通|专注|自律|帮)"
     r"|(缓解|改善|克服|应对|调节|解决)[^，。！？!?；;]{0,8}(怎么办|的方法|的办法)"
     r"|怎么办|有什么办法|有什么方法"
 )
@@ -95,12 +93,31 @@ _METHOD_Q_RE = re.compile(
 def detect_method_question(message: str) -> bool:
     """硬编码方法问句识别（零 LLM）：询问缓解/改善/应对等做法的消息。
 
-    守卫：≤30 字（长句多为主线倾诉附带提问，交回 LLM 与倾诉骨架处理）。
+    守卫：≤35 字（长句多为主线倾诉附带提问，走倾诉骨架处理）。
     """
     text = (message or "").strip()
-    if not text or len(text) > 30:
+    if not text or len(text) > 35:
         return False
     return bool(_METHOD_Q_RE.search(text))
+
+
+# ================= 硬编码知识问句识别（零 LLM，2026-09-30） =================
+# 纯知识/概念问句（什么是抑郁/正常吗/需要吃药吗/多少次）属咨询，先答问骨架。
+_KNOWLEDGE_Q_RE = re.compile(
+    r"(什么是|是什么|指什么|有什么区别|科学依据|正常吗|正常的吗"
+    r"|需要.{0,6}吗|怎样才算|怎么才算|包括哪些|哪些类型|多少次|几个疗程)"
+)
+
+
+def detect_knowledge_question(message: str) -> bool:
+    """硬编码知识问句识别（零 LLM）：询问概念/机制/标准/疗程等知识的消息。
+
+    守卫：≤32 字（长句多为倾诉中附带提问，走倾诉骨架处理）。
+    """
+    text = (message or "").strip()
+    if not text or len(text) > 32:
+        return False
+    return bool(_KNOWLEDGE_Q_RE.search(text))
 
 
 # ================= 硬编码显式求助祈使句识别（零 LLM，2026-09-27） =================
@@ -142,15 +159,20 @@ def detect_service_question(message: str) -> bool:
 # 完全规则化分诊后，求助类（寻求测评/咨询渠道）不再走 triage-lora，改为硬编码
 # 渠道推荐话术直达。覆盖：测评/量表、心理老师/咨询室、援助资源、预约/渠道/平台。
 _HELP_CHANNEL_RE = re.compile(
-    r"(心理测评|心理评估|做.{0,3}测评|做.{0,3}评估|量表|自评|抑郁自评|焦虑自评|能不能测|能.{0,2}测)"
-    r"|(心理老师|心理咨询师|心理咨询室|心理中心|心理咨询|心理援助|援助热线|援助资源)"
-    r"|(预约.{0,4}(咨询|心理)|怎么.{0,4}(约|预约)|去哪里.{0,4}(咨询|聊|测)|哪里.{0,4}(咨询|测|聊))"
+    r"(心理测评|心理评估|做.{0,3}测评|做.{0,3}评估|量表|自评|抑郁自评|焦虑自评|能不能测|能.{0,2}测"
+    r"|做什么检查|什么检查|怀疑自己是不是|想知道自己是不是|是不是有.{0,8}(焦虑|抑郁|心理问题))"
+    r"|(心理老师|心理咨询师|心理咨询室|心理中心|心理咨询|心理援助|援助热线|援助资源|专业的人)"
+    r"|(预约.{0,4}(咨询|心理)|怎么.{0,4}(约|预约)|去哪里.{0,4}(咨询|聊|测)|哪里.{0,6}(咨询|测|聊|去|预约))"
     r"|(靠谱.{0,4}(渠道|平台|心理咨询)|线上.{0,4}(渠道|平台|咨询))"
 )
 
 
 def detect_help_channel(message: str) -> bool:
-    """硬编码求助渠道识别（零 LLM）：寻求测评/咨询渠道/量表的消息。"""
+    """硬编码求助渠道识别（零 LLM）：寻求测评/咨询渠道/量表的消息。
+
+    注意：咨询规则（方法/服务/知识问句）在调用方先于本规则判定，
+    「心理咨询一般要做多少次」等以心理咨询为话题背景的知识句不会误入。
+    """
     return bool(_HELP_CHANNEL_RE.search(message or ""))
 
 
@@ -180,70 +202,50 @@ def _help_fast_path(state: AgentState, trace: list, decisions: dict) -> dict:
     }
 
 
-async def _greeting_fast_path(
-    state: AgentState, message: str, trace: list, decisions: dict
-) -> dict:
-    """寒暄快速通道：用轻量 triage 模型生成简短问候回复，产出 final_reply 直接结束编排。
+# ================= 硬编码寒暄静态话术（零 LLM，2026-09-30） =================
+# 身份/能力询问短语（命中则回自我介绍话术，否则回纯打招呼话术）
+_IDENTITY_Q_RE = re.compile(
+    r"(你是谁|你是什么|你叫什么|你名字|你是机器人|你是ai|你是人工智能|你是真人|你是人"
+    r"|你是助手|你是心理|你是干嘛|你是干什么|你是做什么|你能做什么|你能干什么"
+    r"|你会做什么|你会什么|你会干嘛|介绍.{0,2}你|自我介绍|who are you|what are you)"
+)
 
-    调用方需自行 try/except：生成失败时回退到正常意图分类/倾诉流程。
-    质检：生成后复用 intervention 的 check_reply_quality（闭合问句/多问题/超长），
-    不合格附纠正提示重试 1 次，避免寒暄回复漏出"有什么想说的吗？"类闭合问句。
+
+def greeting_static_reply(message: str, persona_name: str) -> str:
+    """寒暄静态话术（零 LLM）：身份/能力询问→自我介绍，纯打招呼→温暖应答。
+
+    全部为开放式陈述，不含闭合问句，长度 ≤120，满足 check_reply_quality 上限。
     """
+    if _IDENTITY_Q_RE.search((message or "").lower()):
+        return (
+            f"你好呀，我是{persona_name}，一个陪你聊天的心理支持伙伴。"
+            "学习压力、情绪困扰、睡不着，都可以和我说；"
+            "想做心理评估，我也能告诉你学校和专业渠道。"
+        )
+    return (
+        f"你好呀，我在的，我是{persona_name}。"
+        "最近有什么开心或烦心的事，都可以随时和我说说，不用着急，慢慢聊就好。"
+    )
+
+
+def _greeting_fast_path(state: AgentState, message: str, trace: list, decisions: dict) -> dict:
+    """寒暄快速通道：硬编码静态话术，产出 final_reply 直接结束编排（零 LLM、零失败回退）。"""
     persona = get_persona(state.get("persona_id"))
-    system = (
-        build_system_prompt(persona)
-        + "\n请简洁地回应用户的打招呼或询问（50字以内），不要开启 RAG 或深度对话。"
-        + "\n禁止使用闭合问句（如'有什么想说的吗''你好吗'），用开放式表达收尾，如直接说'我在听'或'随时可以和我说说'。"
-    )
-    greeting_reply = await provider.chat(
-        role="triage",  # 复用轻量模型
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": message},
-        ],
-        temperature=0.7,
-        max_tokens=100,
-    )
-    # 质检：闭合问句/多问题/超长 → 重试 1 次（降温提遵循率）
-    if not check_reply_quality(greeting_reply, history=None):
-        logger.info("triage: greeting quality check failed, retrying once")
-        try:
-            retry = await provider.chat(
-                role="triage",
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": message},
-                    {"role": "system", "content": (
-                        "【重试要求】上条回复不合格：可能用了'吗/吧'收尾的闭合问句，"
-                        "或提了多个问题，或超过50字。请重新生成：50字以内、最多一个问题、"
-                        "禁止闭合问句（不用'吗''吧'收尾），用开放式表达。直接输出回复正文。"
-                    )},
-                ],
-                temperature=0.35,
-                max_tokens=100,
-            )
-            if retry and retry.strip() and check_reply_quality(retry, history=None):
-                greeting_reply = retry
-        except Exception as e:
-            logger.warning("triage: greeting retry failed: %s", str(e))
     return {
         "is_crisis": False,
         "triage_intent": "寒暄",
-        "final_reply": greeting_reply,
+        "final_reply": greeting_static_reply(message, persona.name),
         "current_agent": "triage",
         "agent_trace": trace,
-        "node_decisions": decisions
+        "node_decisions": decisions,
     }
 
 
 async def triage_node(state: AgentState) -> dict:
-    """分诊节点。
+    """分诊节点（全规则，零 LLM）。
 
-    流程：
-    1. detect_crisis_with_words 硬编码前置扫描（零 LLM），命中 → is_crisis=true
-    2. detect_greeting 硬编码寒暄识别（零 LLM），命中 → 快速通道直达回复
-    3. 未命中 → 调 provider.chat(role="triage", temp=0.1) 分类意图
-    4. LLM 分类为寒暄 → 同样走快速通道
+    路由：危机短路 → 寒暄静态直达 → 咨询规则（服务/方法/知识问句）
+    → 求助渠道静态直达 → 求助祈使 → 默认倾诉。
     """
     message = state.get("user_message", "")
     trace = state.get("agent_trace", []) + ["triage"]
@@ -253,7 +255,7 @@ async def triage_node(state: AgentState) -> dict:
     is_crisis, detected_words = detect_crisis_with_words(message)
 
     if is_crisis:
-        logger.info("triage: crisis hit, words=%s, skip LLM", detected_words)
+        logger.info("triage: crisis hit, words=%s", detected_words)
         decisions["triage"] = {
             "decision": "crisis_detected",
             "type": "keyword_match",
@@ -269,61 +271,40 @@ async def triage_node(state: AgentState) -> dict:
             "node_decisions": decisions
         }
 
-    # 2. 硬编码寒暄识别（零 LLM）：纯寒暄短句直接走快速通道，规避 LLM 意图误判
+    # 2. 硬编码寒暄识别 → 静态话术直达（零 LLM）
     if detect_greeting(message):
-        logger.info("triage: greeting hit by hardcoded rule, fast-path")
+        logger.info("triage: greeting hit, static fast-path")
         decisions["triage"] = {
             "decision": "fast_path_greeting",
             "type": "keyword_match"
         }
-        try:
-            return await _greeting_fast_path(state, message, trace, decisions)
-        except Exception as e:
-            logger.warning("triage: greeting fast-path failed: %s, fallback to LLM classification", e)
-            decisions["triage"] = {
-                "decision": "greeting_fast_path_fallback",
-                "reason": str(e)
-            }
+        return _greeting_fast_path(state, message, trace, decisions)
 
-    # 2c. 求助渠道快速通道（零 LLM）：寻求测评/咨询渠道 → 硬编码渠道话术直达。
-    # 排除咨询服务边界问句（保密/能力等属咨询信息，非求助渠道）。
-    if not detect_service_question(message) and detect_help_channel(message):
+    # 3. 咨询规则（先于求助渠道判定）：
+    #    咨询服务边界（保密/能力）、方法问句（怎么缓解/怎么办）、知识问句（什么是/正常吗/多少次）
+    if detect_service_question(message):
+        intent, reason = "咨询", "service_question"
+    elif detect_method_question(message):
+        intent, reason = "咨询", "method_question"
+    elif detect_knowledge_question(message):
+        intent, reason = "咨询", "knowledge_question"
+    elif detect_help_channel(message):
+        # 4. 求助渠道：寻求测评/量表/咨询渠道/援助资源 → 静态渠道话术直达
         logger.info("triage: help-channel fast-path")
         return _help_fast_path(state, trace, decisions)
+    elif detect_help_plea(message):
+        # 5. 显式求助祈使（帮帮我/救救我）→ intervention 求助骨架
+        intent, reason = "求助", "help_plea"
+    else:
+        # 6. 默认倾诉
+        intent, reason = "倾诉", "default_vent"
 
-    # 2d. 默认倾诉（不再调 triage-lora 意图分类）：
-    # 危机/寒暄/求助渠道已硬编码处理，其余一律走倾诉 → intervention(dialog-lora)。
-    # 彻底避免加载 triage-lora，首轮只需加载 dialog-lora（4.7GB，可装入 8GB 显存）。
-    intent = "倾诉"
     decisions["triage"] = {
-        "decision": "default_vent",
-        "type": "rule",
+        "decision": reason,
+        "type": "keyword_match" if reason != "default_vent" else "rule",
         "intent": intent,
     }
-    logger.info("triage: default 倾诉 (skip LLM triage)")
-
-    # 2e. 显式求助祈使句纠偏（零 LLM）：「帮帮我」式直接求助 → 求助。
-    if detect_help_plea(message):
-        logger.info("triage: help-plea override 倾诉→求助")
-        decisions["triage"] = {
-            "decision": "help_plea_override",
-            "type": "keyword_match",
-            "original_intent": "倾诉"
-        }
-        intent = "求助"
-
-    # 2f. 方法问句纠偏（零 LLM）：求助 + 方法问句 → 咨询（求做法非求渠道）。
-    if intent == "求助" and detect_method_question(message):
-        logger.info("triage: method-question override 求助→咨询")
-        decisions["triage"] = {
-            "decision": "method_question_override",
-            "type": "keyword_match",
-            "original_intent": "求助"
-        }
-        intent = "咨询"
-
-    # 3. 返回分诊结果（危机/寒暄/求助渠道已在上面直达返回，此处为倾诉/求助/咨询）
-    logger.info("triage: intent=%s", intent)
+    logger.info("triage: rule=%s intent=%s", reason, intent)
     return {
         "is_crisis": False,
         "crisis": False,

@@ -3,7 +3,10 @@
 当前接入：健康检查（步骤1）+ 百炼连通测试（步骤3）+ RAG（步骤4）+
 量表/对话（步骤5）+ 会话持久化与 PDF 报告（步骤6）。
 """
+import asyncio
 import logging
+import sys
+import time
 import traceback
 from contextlib import asynccontextmanager
 
@@ -47,6 +50,37 @@ async def lifespan(_app: FastAPI):
             str(_e),
             traceback.format_exc(),
         )
+    # --------------------------------------------------------
+
+    # ---------- 本地模式启动预热（2026-09-30） ----------
+    # 后台非阻塞加载 dialog-lora（首条真实对话冷加载约 50s）+ embedding 模型。
+    # 任何失败只记 warning，不阻断启动；pytest 下自动跳过。
+    if (
+        str(settings.llm_mode).strip().lower() == "local"
+        and settings.local_warmup
+        and "pytest" not in sys.modules
+    ):
+        async def _warmup_local_models() -> None:
+            from app.core.llm import provider
+            t0 = time.monotonic()
+            try:
+                logger.info("warmup: 后台预加载本地 dialog 模型 ...")
+                await provider.chat(
+                    "dialog",
+                    [{"role": "user", "content": "请只回复：在"}],
+                    temperature=0,
+                    max_tokens=10,
+                )
+                logger.info("warmup: dialog 模型就绪，耗时 %.1fs", time.monotonic() - t0)
+            except Exception as _e:
+                logger.warning("warmup: dialog 预加载失败（不影响服务）: %s", _e)
+            try:
+                await provider.embed(["预热"])
+                logger.info("warmup: embedding 模型就绪")
+            except Exception as _e:
+                logger.warning("warmup: embedding 预加载失败（不影响服务）: %s", _e)
+
+        asyncio.create_task(_warmup_local_models())
     # --------------------------------------------------------
 
     yield

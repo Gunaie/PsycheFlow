@@ -10,7 +10,7 @@
 
 - **标准化测评**：PHQ-A（抑郁）/ SCARED（焦虑，支持与 PHQ-A 合并双量表）/ SDQ / MHT 四套量表，规则化计分（SDQ 反向计分、PHQ-A 自杀意念单项直达升级），不进 LLM
 - **智能报告**：单页长报告（对齐 MHT 六章节结构）、子维度雷达图（3+ 因子量表）、测评用时、发展建议（LLM 生成 + 兜底话术）、PDF 导出与下载
-- **AI 对话**：LangGraph 四智能体编排（分诊→测评→干预→升级）、SSE 流式输出（寒暄毫秒级，对话首 token < 1.5s）、RAG 心理知识库引用卡片（32 文件/327 片，向量 L2 + BM25 混合检索、阈值随嵌入模型自适应、结构化检索埋点）、4 种对话人格切换、语音输入（ASR）/ 朗读（TTS）
+- **AI 对话**：LangGraph 四智能体编排（分诊→测评→干预→升级）、**分诊全规则路由零 LLM**（2026-09-30：危机词表/寒暄/咨询/求助渠道全硬编码，毫秒级且可回归）、SSE 流式输出（寒暄毫秒级，对话首 token < 1.5s）、RAG 心理知识库引用卡片（32 文件/327 片，向量 L2 + BM25 混合检索、阈值随嵌入模型自适应、结构化检索埋点）、4 种对话人格切换、语音输入（ASR）/ 朗读（TTS）
 - **危机处理**：`detect_crisis` 前置于一切 LLM 调用、零 LLM 硬编码响应、12355 青少年热线、`crisis_*.json` 落盘 + 审计日志 DB 双写
 - **批量筛查**：教师管理后台（认证登录、CSV 名单建批次、6 位筛查码、学生匿名作答、统计聚合与导出）
 - **合规加固**：注册知情同意链、非 root 容器（prod uid 1000）、SQLite 文件 0600、备份 AES-256-CBC 加密（`scripts/backup_db.py`）
@@ -22,7 +22,7 @@
 - **后端**：Python + FastAPI + Pydantic + LangGraph + SQLAlchemy
 - **数据库**：SQLite3（MVP）→ PostgreSQL（规模化）
 - **向量库**：Chroma
-- **模型**：阿里云百炼云端 API（intake=qwen3.8-2.4t-a95b / triage=qwen3.8-27b / dialog=deepseek-v4-pro-0813 / dialog_stream=qwen3.8-max / report=deepseek-v4-flash-0731 / embed=text-embedding-v3 / ASR+TTS=qwen-audio-3.0）；本地 Ollama 模式（当前 .env 默认）：dialog/report/triage 三角色独立 LoRA（**qwen2.5:{dialog,report,triage}-lora**，2026-09-27 三任务重训）+ bge-m3-cpu 向量 + faster-whisper/sherpa-onnx 语音，全链路离线
+- **模型**：阿里云百炼云端 API（intake=qwen3.8-2.4t-a95b / triage=qwen3.8-27b / dialog=deepseek-v4-pro-0813 / dialog_stream=qwen3.8-max / report=deepseek-v4-flash-0731 / embed=text-embedding-v3 / ASR+TTS=qwen-audio-3.0）；本地 Ollama 模式（当前 .env 默认）：dialog/report 两角色独立 LoRA（**qwen2.5:{dialog,report}-lora**，2026-09-27 重训）+ **分诊全规则路由不加载模型**（triage-lora 资产保留但不参与生产，2026-09-30）+ bge-m3-cpu 向量 + faster-whisper/sherpa-onnx 语音，全链路离线；后端启动后台预热模型（LOCAL_WARMUP，可关）
 - **报告 PDF**：WeasyPrint + Jinja2
 - **部署**：Docker Compose（chroma + backend + frontend；prod 叠加非 root + 4 worker + nginx TLS）
 
@@ -32,13 +32,14 @@
 
 | 维度 | 指标 | 数值 |
 |---|---|---|
-| **LLM 输出评估** | Triage 意图分诊准确率（43 条标注样本，云端 qwen3.8-27b） | **97.7%**（42/43） |
-| | └ 本地 triage-lora（2026-09-27 18.3 重训） | **93.0%**（40/43，危机仍 8/8） |
-| | └ 危机类命中（硬编码词表，安全回归） | **100%**（8/8） |
+| **LLM 输出评估** | Triage 分诊路由准确率（2026-09-30 起全规则路由，53 条标注样本） | **100%**（53/53，危机 8/8，纯规则 0.0s） |
+| | └ 历史基线：云端 qwen3.8-27b 43 条 | 97.7%（42/43，2026-09-27 快照） |
+| | └ 历史基线：本地 triage-lora 43 条 | 93.0%（40/43，模型已退出生产路由） |
 | | 报告结构合规率（5 场景共 76 项断言：15/15/15/15/16，云端 flash / 本地 report-lora 均通过） | **100%**（76/76） |
-| **性能（NFR）** | SSE 对话首 token 延迟（关思考链模型 + 寒暄/危机零 LLM 硬编码前置） | **寒暄 < 0.5s / 对话 ~1.2s** |
+| **性能（NFR）** | 本地模式单轮耗时（RTX 4060 8GB，2026-09-30 实测）：寒暄/求助静态话术、首轮（预热后）、后续轮 | **0.0–0.1s / 6.4s / 3.7s** |
+| | SSE 对话首 token 延迟（关思考链模型 + 寒暄/危机零 LLM 硬编码前置） | **寒暄 < 0.5s / 对话 ~1.2s** |
 | | `/api/health` 50 并发 | QPS 361，P95 128ms |
-| **测试** | 后端 pytest | 333 passed / 1 skipped |
+| **测试** | 后端 pytest | 365 passed / 1 skipped |
 | | 端到端验收（登录→对话→危机→报告→审计） | **7/7 PASS** |
 | **CI** | GitHub Actions（pytest + 前端构建 + 镜像构建） | ![CI](https://github.com/Gunaie/PsycheFlow/actions/workflows/ci.yml/badge.svg) |
 
@@ -68,7 +69,7 @@ flowchart TB
 
     subgraph llm["LLM 层（三级降级链）"]
         CLOUD["云端：阿里云百炼<br/>8 模型按角色分配"]
-        LOCAL["本地：Ollama<br/>三角色 LoRA · bge-m3-cpu"]
+        LOCAL["本地：Ollama<br/>dialog/report LoRA · bge-m3-cpu<br/>分诊规则路由（零模型）"]
         FALLBACK["节点级硬编码话术"]
     end
 

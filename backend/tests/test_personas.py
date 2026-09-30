@@ -22,7 +22,6 @@ from app.main import app
 
 client = TestClient(app)
 
-PATCH_TRIAGE_PROVIDER = "app.agents.nodes.triage.provider"
 PATCH_INTV_PROVIDER = "app.agents.nodes.intervention.provider"
 PATCH_INTV_RAG = "app.agents.nodes.intervention.rag_service"
 
@@ -33,11 +32,9 @@ def _patch_chat_graph():
 
     @contextmanager
     def _ctx():
-        with patch(PATCH_TRIAGE_PROVIDER) as triage_p, \
-             patch(PATCH_INTV_PROVIDER) as intv_p, \
+        with patch(PATCH_INTV_PROVIDER) as intv_p, \
              patch(PATCH_INTV_RAG) as rag:
             yield SimpleNamespace(
-                triage_provider=triage_p,
                 intv_provider=intv_p,
                 rag_service=rag,
             )
@@ -91,7 +88,6 @@ class TestPersonasEndpoint:
 
 class TestChatPersona:
     def _mock_normal_graph(self, m):
-        m.triage_provider.chat = AsyncMock(return_value="倾诉")
         m.rag_service.search = AsyncMock(return_value=[])
         m.intv_provider.chat = AsyncMock(return_value="我在听你说。")
 
@@ -138,7 +134,6 @@ class TestChatPersona:
     def test_crisis_ignores_persona(self):
         """危机消息即使带 persona_id 仍走硬编码升级，零 LLM/RAG，回复含 12355。"""
         with _patch_chat_graph() as m:
-            m.triage_provider.chat = AsyncMock(return_value="should_not_be_called")
             m.intv_provider.chat = AsyncMock(return_value="should_not_be_called")
             m.rag_service.search = AsyncMock(return_value=[])
 

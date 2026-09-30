@@ -121,7 +121,7 @@ class LLMProvider:
         """
         return {
             "intake": 1024,
-            "triage": 512,        # 单条消息 + system，输出一个标签词
+            # 注：triage 2026-09-30 起全规则化零 LLM，无 num_ctx 需求
             "dialog": 2048,       # 匹配训练 cutoff_len=2048，覆盖约 6-8 轮
             "dialog_stream": 2048,
             "report": 2048,       # case summary + system，输出结构化报告

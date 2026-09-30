@@ -16,8 +16,7 @@ from app.main import app
 
 client = TestClient(app)
 
-# 统一 patch 路径（与 test_api_chat.py 一致）
-PATCH_TRIAGE_PROVIDER = "app.agents.nodes.triage.provider"
+# 统一 patch 路径（triage 2026-09-30 起全规则化零 LLM，只 mock intervention）
 PATCH_INTV_PROVIDER = "app.agents.nodes.intervention.provider"
 PATCH_INTV_RAG = "app.agents.nodes.intervention.rag_service"
 
@@ -27,15 +26,13 @@ _OK_REPLY = "".join(_OK_TOKENS)
 
 
 def _patch_chat_graph():
-    """统一返回 contextmanager：mock triage + intervention 节点的 provider/rag_service。"""
+    """统一返回 contextmanager：mock intervention 节点的 provider/rag_service。"""
 
     @contextmanager
     def _ctx():
-        with patch(PATCH_TRIAGE_PROVIDER) as triage_p, \
-             patch(PATCH_INTV_PROVIDER) as intv_p, \
+        with patch(PATCH_INTV_PROVIDER) as intv_p, \
              patch(PATCH_INTV_RAG) as rag:
             yield SimpleNamespace(
-                triage_provider=triage_p,
                 intv_provider=intv_p,
                 rag_service=rag,
             )
@@ -77,7 +74,6 @@ class TestChatStreamNormal:
     def test_stream_normal_yields_token_events(self):
         """正常消息 → SSE 事件序列：agent(triage/assessment/intervention) → sources? → token×3 → done。"""
         with _patch_chat_graph() as m:
-            m.triage_provider.chat = AsyncMock(return_value="倾诉")
             m.rag_service.search = AsyncMock(return_value=[
                 {"text": "深呼吸放松", "source": "04_放松技术.txt", "distance": 0.4},
             ])
@@ -110,8 +106,6 @@ class TestChatStreamNormal:
             tokens = [e["data"]["token"] for e in events if e["event"] == "token"]
             assert "".join(tokens) == _OK_REPLY
 
-            # 规则化分诊：triage 不调 LLM
-            m.triage_provider.chat.assert_not_called()
             # intervention 用 stream（非 chat），被调用 1 次
             m.intv_provider.stream.assert_called_once()
             # RAG 检索 1 次（build_intervention_messages 调 1 次，stream_intervention 复用 prebuilt）
@@ -120,7 +114,6 @@ class TestChatStreamNormal:
     def test_stream_no_sources_when_rag_empty(self):
         """RAG 返回空 → 不推 sources 事件，token 仍流式。"""
         with _patch_chat_graph() as m:
-            m.triage_provider.chat = AsyncMock(return_value="倾诉")
             m.rag_service.search = AsyncMock(return_value=[])
             m.intv_provider.stream = _make_fake_stream(_OK_TOKENS)
 
@@ -139,7 +132,6 @@ class TestChatStreamCrisis:
     def test_stream_crisis_no_token_events(self):
         """危机消息 → SSE 事件序列：agent(triage) → crisis → done，零 token 事件。"""
         with _patch_chat_graph() as m:
-            m.triage_provider.chat = AsyncMock(return_value="should_not_be_called")
             m.intv_provider.stream = _make_fake_stream(["should_not_be_called"])
             m.rag_service.search = AsyncMock(return_value=[])
 
@@ -159,8 +151,7 @@ class TestChatStreamCrisis:
             assert done["crisis"] is True
             assert done["current_agent"] == "escalation"
 
-            # 危机短路：triage/intervention LLM 与 RAG 全部未被调用
-            m.triage_provider.chat.assert_not_awaited()
+            # 危机短路：intervention LLM 与 RAG 全部未被调用
             m.intv_provider.stream.assert_not_called()
             m.rag_service.search.assert_not_awaited()
 
@@ -169,7 +160,6 @@ class TestChatStreamFallback:
     def test_stream_empty_llm_reply_yields_fallback(self):
         """LLM 流式返回空 → stream_intervention yield FALLBACK_REPLY（含 12355）。"""
         with _patch_chat_graph() as m:
-            m.triage_provider.chat = AsyncMock(return_value="倾诉")
             m.rag_service.search = AsyncMock(return_value=[])
             # provider.stream 返回空（模拟 deepseek 思考链吃光 max_tokens）
             m.intv_provider.stream = _make_fake_stream([])
@@ -188,7 +178,6 @@ class TestChatStreamFallback:
     def test_stream_llm_exception_yields_fallback(self):
         """provider.stream 抛异常 → stream_intervention 捕获并 yield FALLBACK_REPLY。"""
         with _patch_chat_graph() as m:
-            m.triage_provider.chat = AsyncMock(return_value="倾诉")
             m.rag_service.search = AsyncMock(return_value=[])
 
             async def _exploding_stream(*args, **kwargs):
@@ -209,7 +198,6 @@ class TestChatStreamPersona:
     def test_stream_unknown_persona_falls_back_to_default(self):
         """未知 persona_id → 后端回退 default，done.persona_id 校正为 default。"""
         with _patch_chat_graph() as m:
-            m.triage_provider.chat = AsyncMock(return_value="倾诉")
             m.rag_service.search = AsyncMock(return_value=[])
             m.intv_provider.stream = _make_fake_stream(_OK_TOKENS)
 
