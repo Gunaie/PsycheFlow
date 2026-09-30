@@ -5,7 +5,7 @@ POST /api/sessions/{id}/assessments         提交作答 → 计分 + 持久化
 GET  /api/sessions/{id}                     会话 + 评估列表
 POST /api/sessions/{id}/report              生成 PDF（application/pdf, inline）
 """
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -101,7 +101,11 @@ async def submit_assessment(session_id: str, req: AssessmentSubmit, db: Session 
 
 
 @router.post("/{session_id}/report", dependencies=[Depends(rate_limit("report", limit=3, window_sec=60))])
-async def generate_report(session_id: str, db: Session = Depends(get_db)):
+async def generate_report(
+    session_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
     session = db.get(SessionModel, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="会话不存在")
@@ -128,6 +132,9 @@ async def generate_report(session_id: str, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=502, detail=f"报告生成失败: {type(e).__name__}: {e}"
         )
+    # 报告生成会把 report-lora 载入 GPU（8GB 显存会把 dialog-lora 换出）。
+    # 后台重新预热 dialog-lora，避免用户回到聊天时再等 ~50s 冷加载。
+    background_tasks.add_task(_rewarm_dialog_after_report)
     return Response(
         content=pdf,
         media_type="application/pdf",
@@ -135,6 +142,22 @@ async def generate_report(session_id: str, db: Session = Depends(get_db)):
             "Content-Disposition": f'inline; filename="psycheflow_report_{session_id[:8]}.pdf"'
         },
     )
+
+
+async def _rewarm_dialog_after_report() -> None:
+    """报告生成后后台重新预热 dialog-lora，抵消 GPU 模型互换带来的冷加载。"""
+    import logging
+    from app.core.llm import provider
+
+    logger = logging.getLogger(__name__)
+    try:
+        await provider.chat(
+            role="dialog",
+            messages=[{"role": "user", "content": "请只回复：在"}],
+            max_tokens=10,
+        )
+    except Exception as e:
+        logger.warning("post-report dialog rewarm failed: %s", e)
 
 
 # ================================================================

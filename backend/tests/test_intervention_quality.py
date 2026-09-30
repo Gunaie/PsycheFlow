@@ -94,11 +94,12 @@ class TestInterventionNodeRetry:
     @pytest.mark.asyncio
     async def test_retry_still_bad_keeps_first_reply(self):
         with patch(PATCH_PROVIDER) as p, patch(PATCH_RAG) as rag:
-            p.chat = AsyncMock(side_effect=["你说的对吧？", "还是对吧？"])
+            # max_retries=2 → 最多 3 次调用；全部不合格则保留首次回复
+            p.chat = AsyncMock(side_effect=["你说的对吧？", "还是对吧？", "仍然对吧？"])
             rag.search = AsyncMock(return_value=[])
             out = await intervention_node(_state())
             assert out["final_reply"] == "你说的对吧？"
-            assert p.chat.await_count == 2
+            assert p.chat.await_count == 3
 
     @pytest.mark.asyncio
     async def test_clean_reply_no_retry(self):
@@ -174,11 +175,12 @@ class TestStreamInterventionRetry:
     @pytest.mark.asyncio
     async def test_retry_still_bad_yields_first_reply(self):
         with patch(PATCH_PROVIDER) as p, patch(PATCH_RAG) as rag:
-            p.stream = _stream_mock(["你说的", "对吧？"], ["还是", "对吧？"])
+            # max_retries=2 → 最多 3 次调用；全部不合格沿用首次回复
+            p.stream = _stream_mock(["你说的", "对吧？"], ["还是", "对吧？"], ["仍然", "对吧？"])
             rag.search = AsyncMock(return_value=[])
             tokens = [t async for t in stream_intervention(_state())]
             assert "".join(tokens) == "你说的对吧？"
-            assert p.stream.call_count == 2
+            assert p.stream.call_count == 3
 
     @pytest.mark.asyncio
     async def test_empty_stream_yields_fallback(self):
