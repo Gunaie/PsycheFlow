@@ -133,8 +133,8 @@ async def generate_report(
             status_code=502, detail=f"报告生成失败: {type(e).__name__}: {e}"
         )
     # 报告生成会把 report-lora 载入 GPU（8GB 显存会把 dialog-lora 换出）。
-    # 后台重新预热 dialog-lora，避免用户回到聊天时再等 ~50s 冷加载。
-    background_tasks.add_task(_rewarm_dialog_after_report)
+    # 后台重新预热 dialog-lora + embed，避免用户回到聊天时再等 ~50s/15s 冷加载。
+    background_tasks.add_task(_rewarm_models_after_report)
     return Response(
         content=pdf,
         media_type="application/pdf",
@@ -144,8 +144,12 @@ async def generate_report(
     )
 
 
-async def _rewarm_dialog_after_report() -> None:
-    """报告生成后后台重新预热 dialog-lora，抵消 GPU 模型互换带来的冷加载。"""
+async def _rewarm_models_after_report() -> None:
+    """报告生成后后台重新预热 dialog-lora + embed，抵消 GPU 模型互换带来的冷加载。
+
+    实测（2026-09-30）：报告生成后 dialog-lora 被换出 GPU（冷加载 ~50s），
+    bge-m3-cpu 也可能被 ollama 回收（冷加载 ~15s），两者都补齐与启动预热对齐。
+    """
     import logging
     from app.core.llm import provider
 
@@ -158,6 +162,10 @@ async def _rewarm_dialog_after_report() -> None:
         )
     except Exception as e:
         logger.warning("post-report dialog rewarm failed: %s", e)
+    try:
+        await provider.embed(["预热"])
+    except Exception as e:
+        logger.warning("post-report embed rewarm failed: %s", e)
 
 
 # ================================================================
