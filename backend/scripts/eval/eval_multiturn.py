@@ -14,7 +14,10 @@
 - warn 级（不计入通过率）：话题切换轮回复未出现新话题关键词，转人工复核
 
 用法：docker exec -e PYTHONUTF8=1 psycheflow-backend uv run python scripts/eval/eval_multiturn.py
-产物：scripts/eval/multiturn_eval_latest.json
+产物：scripts/eval/results/multiturn_eval_latest.json（latest 入库）+
+      multiturn_eval_YYYYMMDD_HHMMSS.json（时间戳归档，gitignore）
+批次对比：写入前读旧 latest 作基线，输出每轮 pass 状态迁移（fixed/regressed）
+与 summary 增量，存入 meta.comparison；首次运行（无旧文件）自动跳过。
 """
 import json
 import sys
@@ -31,6 +34,7 @@ from app.agents.nodes.intervention import (  # noqa: E402
     _REPEAT_MIN_LEN,
     _detect_method_categories,
     _normalize,
+    _strip_breath_formula,
     check_reply_quality,
 )
 from app.agents.nodes.triage import detect_method_question  # noqa: E402
@@ -142,10 +146,10 @@ def quality_breakdown(reply: str, history: list[dict], min_methods: int) -> list
         prev_cats = _detect_method_categories(last_assistant.get("content", ""))
         if cur_cats & prev_cats:
             issues.append("与上轮同类做法重复")
-    # ≥12 字逐字复读（对全部历史 assistant 回复）
-    norm_reply = _normalize(reply)
+    # ≥12 字逐字复读（对全部历史 assistant 回复；呼吸参数公式剥离，与生产口径一致）
+    norm_reply = _strip_breath_formula(_normalize(reply))
     hist_norms = [
-        _normalize(h.get("content", ""))
+        _strip_breath_formula(_normalize(h.get("content", "")))
         for h in history if h.get("role") == "assistant"
     ]
     for clause in _norm_clauses(norm_reply):
@@ -173,11 +177,18 @@ def run_scenario(scenario: dict) -> dict:
         data, elapsed = _http_chat(msg, [dict(h) for h in history])
         reply = (data.get("reply") or "").strip()
         nd = data.get("node_decisions", {})
-        triage_intent = (nd.get("triage") or {}).get("intent", "?")
+        triage_info = nd.get("triage") or {}
+        triage_intent = triage_info.get("intent", "?")
+        triage_route = triage_info.get("decision", "?")  # 规则路由原因（method_question 等）
         llm_info = (nd.get("intervention") or {}).get("llm", {})
         quality_retry = bool(llm_info.get("quality_retry", False))
         rag = (nd.get("intervention") or {}).get("rag", {})
         rag_desc = "skipped" if rag.get("skipped") else rag.get("count", "?")
+        # RAG 引用源详情（脱去 text 防产物膨胀）：[{source, chunk_id}]
+        sources = [
+            {"source": s.get("source", ""), "chunk_id": s.get("chunk_id", 0)}
+            for s in (data.get("sources") or [])
+        ]
 
         min_methods = 2 if detect_method_question(msg) else 1
         issues = list(quality_breakdown(reply, history, min_methods=min_methods))
@@ -211,7 +222,7 @@ def run_scenario(scenario: dict) -> dict:
         mark = "PASS" if passed else "FAIL"
         print(f"\n[T{idx} {mark}] 用户: {msg}")
         print(f"       暖暖({len(reply)}字): {reply}")
-        print(f"       意图={triage_intent} RAG={rag_desc} 重试={'有' if quality_retry else '无'} "
+        print(f"       意图={triage_intent}({triage_route}) RAG={rag_desc} 重试={'有' if quality_retry else '无'} "
               f"做法类={sorted(cats) if cats else '-'} 耗时={elapsed:.1f}s")
         if issues:
             modes = llm_info.get("retry_modes", [])
@@ -225,7 +236,9 @@ def run_scenario(scenario: dict) -> dict:
             "reply": reply,
             "reply_len": len(reply),
             "triage_intent": triage_intent,
+            "triage_route": triage_route,
             "rag": rag_desc,
+            "sources": sources,
             "quality_retry": quality_retry,
             "retry_modes": llm_info.get("retry_modes", []),
             "method_categories": sorted(cats),
@@ -262,6 +275,55 @@ def run_scenario(scenario: dict) -> dict:
     }
 
 
+def _load_baseline() -> dict | None:
+    """读旧 latest 作对比基线；不存在或损坏返回 None（首次运行自动跳过）。"""
+    try:
+        with open(OUT_PATH, encoding="utf-8-sig") as f:
+            old = json.load(f)
+        if old.get("scenarios") and old.get("summary"):
+            return old
+    except (OSError, json.JSONDecodeError):
+        pass
+    return None
+
+
+def compare_with_baseline(old: dict | None, results: list[dict], summary: dict) -> dict | None:
+    """与上次评测对比：summary 增量 + 每轮 pass 状态迁移（fixed/regressed）。
+
+    按 (场景索引, 轮次) 定位——场景名与轮数固定，index 稳定可比。
+    状态迁移只看 pass 布尔，不看 issues 内容（真实 LLM 有温度波动，
+    issue 文案变化属正常；pass 翻转才是回归信号）。
+    """
+    if not old:
+        return None
+    old_summary = old.get("summary", {})
+    transitions = {"fixed": [], "regressed": [], "both_pass": 0, "both_fail": 0}
+    for si, s in enumerate(results):
+        old_scenarios = old.get("scenarios", [])
+        if si >= len(old_scenarios):
+            break
+        old_turns = {t.get("turn"): t for t in old_scenarios[si].get("turns", [])}
+        for t in s["turns"]:
+            old_t = old_turns.get(t["turn"])
+            if old_t is None:
+                continue
+            loc = f"S{si + 1}T{t['turn']}"
+            if t["pass"] and not old_t.get("pass"):
+                transitions["fixed"].append(loc)
+            elif not t["pass"] and old_t.get("pass"):
+                transitions["regressed"].append(loc)
+            elif t["pass"]:
+                transitions["both_pass"] += 1
+            else:
+                transitions["both_fail"] += 1
+    return {
+        "baseline_at": (old.get("meta") or {}).get("generated_at", "?"),
+        "turn_pass_delta": summary["turn_pass"] - old_summary.get("turn_pass", 0),
+        "scenario_pass_delta": summary["scenario_pass"] - old_summary.get("scenario_pass", 0),
+        **transitions,
+    }
+
+
 def main() -> None:
     # 预热：dialog-lora 冷加载可达 1-2 分钟，先发一条真实倾诉消息避免首轮超时
     print("预热中（dialog-lora 冷加载可能较慢）...")
@@ -286,6 +348,18 @@ def main() -> None:
         for issue in t["issues"]:
             issue_counts[issue] = issue_counts.get(issue, 0) + 1
 
+    summary = {
+        "turn_total": len(all_turns),
+        "turn_pass": turn_pass,
+        "turn_pass_rate": round(turn_pass / len(all_turns), 4) if all_turns else 0,
+        "scenario_pass": sum(1 for s in results if s["pass"]),
+        "warn_count": warn_count,
+        "quality_retry_count": retry_count,
+        "issue_counts": issue_counts,
+    }
+    # 批次对比：写入前读旧 latest 作基线（容器内无 .git，基线=磁盘上次跑次）
+    comparison = compare_with_baseline(_load_baseline(), results, summary)
+
     report = {
         "meta": {
             "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -293,20 +367,19 @@ def main() -> None:
             "engine": "生产管线 HTTP /api/chat（规则 triage + RAG + 质检重试）",
             "scenarios": len(SCENARIOS),
             "turns_per_scenario": len(SCENARIOS[0]["turns"]),
+            "comparison": comparison,
         },
-        "summary": {
-            "turn_total": len(all_turns),
-            "turn_pass": turn_pass,
-            "turn_pass_rate": round(turn_pass / len(all_turns), 4) if all_turns else 0,
-            "scenario_pass": sum(1 for s in results if s["pass"]),
-            "warn_count": warn_count,
-            "quality_retry_count": retry_count,
-            "issue_counts": issue_counts,
-        },
+        "summary": summary,
         "scenarios": results,
     }
 
     with open(OUT_PATH, "w", encoding="utf-8") as f:
+        json.dump(report, f, ensure_ascii=False, indent=2)
+    # 时间戳归档（gitignore，保留历史跑次供回溯）
+    archive_path = OUT_PATH.replace(
+        "_latest.json", f"_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.json"
+    )
+    with open(archive_path, "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
 
     print(f"\n===== 汇总 =====")
@@ -315,7 +388,16 @@ def main() -> None:
     print(f"质检重试：{retry_count} 轮；warn：{warn_count} 轮")
     if issue_counts:
         print(f"问题分布：{issue_counts}")
+    if comparison:
+        print(f"\n===== 与上次对比（{comparison['baseline_at']}）=====")
+        print(f"轮次 delta：{comparison['turn_pass_delta']:+d}；场景 delta：{comparison['scenario_pass_delta']:+d}")
+        if comparison["fixed"]:
+            print(f"修复轮：{comparison['fixed']}")
+        if comparison["regressed"]:
+            print(f"⚠ 退化轮：{comparison['regressed']}")
+        print(f"持续通过 {comparison['both_pass']} 轮；持续失败 {comparison['both_fail']} 轮")
     print(f"产物：{OUT_PATH}")
+    print(f"归档：{archive_path}")
 
 
 if __name__ == "__main__":
