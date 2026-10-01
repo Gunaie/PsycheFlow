@@ -282,11 +282,12 @@ class LLMProvider:
                 yielded = True
                 yield tok
         except Exception as e:
+            # 已部分输出则不再切（避免拼接错乱），未启用 Ollama 则异常上抛
             if yielded or not self.ollama_enabled:
                 raise
             logger.warning("cloud stream 起始即失败，转 Ollama 兜底: %s", e)
             async for tok in self._stream_once(
-                self.ollama_client, self._settings.ollama_model,
+                self.ollama_client, self.model_for(role),  # 按角色取模型，非固定基座
                 messages, temp, max_tokens, {},
             ):
                 yield tok

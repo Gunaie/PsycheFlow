@@ -130,10 +130,10 @@ class TestTeacherAuthHardening:
         )
         assert reg.status_code == 200, f"教师注册应成功 实际 {reg.status_code}"
 
-        # 凭 label 直接登录应被拒（绕密漏洞修复）
+        # 凭 label 直接登录应被拒（绕密漏洞修复：任何设密码账号都须走密码登录）
         r = isolated_client.post("/api/auth/login_by_label", json={"label": "tch01"})
         assert r.status_code == 403, f"教师 label 登录应 403 实际 {r.status_code}"
-        assert "teacher_requires_password" in str(r.json())
+        assert "password_required" in str(r.json())
 
     def test_teacher_password_login_still_works(self, isolated_client):
         isolated_client.post(

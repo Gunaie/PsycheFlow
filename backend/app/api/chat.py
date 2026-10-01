@@ -76,6 +76,45 @@ def _clip_history(history: list[ChatMessage]) -> list[dict]:
     return clipped
 
 
+def _save_turn(
+    db: Session,
+    session_id: str | None,
+    account_id: str | None,
+    role: str,
+    content: str,
+    sources: list | None = None,
+    crisis_hit: bool = False,
+    attachments: list | None = None,
+) -> None:
+    """统一写 ConversationTurn（失败仅警告，不阻断接口）。"""
+    try:
+        db.add(
+            ConversationTurn(
+                session_id=session_id,
+                account_id=account_id,
+                role=role,
+                content=content,
+                sources_json=sources if sources else None,
+                attachments_json=attachments,
+                crisis_hit=crisis_hit,
+            )
+        )
+        db.commit()
+    except Exception as e:
+        logging.warning("write %s ConversationTurn failed: %s", role, e)
+        db.rollback()
+
+
+def _resolve_effective_ids(
+    req: ChatRequest, account: User | None
+) -> tuple[str | None, str | None, str]:
+    """解析有效 account_id / session_id / persona_id（Bearer 账号优先于 body）。"""
+    effective_account_id = (account.id if account else None) or req.account_id
+    effective_session_id = req.session_id
+    effective_persona_id = get_persona(req.persona_id).persona_id
+    return effective_account_id, effective_session_id, effective_persona_id
+
+
 def _sse(event: str, data: dict) -> str:
     """格式化一条 SSE 事件（event + data 两行，以空行结尾）。
 
@@ -90,30 +129,12 @@ async def chat(
     db: Session = Depends(get_db_session),
     account: User | None = Depends(get_current_account),
 ):
-    # —— 有效 ID 解析：Bearer 账号 > body 账号 ——
-    effective_account_id = (account.id if account else None) or req.account_id
-    effective_session_id = req.session_id
+    effective_account_id, effective_session_id, effective_persona_id = _resolve_effective_ids(req, account)
 
     # —— 步骤 1：先写 user 轮 ConversationTurn（失败不影响接口返回）——
-    try:
-        db.add(
-            ConversationTurn(
-                session_id=effective_session_id,
-                account_id=effective_account_id,
-                role="user",
-                content=req.message,
-                sources_json=None,
-                crisis_hit=False,
-            )
-        )
-        db.commit()
-    except Exception as e:
-        logging.warning("write user ConversationTurn failed: %s", e)
-        db.rollback()
+    _save_turn(db, effective_session_id, effective_account_id, "user", req.message)
 
     # —— 步骤 2：LangGraph 四智能体编排（triage→assessment→intervention/escalation）——
-    # persona 请求级解析：未知 id 回退 default（回传 canonical id 供前端校正）
-    effective_persona_id = get_persona(req.persona_id).persona_id
     initial_state = {
         "session_id": effective_session_id or "",
         "account_id": effective_account_id or "",
@@ -127,23 +148,8 @@ async def chat(
         final_state = await graph.ainvoke(initial_state)
     except Exception as e:
         logger.exception("graph.ainvoke failed: %s", e)
-        # 兜底：返回错误提示，仍写 assistant 轮
         err_reply = f"[服务异常] 对话编排失败，请稍后重试。({type(e).__name__})"
-        try:
-            db.add(
-                ConversationTurn(
-                    session_id=effective_session_id,
-                    account_id=effective_account_id,
-                    role="assistant",
-                    content=err_reply,
-                    sources_json=None,
-                    crisis_hit=False,
-                )
-            )
-            db.commit()
-        except Exception as we:
-            logging.warning("write graph-error assistant ConversationTurn failed: %s", we)
-            db.rollback()
+        _save_turn(db, effective_session_id, effective_account_id, "assistant", err_reply)
         raise HTTPException(
             status_code=502,
             detail=f"对话编排失败: {type(e).__name__}: {e}",
@@ -155,22 +161,11 @@ async def chat(
     current_agent = final_state.get("current_agent", "")
     agent_trace = final_state.get("agent_trace", [])
 
-    # —— 步骤 3：写 assistant 轮 ConversationTurn（保留旧 crisis_hit 字段）——
-    try:
-        db.add(
-            ConversationTurn(
-                session_id=effective_session_id,
-                account_id=effective_account_id,
-                role="assistant",
-                content=reply,
-                sources_json=sources if sources else None,
-                crisis_hit=is_crisis,
-            )
-        )
-        db.commit()
-    except Exception as e:
-        logging.warning("write assistant ConversationTurn failed: %s", e)
-        db.rollback()
+    # —— 步骤 3：写 assistant 轮 ConversationTurn ——
+    _save_turn(
+        db, effective_session_id, effective_account_id,
+        "assistant", reply, sources, is_crisis
+    )
 
     # —— 4. 返回（旧字段 reply/sources/crisis 不变；新增 current_agent/agent_trace/persona_id）——
     return {
@@ -203,26 +198,10 @@ async def chat_stream(
     - error   {message}                   异常
     - done    {reply, current_agent, agent_trace, persona_id, crisis} 结束信号
     """
-    effective_account_id = (account.id if account else None) or req.account_id
-    effective_session_id = req.session_id
-    effective_persona_id = get_persona(req.persona_id).persona_id
+    effective_account_id, effective_session_id, effective_persona_id = _resolve_effective_ids(req, account)
 
     # 写 user 轮 ConversationTurn（失败不阻断流式）
-    try:
-        db.add(
-            ConversationTurn(
-                session_id=effective_session_id,
-                account_id=effective_account_id,
-                role="user",
-                content=req.message,
-                sources_json=None,
-                crisis_hit=False,
-            )
-        )
-        db.commit()
-    except Exception as e:
-        logging.warning("stream: write user ConversationTurn failed: %s", e)
-        db.rollback()
+    _save_turn(db, effective_session_id, effective_account_id, "user", req.message)
 
     initial_state = {
         "session_id": effective_session_id or "",
@@ -335,21 +314,10 @@ async def chat_stream(
                 final_reply = FALLBACK_REPLY
                 final_agent = final_agent or "intervention"
                 final_trace = final_trace or (state.get("agent_trace", []) + ["intervention"])
-            try:
-                db.add(
-                    ConversationTurn(
-                        session_id=effective_session_id,
-                        account_id=effective_account_id,
-                        role="assistant",
-                        content=final_reply,
-                        sources_json=final_sources if final_sources else None,
-                        crisis_hit=is_crisis,
-                    )
-                )
-                db.commit()
-            except Exception as e:
-                logging.warning("stream: write assistant ConversationTurn failed: %s", e)
-                db.rollback()
+            _save_turn(
+                db, effective_session_id, effective_account_id,
+                "assistant", final_reply, final_sources, is_crisis
+            )
 
         # —— 6. done 信号（前端收到后结束读取；客户端已中断时此 yield 抛异常，无害）——
         yield _sse("done", {
@@ -491,20 +459,10 @@ async def case_upload(
         raise HTTPException(status_code=400, detail="请上传 PDF 文件或粘贴病例文本")
 
     # 写 user 轮（只存附件元数据 + 气泡描述，不存病例原文）
-    try:
-        db.add(ConversationTurn(
-            session_id=effective_session_id,
-            account_id=effective_account_id,
-            role="user",
-            content=user_bubble,
-            sources_json=None,
-            attachments_json=[attachment],
-            crisis_hit=False,
-        ))
-        db.commit()
-    except Exception as e:
-        logging.warning("case: write user ConversationTurn failed: %s", e)
-        db.rollback()
+    _save_turn(
+        db, effective_session_id, effective_account_id,
+        "user", user_bubble, attachments=[attachment]
+    )
 
     # 危机前置扫描 + RAG + LLM 解读（LLM 失败有节点级兜底话术）
     result = await analyze_case(
@@ -517,19 +475,10 @@ async def case_upload(
     is_crisis = result["crisis"]
 
     # 写 assistant 轮
-    try:
-        db.add(ConversationTurn(
-            session_id=effective_session_id,
-            account_id=effective_account_id,
-            role="assistant",
-            content=reply,
-            sources_json=sources if sources else None,
-            crisis_hit=is_crisis,
-        ))
-        db.commit()
-    except Exception as e:
-        logging.warning("case: write assistant ConversationTurn failed: %s", e)
-        db.rollback()
+    _save_turn(
+        db, effective_session_id, effective_account_id,
+        "assistant", reply, sources, is_crisis
+    )
 
     return {
         "reply": reply,

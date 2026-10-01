@@ -186,6 +186,7 @@ async def login_by_token(req: LoginByToken, db: Session = Depends(get_db)):
     user = db.execute(stmt).scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="token 无效或不存在")
+    # 安全：显式构造 AuthResp，只暴露必要字段，防止意外泄露 password_hash/profile 等
     return AuthResp(account_id=user.id, token=user.token, label=user.label, role=user.role)
 
 
@@ -200,10 +201,12 @@ async def login_by_label(req: LoginByLabel, db: Session = Depends(get_db)):
     user = db.execute(stmt).scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="label 无效或不存在")
-    if user.role == "teacher":
+    # 安全加固：任何已设置密码的账号（无论角色）都必须走密码登录，
+    # 防止空密码教师账号或未来新角色被 label 直接绕过
+    if user.password_hash is not None:
         raise HTTPException(
             status_code=403,
-            detail={"code": "teacher_requires_password", "reason": "教师账号须使用密码登录"},
+            detail={"code": "password_required", "reason": "该账号已设置密码，须使用密码登录"},
         )
     return AuthResp(account_id=user.id, token=user.token, label=user.label, role=user.role)
 

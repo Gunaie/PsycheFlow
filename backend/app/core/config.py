@@ -83,6 +83,12 @@ class Settings(BaseSettings):
     logs_dir: str = ""
     rag_knowledge_dir: str = ""
 
+    # RAG 检索关键词加权：命中时 distance 减 0.05，用于提升高频心理主题片段的相关性
+    # 默认覆盖压力/失眠/焦虑/难过/抑郁/放松/考试，可通过 .env 覆盖或扩展
+    rag_boost_keywords: list[str] = [
+        "压力", "失眠", "焦虑", "难过", "抑郁", "放松", "考试",
+    ]
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @model_validator(mode="after")

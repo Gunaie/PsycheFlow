@@ -29,6 +29,9 @@ from app.rag.service import rag_service
 
 logger = logging.getLogger("psycheflow.agents.intervention")
 
+# 三级重试阶梯（可扩展），新增模式只需修改此处即可在流式/非流式同步生效
+RETRY_MODES = ("hint", "rag_refresh", "context_trim")
+
 # LLM 失败/空回复时的硬编码兜底话术（含 12355，安全底线；热线号码走 settings 单一事实源）
 FALLBACK_REPLY = (
     "我听到你的分享，谢谢你的信任。"
@@ -40,8 +43,9 @@ FALLBACK_REPLY = (
 
 # —— 回复质检重试层（正则零 LLM 成本，与 dialog_smoke 检查口径一致）——
 # 封闭式问句：诱导「是/否」式回答，压制对话开放性（7B 模型高频坏习惯）
-# 覆盖：对吧/对吗/是不是/是吧/好吗/对不对/好不好/会不会/有没有/能不能 + 句末「吗？」「吧？」
-_BANNED_CLOSE_Q = re.compile(r"(对吧|对吗|是不是|是吧|好吗|对不对|好不好|会不会|有没有|能不能|可以吗|吗[？?]|吧[？?])")
+# 覆盖：对吧/对吗/是不是/是吧/好吗/对不对/好不好/要不要/会不会/有没有/能不能/可以吗 + 句末「吗？」「吧？」
+# 口径需与 prompts.py INTERVENTION_USER_TEMPLATE 第 5 条禁令保持同步
+_BANNED_CLOSE_Q = re.compile(r"(对吧|对吗|是不是|是吧|好吗|对不对|好不好|要不要|会不会|有没有|能不能|可以吗|吗[？?]|吧[？?])")
 # 逐字重复判定阈值：短于该长度的分句（如「嗯」「好的」）不判重复，避免误伤常规应答
 _REPEAT_MIN_LEN = 12
 
@@ -455,13 +459,13 @@ async def stream_intervention(
     user_msg = state.get("user_message", "")
     min_methods = 2 if detect_method_question(user_msg) else 1
     # 质检不合格 → 重试阶梯（与非流式 intervention_node 同口径）：全部不合格则沿用首次回复
-    max_retries = 3
+    max_retries = len(RETRY_MODES)
     alt_chunks: list | None = None
     for attempt in range(1, max_retries + 1):
         if check_reply_quality(text, history, min_method_categories=min_methods, min_len=50):
             break
         logger.info("intervention: quality check failed, retry %d/%d (stream)", attempt, max_retries)
-        mode = ("hint", "rag_refresh", "context_trim")[attempt - 1]
+        mode = RETRY_MODES[attempt - 1]
         if mode == "context_trim":
             trim_state = {
                 **state,

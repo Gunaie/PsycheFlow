@@ -1,14 +1,14 @@
 """Chroma 向量库封装。
 
 连接 chroma 容器（http://chroma:8000），管理知识库集合。
-向量由百炼 text-embedding-v3 生成，存入 Chroma 做相似检索。
-"""
-import os
+向量由百炼 text-embedding-v3 或本地 bge-m3 生成，存入 Chroma 做相似检索。
 
+注意：语料切片/入库统一走 app.rag.service.build_index（chunk_text 结构感知切片 + tags
+元数据）。本模块只负责 collection 连接与基础 upsert/query/count/reset。
+"""
 import chromadb
 
 from app.core.config import settings
-from app.core.llm import provider
 
 COLLECTION_NAME = "psycheflow_knowledge"
 
@@ -70,63 +70,6 @@ class RAGStore:
             del self._collections_cache[namespace]
         if namespace == COLLECTION_NAME:
             self._collection = None
-
-    async def ingest_markdown(
-        self,
-        file_path: str,
-        chunk_size: int = 300,
-        overlap: int = 50,
-        namespace: str = "psycheflow_knowledge",
-    ) -> int:
-        """读取 markdown 文件，按字符切分，向量化后写入 Chroma。
-
-        返回插入的 chunks 总数。
-        """
-        # 1. 读取整个 markdown 文件
-        with open(file_path, "r", encoding="utf-8") as f:
-            text = f.read()
-
-        # 2. 按 chunk_size 字符切分，带 overlap 重叠
-        chunks = []
-        start = 0
-        text_len = len(text)
-        while start < text_len:
-            end = min(start + chunk_size, text_len)
-            chunk = text[start:end].strip()
-            if chunk:  # 跳过空片段
-                chunks.append(chunk)
-            if end >= text_len:
-                break
-            start = end - overlap
-            if start < 0:
-                start = 0
-
-        total_chunks = len(chunks)
-        if total_chunks == 0:
-            return 0
-
-        # 3. 用百炼 text-embedding-v3 做 embedding
-        embeddings = await provider.embed(chunks)
-
-        # 4. 写进 Chroma 的 collection
-        collection = self._get_collection(namespace)
-        source_name = os.path.basename(file_path)
-        ids = [f"{source_name}#{i}" for i in range(total_chunks)]
-        metadatas = [
-            {
-                "source": source_name,
-                "chunk_id": i,
-                "total_chunks": total_chunks,
-            }
-            for i in range(total_chunks)
-        ]
-        collection.upsert(
-            ids=ids,
-            documents=chunks,
-            embeddings=embeddings,
-            metadatas=metadatas,
-        )
-        return total_chunks
 
     def count_docs(self, namespace: str = "psycheflow_knowledge") -> int:
         """返回指定 namespace 集合中的文档数。"""

@@ -28,6 +28,7 @@ class User(Base):
     password_hash: Mapped[str | None] = mapped_column(String(128), nullable=True, default=None)
     profile: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
     consents: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
+    # unique=True 已隐式创建索引，无需额外 index=True
     token: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

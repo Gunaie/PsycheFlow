@@ -139,9 +139,10 @@ export default function ChatPage() {
   const taRef = useRef<HTMLTextAreaElement>(null)
   const abortRef = useRef<AbortController | null>(null)
 
+  // 仅在对话轮次数量变化时滚动到底部（避免 loading 切换或流式 token 更新时频繁重排）
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [turns, loading])
+  }, [turns.length])
 
   // 输入框自适应高度（多行 textarea，Enter 发送 / Shift+Enter 换行）
   useEffect(() => {

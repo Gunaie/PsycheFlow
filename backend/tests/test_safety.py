@@ -21,6 +21,25 @@ class TestDetectCrisis(unittest.TestCase):
         self.assertFalse(detect_crisis(""))
         self.assertFalse(detect_crisis(None))
 
+    def test_negation_not_hit(self):
+        """否定前缀包围的危机词不应命中（避免误报）。"""
+        self.assertFalse(detect_crisis("我不想死，我想好好活着"))
+        self.assertFalse(detect_crisis("他没有自杀的念头"))
+        self.assertFalse(detect_crisis("我不会轻生，只是压力大"))
+        self.assertFalse(detect_crisis("不要割腕，要爱惜自己"))
+
+    def test_negation_mixed_hit(self):
+        """同一句中既有否定又有肯定时，肯定部分仍命中。"""
+        self.assertTrue(detect_crisis("我不想死，但我有过自杀的念头"))
+
+    def test_negation_window_boundary(self):
+        """否定词允许常见修饰字插入（一点都不想死 / 根本没有轻生），超出窗口仍命中。"""
+        self.assertFalse(detect_crisis("我一点都不想死"))  # 「不想」+ 修饰字，不命中
+        self.assertFalse(detect_crisis("根本没有轻生念头"))  # 「没有」+ 修饰字，不命中
+        # 否定词与关键词之间插入非修饰字（名词），不构成否定修饰，仍命中
+        self.assertTrue(detect_crisis("不想吃饭，只想自杀"))  # 「不想」修饰「吃饭」非「自杀」
+        self.assertTrue(detect_crisis("我以前从未想过自杀"))  # 「未」不在否定表，仍命中
+
 
 class TestCrisisMessage(unittest.TestCase):
     def test_contains_hotline(self):

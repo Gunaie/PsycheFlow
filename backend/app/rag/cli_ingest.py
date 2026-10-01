@@ -1,130 +1,56 @@
-"""RAG 知识库 markdown 语料批量入库 CLI 工具。
+"""RAG 知识库 markdown 语料批量入库 CLI 工具（统一走 service.build_index 的结构感知切片）。
+
+注意：本工具是 build_index 的兼容入口，新增语料请优先使用 POST /api/rag/build。
+历史版本（3.A）曾用 ingest_markdown 的字符滑窗切片，不带章节前缀和 tags，
+会造成索引退化（详见 2026-09-26 Chroma 索引静默丢失教训），已统一收口到 chunk_text。
 
 用法：
-    python -m app.rag.cli_ingest --dir ../../data/knowledge --chunk 300 --overlap 50 --reset
+    python -m app.rag.cli_ingest --reset
     python -m app.rag.cli_ingest                          # 使用默认参数
-
-也可以通过 `from app.rag.cli_ingest import do_ingest` 在代码中调用。
 """
 import argparse
 import asyncio
-import glob
-import os
 import sys
 
-from app.rag.store import rag_store
 
+async def do_ingest(reset: bool = False) -> int:
+    """调用统一的 build_index 重建知识库（结构感知切片 + tags 元数据）。
 
-def _default_knowledge_dir() -> str:
-    """根据当前环境返回 data/knowledge 的绝对路径。
-    
-    兼容容器内 (/app/data/knowledge) 和宿主机开发环境。
+    返回最终插入的 chunks 总数。
     """
-    # 优先尝试 /app/data/knowledge (容器标准路径)
-    container_path = "/app/data/knowledge"
-    if os.path.isdir(container_path):
-        return container_path
-        
-    # 回退到相对路径查找 (宿主机开发)
-    here = os.path.dirname(os.path.abspath(__file__))  # backend/app/rag
-    return os.path.abspath(os.path.join(here, "..", "..", "..", "data", "knowledge"))
+    # 延迟 import 避免循环依赖
+    from app.rag.service import build_index
+    from app.rag.store import rag_store
 
-
-async def do_ingest(
-    dir: str = None,
-    chunk: int = 300,
-    overlap: int = 50,
-    reset: bool = False,
-    namespace: str = "psycheflow_knowledge",
-) -> int:
-    """批量 ingest 指定目录下所有 *.md 到 Chroma。
-
-    返回最终插入的 chunks 总数（失败的文件跳过，不计入总数）。
-    """
-    knowledge_dir = dir or _default_knowledge_dir()
-    if not os.path.isdir(knowledge_dir):
-        print(f"[ingest] 目录不存在: {knowledge_dir}")
-        return 0
-
-    # 1. 若指定 --reset，先清空 collection
     if reset:
-        rag_store.reset_namespace(namespace)
-        print(f"[ingest] 已重置 namespace: {namespace}")
+        rag_store.reset_namespace()
+        print("[ingest] 已重置 namespace: psycheflow_knowledge")
 
-    # 2. 查找目录下所有 .md 文件
-    md_pattern = os.path.join(knowledge_dir, "*.md")
-    md_files = sorted(glob.glob(md_pattern))
-    if not md_files:
-        print(f"[ingest] 目录下无 .md 文件: {knowledge_dir}")
-        return 0
-
-    # 3. 逐个 ingest_markdown
-    total = 0
-    for fpath in md_files:
-        try:
-            cnt = await rag_store.ingest_markdown(
-                file_path=fpath,
-                chunk_size=chunk,
-                overlap=overlap,
-                namespace=namespace,
-            )
-            total += cnt
-            fname = os.path.basename(fpath)
-            print(f"[ingest] {fname}: chunks={cnt}")
-        except Exception as e:
-            fname = os.path.basename(fpath)
-            print(f"[ingest] {fname}: 失败 - {e}", file=sys.stderr)
-
-    # 4. 打印总计
-    docs_count = rag_store.count_docs(namespace)
+    total = await build_index()
+    docs_count = rag_store.count()
     print(f"[ingest] 完成，新增/更新 chunks={total}，当前 collection 文档总数={docs_count}")
     return total
 
 
 def _parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="批量 ingest markdown 语料到 PsycheFlow RAG 向量库"
-    )
-    parser.add_argument(
-        "--dir",
-        type=str,
-        default=None,
-        help="markdown 语料目录（默认 = 项目 data/knowledge 绝对路径）",
-    )
-    parser.add_argument(
-        "--chunk",
-        type=int,
-        default=300,
-        help="每个 chunk 的字符数（默认 300）",
-    )
-    parser.add_argument(
-        "--overlap",
-        type=int,
-        default=50,
-        help="相邻 chunk 的重叠字符数（默认 50）",
+        description="批量 ingest 知识库语料到 PsycheFlow RAG 向量库（统一走 chunk_text 结构感知切片）"
     )
     parser.add_argument(
         "--reset",
         action="store_true",
         help="ingest 前先删除整个 namespace 集合（默认 False）",
     )
-    parser.add_argument(
-        "--namespace",
-        type=str,
-        default="psycheflow_knowledge",
-        help="Chroma collection 名（默认 psycheflow_knowledge）",
-    )
+    # 以下参数仅保留向后兼容，实际由 chunk_text 内部逻辑接管
+    parser.add_argument("--dir", type=str, default=None, help="（已废弃）语料目录，由 settings.rag_knowledge_dir 决定")
+    parser.add_argument("--chunk", type=int, default=300, help="（已废弃）chunk 大小，由 chunk_text 结构感知切片接管")
+    parser.add_argument("--overlap", type=int, default=50, help="（已废弃）重叠字符数，由 chunk_text 结构感知切片接管")
+    parser.add_argument("--namespace", type=str, default="psycheflow_knowledge", help="（已废弃）固定使用 psycheflow_knowledge")
     return parser.parse_args(argv)
 
 
 if __name__ == "__main__":
     args = _parse_args()
-    asyncio.run(
-        do_ingest(
-            dir=args.dir,
-            chunk=args.chunk,
-            overlap=args.overlap,
-            reset=args.reset,
-            namespace=args.namespace,
-        )
-    )
+    if args.dir or args.chunk != 300 or args.overlap != 50 or args.namespace != "psycheflow_knowledge":
+        print("[ingest] 警告: --dir/--chunk/--overlap/--namespace 参数已废弃，统一由 chunk_text 接管", file=sys.stderr)
+    asyncio.run(do_ingest(reset=args.reset))

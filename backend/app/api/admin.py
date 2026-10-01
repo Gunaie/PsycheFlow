@@ -397,7 +397,7 @@ async def delete_batch(
 # ---------------------------------------------------------------------------
 
 _SEVERITY_ZH = {
-    "none": "无", "minimal": " minimal", "mild": "轻度", "moderate": "中度",
+    "none": "无", "minimal": "轻微", "mild": "轻度", "moderate": "中度",
     "moderately_severe": "中重度", "severe": "重度",
 }
 

@@ -297,7 +297,8 @@ class RAGService:
                         bm25_unique.append(doc)
 
         # 3. 融合：以向量距离为主排序，BM25 补充召回 + 双重印证小幅加权
-        keywords = ["压力", "失眠", "焦虑", "难过", "抑郁", "放松", "考试"]
+        from app.core.config import settings
+        boost_keywords = settings.rag_boost_keywords
         candidates: list[dict] = []
 
         # 向量命中的片段
@@ -308,8 +309,8 @@ class RAGService:
             # 双重印证：同时被 BM25 强命中，距离减 0.03
             if vec_ids[i] in bm25_hit_ids:
                 adjusted -= 0.03
-            # 关键词命中加权
-            if any(kw in text for kw in keywords):
+            # 关键词命中加权（可配置）
+            if any(kw in text for kw in boost_keywords):
                 adjusted -= 0.05
             candidates.append({
                 "id": vec_ids[i],

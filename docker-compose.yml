@@ -28,8 +28,8 @@ services:
       - ./data:/app/data
       # 审计日志
       - ./logs:/app/logs
-      # 本地语音模型挂载
-      - E:\OllamaModels\voice:/models/voice
+      # 本地语音模型挂载（通过 .env HOST_MODELS_PATH 配置，默认回退到 data/models）
+      - ${HOST_MODELS_PATH:-./data/models}:/models/voice
     deploy:
       resources:
         reservations:
