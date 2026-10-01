@@ -1,9 +1,10 @@
 """四智能体角色 prompt 模板。
 
-温度保守原则：分诊 0.1（结构化确定性）/ 干预 0.6（共情自然 + 缓解模板重复，本地 LoRA
-模板惯性在 0.35 下会复读上轮问句）。
-分诊 prompt 简洁，意图分类 5 类（寒暄/求助/倾诉/咨询/危机）；干预的 system
-prompt 已迁至 app.agents.personas（多角色人格：安全底线 + 人格特色），
+温度保守原则：干预 0.6（共情自然 + 缓解模板重复，本地 LoRA 模板惯性在 0.35 下会
+复读上轮问句）、intake/报告 0.1（确定性/结构稳定）。
+TRIAGE_SYSTEM/TRIAGE_USER_TEMPLATE 仅供训练数据生成与评测脚本引用（merge_datasets、
+gen_triage_data、verify_leftovers）；2026-09-30 起生产分诊已全规则化，零 LLM。
+干预的 system prompt 已迁至 app.agents.personas（多角色人格：安全底线 + 人格特色），
 此处仅保留用户模板。病例解读（CASE_*）为独立科普场景，不受理格影响。
 """
 

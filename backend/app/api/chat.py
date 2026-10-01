@@ -242,7 +242,7 @@ async def chat_stream(
         is_crisis = False
 
         try:
-            # —— 1. triage（同步等结果，LLM 分类 2-5s）——
+            # —— 1. triage（全规则路由，毫秒级，零 LLM）——
             yield _sse("agent", {"agent": "triage", "agent_trace": ["triage"]})
             triage_out = await triage_node(state)
             state.update(triage_out)

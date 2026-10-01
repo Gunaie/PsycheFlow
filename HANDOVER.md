@@ -332,7 +332,7 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 | [scripts/export_report_finetune_data.py](backend/scripts/export_report_finetune_data.py) | **本地版 3.B 预备**：从历史测评/报告反向构造微调 JSONL（LLaMA-Factory 格式），默认输出 `data/finetune/finetune_report.jsonl`（未跟踪文件，配合 [docs/本地模型化方案.md](docs/本地模型化方案.md) 使用） |
 | [scripts/e2e_acceptance.py](backend/scripts/e2e_acceptance.py) | **验收**：端到端 7 步验收（健康→登录→对话→危机→报告→审计），7/7 PASS |
 | [scripts/dialog_smoke.py](backend/scripts/dialog_smoke.py) | **对话质量回归**：复用生产 build_intervention_messages（含 RAG + 逐轮 history），场景化 4 轮（独立咨询/倾诉转咨询），自动检查闭合问句与空历史幻觉归因；`DIALOG_SMOKE_TEMP` 可调温 |
-| [scripts/eval_triage.py](backend/scripts/eval_triage.py) + [scripts/eval/triage_dataset.json](backend/scripts/eval/triage_dataset.json) | **P2 评测**：triage 意图分诊评测（43 条标注样本，危机 8/咨询 22/倾诉 12/求助 1，含 6 条边界标注；云端 qwen3.8-27b 基线 97.7%=42/43，2026-09-27 本地 triage-lora 40/43，危机硬编码 8/8=100% 安全回归）；容器内 `uv run python scripts/eval_triage.py [--limit N] [--verbose]` |
+| [scripts/eval_triage.py](backend/scripts/eval_triage.py) + [scripts/eval/triage_dataset.json](backend/scripts/eval/triage_dataset.json) | **P2 评测**：triage 分诊路由评测（2026-09-30 起重构为纯规则路由评测，**53 条 5 类 → 53/53 = 100%，0.0s 零 LLM**；历史基线：43 条标注样本云端 qwen3.8-27b 97.7%=42/43、本地 triage-lora 40/43，危机硬编码 8/8=100% 安全回归）；容器内 `uv run python scripts/eval_triage.py [--limit N] [--verbose]` |
 | [scripts/eval_report.py](backend/scripts/eval_report.py) | **P2 评测**：报告结构合规评测（5 场景×15 断言：六章节/个人信息/测评用时/雷达图/PDF 完整性/危机红框双向/建议无危机话术，100%）；复用计分引擎+真实 LLM 叙事，合成数据自动清理；容器内 `uv run python scripts/eval_report.py [--only key]` |
 | [scripts/eval_rag.py](backend/scripts/eval_rag.py) + [scripts/eval/rag_eval_dataset.json](backend/scripts/eval/rag_eval_dataset.json) | **18.1 检索护栏**：65 条 query→期望文件（expect 可为数组，多可接受文件），跑 `rag_service.search(top_k=3)` 统计 hit@1/recall@3/MRR/文件覆盖；2026-09-09 基线 **recall@3=100%（65/65）、hit@1=76.9%、MRR=0.874、32/32 文件覆盖**；知识库每次扩充后必跑，recall@3 下降即阻断 |
 | [scripts/eval/eval_multiturn.py](backend/scripts/eval/eval_multiturn.py) | **18.5 多轮对话护栏**：4 场景×4 轮（倾诉多轮延续/情绪跟进/话题切换/求做法后追问）走生产 HTTP 全链路，逐轮 check_reply_quality（min_len=50/闭合问句/跨轮复读/幻觉归因/同类做法）+ 求做法场景类别并集 ≥3 + 非危机安全断言（12355 出现记 warn）；import 生产函数保证口径不漂移；2026-10-01 基线 **15/16 = 94%**（修复前 11/16），快照 `results/multiturn_eval_latest.json`；跑真实 LLM 需预热 + 180s timeout + 请求间隔 7s |
@@ -414,7 +414,7 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 - **前端体验**：App.tsx 导航加「测评/历史」链接 + role 显隐管理后台（AuthResp 新增 role 字段）；HomePage 三步引导卡 + 动态 CTA；ChatPage 空状态推荐话题 + 全宽布局滚动；对话知识卡片默认折叠、LLM 不复述知识库原文；SCARED 每题选项框按本量表 optionKeys 渲染（修复错用 PHQ-A 4 选项导致空白）；SDQ/MHT 去重复标题（showHeader 参数）；MHT 26/28 题保持原表述
 - **PDF 下载交互分化**：ScalePage「生成 PDF 报告」= 新标签页预览（window.open('') + blob location.href，同步开空标签避弹窗拦截）；HistoryPage「下载 PDF」= **真实磁盘下载**（apiGetBlob + 动态 `<a download>` 程序化点击，2026-09-05 修复——blob 新标签页会被 Chrome 内置 PDF 查看器内联打开成"预览"，且带 `downloadingId` 生成中状态）
 - **测试修正**：[test_auth.py](backend/tests/test_auth.py) `test_bearer_token_links_session_to_account` 过期——list_sessions 已改为只返回有测评记录的 session（排除纯对话），测试补挂一条全 0 PHQ-A 后通过
-- **验证**：`tsc --noEmit` 0 错误；pytest **199 passed / 1 skipped / 0 failed**（工作区实测 2026-09-05）
+- **验证**：`tsc --noEmit` 0 错误；pytest **199 passed / 1 skipped / 0 failed**（2026-09-05 历史快照；当前最新 2026-10-01 实测 **393 passed / 1 skipped**）
 
 ### 路由重构与双端门户批次 ✅（2026-09-05，commit `884e7fa` → `2cf193c`）
 

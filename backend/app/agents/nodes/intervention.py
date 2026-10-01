@@ -23,17 +23,18 @@ from typing import AsyncIterator
 from app.agents.personas import build_system_prompt, get_persona
 from app.agents.prompts import INTERVENTION_USER_TEMPLATE, get_reply_skeleton
 from app.agents.state import AgentState
+from app.core.config import settings
 from app.core.llm import provider
 from app.rag.service import rag_service
 
 logger = logging.getLogger("psycheflow.agents.intervention")
 
-# LLM 失败/空回复时的硬编码兜底话术（含 12355，安全底线）
+# LLM 失败/空回复时的硬编码兜底话术（含 12355，安全底线；热线号码走 settings 单一事实源）
 FALLBACK_REPLY = (
     "我听到你的分享，谢谢你的信任。"
     "作为校园心理陪伴助手，我现在的回复能力受限，"
     "请把你正在承受的告诉信任的老师或家长，"
-    "或拨打青少年心理援助热线 12355 寻求专业陪伴。"
+    f"或拨打青少年心理援助热线 {settings.crisis_hotline_12355} 寻求专业陪伴。"
 )
 
 
@@ -387,7 +388,7 @@ async def stream_intervention(
     prebuilt_messages: list[dict] | None = None,
     prebuilt_rag_sources: list | None = None,
 ) -> AsyncIterator[str]:
-    """流式干预：先缓冲完整生成 → 质检 → 不合格最多重试 2 次 → 按原始 token 粒度匀速补推。
+    """流式干预：先缓冲完整生成 → 质检 → 不合格最多重试 3 次（三级阶梯）→ 按原始 token 粒度匀速补推。
 
     为什么先缓冲：token 一旦推给前端就无法撤回，流式质检后重试会造成
     「回复被替换」的 UI 闪烁；故先收集完整回复，质检通过后再推出
@@ -487,9 +488,7 @@ async def stream_intervention(
         ):
             tokens, text = retry_tokens, retry_text
             break
-    # 所有重试均不合格：沿用首次回复
-    if not check_reply_quality(text, history, min_method_categories=min_methods, min_len=50):
-        pass  # tokens/text 已为首轮结果
+    # 所有重试均不合格：沿用首次回复（tokens/text 未被任何子轮覆盖，无需回退操作）
 
     async for token in _paced(tokens):
         yield token
@@ -521,7 +520,7 @@ async def intervention_node(state: AgentState) -> dict:
             logger.warning("intervention: LLM returned empty reply, triggering fallback")
             raise ValueError("empty reply from LLM")
         decision["llm"] = {"status": "success", "reply_len": len(reply)}
-        # 质检不合格 → 附纠正提示重试最多 2 次；重试异常或仍不合格则保留首次回复
+        # 质检不合格 → 附纠正提示重试最多 3 次（三级阶梯）；重试异常或仍不合格则保留首次回复
         history = [
             {"role": h["role"], "content": h["content"]}
             for h in (state.get("history") or [])
