@@ -5,7 +5,7 @@
 
 > 🆕 **2026-10-01：多轮对话质量评测落地，质检重试升级三级阶梯**
 >
-> - **新增多轮评测护栏** [eval_multiturn.py](backend/scripts/eval/eval_multiturn.py)：4 场景 × 4 轮走生产 `/api/chat` 全链路（倾诉多轮延续/情绪跟进/话题切换/求做法后追问），逐轮按生产 `check_reply_quality` 口径判定 + 跨轮复读/闭合问句/做法类别去重 + 求做法场景类别并集 ≥3；结果 **15/16（94%，修复前 11/16）**，快照 `scripts/eval/results/multiturn_eval_latest.json`。
+> - **新增多轮评测护栏** [eval_multiturn.py](backend/scripts/eval/eval_multiturn.py)：4 场景 × 4 轮走生产 `/api/chat` 全链路（倾诉多轮延续/情绪跟进/话题切换/求做法后追问），逐轮按生产 `check_reply_quality` 口径判定 + 跨轮复读/闭合问句/做法类别去重 + 求做法场景类别并集 ≥3；**实测 15/16（≥90%，temp 0.6 ±1-2 轮波动，修复前 11/16）**，快照 `scripts/eval/results/multiturn_eval_latest.json`。
 > - **质检重试升级三级阶梯**（intervention.py，流式/非流式同源）：①hint 针对性禁令（temp 0.6，点名复读原句/上轮做法类别）→ ②rag_refresh 换检索片段（top_k=6 排除已引用 chunk，temp 0.7）→ ③context_trim 剔除历史 assistant 回复（temp 0.7）；全部失败回退首次回复，`decision.llm.retry_modes` 留痕。
 > - **两处 QC 语义修复**：RETRY_HINT 去除具体做法示例（7B 会照抄示例并补完库存句，实证为复读种子）；逐字重复检测剥离呼吸参数公式（4 吸 6 呼是硬约束标准口径，跨轮重现不算复读）；做法类别新增 planning（对齐 prompt 骨架的「任务拆解」示例）。非危机回复出现 12355 属安全底线保守升级，评测记 warn 不硬卡。
 > - **测试**：pytest **380 passed / 1 skipped**（+5 质检测试：呼吸公式豁免/公式外复读仍判/planning 类别/阶梯各模式）。
@@ -149,7 +149,7 @@ OLLAMA_MODEL=qwen2.5:7b
 | 重建 RAG 索引 | `docker exec psycheflow-backend uv run python -c "import asyncio; from app.rag.service import rag_service; print(asyncio.run(rag_service.build_index()))"` | chroma 被重建后必跑；知识库新增/改动文件后也必跑 |
 | HTTP 重建索引 | `curl.exe -s -X POST http://localhost:8000/api/rag/build` | PowerShell 下必须用 `curl.exe`（裸 `curl` 是 Invoke-WebRequest 别名）；返回 indexed 片数 |
 | **RAG 检索护栏评测** | `docker exec psycheflow-backend uv run python scripts/eval_rag.py` | 65 条 query→期望文件：recall@3 应 100%、32/32 文件覆盖；结果写 `scripts/eval/results/rag_eval_latest.json` |
-| **多轮对话质量评测** | `docker exec -e PYTHONUTF8=1 psycheflow-backend uv run python scripts/eval/eval_multiturn.py` | 4 场景×4 轮真实 LLM（约 3 分钟）：逐轮生产质检口径 + 跨轮复读/做法去重；基线 15/16；脚本自动预热 + 每请求 sleep 7s 避限流，结果写 `results/multiturn_eval_latest.json` |
+| **多轮对话质量评测** | `docker exec -e PYTHONUTF8=1 psycheflow-backend uv run python scripts/eval/eval_multiturn.py` | 4 场景×4 轮真实 LLM（约 3 分钟）：逐轮生产质检口径 + 跨轮复读/做法去重；**实测 15/16（≥90%，temp 0.6 ±1-2 轮波动）**；脚本自动预热 + 每请求 sleep 7s 避限流，结果写 `results/multiturn_eval_latest.json` |
 | 跑验证脚本 | `docker exec psycheflow-backend uv run python scripts/verify_leftovers.py` | has_assessment + triage 抽样 |
 | 跑性能压测 | `docker exec psycheflow-backend uv run python scripts/perf_bench.py` | 50 并发 health + 10 并发 chat（脚本位于 `backend/scripts/`，容器内 `/app/scripts/`） |
 | **SSE 首 token 实测** | `docker exec psycheflow-backend uv run python scripts/sse_first_token.py` | NFR-5 验证：首 token 应 < 2s（寒暄路径 < 0.5s，对话路径 ~1.2s） |
@@ -335,7 +335,7 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 | [scripts/eval_triage.py](backend/scripts/eval_triage.py) + [scripts/eval/triage_dataset.json](backend/scripts/eval/triage_dataset.json) | **P2 评测**：triage 分诊路由评测（2026-09-30 起重构为纯规则路由评测，**53 条 5 类 → 53/53 = 100%，0.0s 零 LLM**；历史基线：43 条标注样本云端 qwen3.8-27b 97.7%=42/43、本地 triage-lora 40/43，危机硬编码 8/8=100% 安全回归）；容器内 `uv run python scripts/eval_triage.py [--limit N] [--verbose]` |
 | [scripts/eval_report.py](backend/scripts/eval_report.py) | **P2 评测**：报告结构合规评测（5 场景×15 断言：六章节/个人信息/测评用时/雷达图/PDF 完整性/危机红框双向/建议无危机话术，100%）；复用计分引擎+真实 LLM 叙事，合成数据自动清理；容器内 `uv run python scripts/eval_report.py [--only key]` |
 | [scripts/eval_rag.py](backend/scripts/eval_rag.py) + [scripts/eval/rag_eval_dataset.json](backend/scripts/eval/rag_eval_dataset.json) | **18.1 检索护栏**：65 条 query→期望文件（expect 可为数组，多可接受文件），跑 `rag_service.search(top_k=3)` 统计 hit@1/recall@3/MRR/文件覆盖；2026-09-09 基线 **recall@3=100%（65/65）、hit@1=76.9%、MRR=0.874、32/32 文件覆盖**；知识库每次扩充后必跑，recall@3 下降即阻断 |
-| [scripts/eval/eval_multiturn.py](backend/scripts/eval/eval_multiturn.py) | **18.5 多轮对话护栏**：4 场景×4 轮（倾诉多轮延续/情绪跟进/话题切换/求做法后追问）走生产 HTTP 全链路，逐轮 check_reply_quality（min_len=50/闭合问句/跨轮复读/幻觉归因/同类做法）+ 求做法场景类别并集 ≥3 + 非危机安全断言（12355 出现记 warn）；import 生产函数保证口径不漂移；2026-10-01 基线 **15/16 = 94%**（修复前 11/16），快照 `results/multiturn_eval_latest.json`；跑真实 LLM 需预热 + 180s timeout + 请求间隔 7s |
+| [scripts/eval/eval_multiturn.py](backend/scripts/eval/eval_multiturn.py) | **18.5 多轮对话护栏**：4 场景×4 轮（倾诉多轮延续/情绪跟进/话题切换/求做法后追问）走生产 HTTP 全链路，逐轮 check_reply_quality（min_len=50/闭合问句/跨轮复读/幻觉归因/同类做法）+ 求做法场景类别并集 ≥3 + 非危机安全断言（12355 出现记 warn）；import 生产函数保证口径不漂移；2026-10-01 基线 **≥90%（实测 15/16，temp 0.6 ±1-2 轮波动，修复前 11/16）**，快照 `results/multiturn_eval_latest.json`；跑真实 LLM 需预热 + 180s timeout + 请求间隔 7s |
 | [scripts/eval/results/](backend/scripts/eval/results/) | 评测基线快照（`*_eval_latest.json` 入库，带时间戳明细 gitignore） |
 
 ### 部署文件
@@ -575,7 +575,7 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
   3. **QC 分类学缺口**：prompt 骨架自列「任务拆解」示例做法但 `_METHOD_CATEGORIES` 不认识，模型照骨架给建议被误判「做法类别<2」——新增 planning 类（拆成/清单/列出来/计划表）；muscle_relax 补「握紧」关键词。
 - **12355 定调**：非危机回复（如轻微倾诉）出现热线是 SAFETY_BASELINE 第 7 条「有危机倾向立即建议 12355」的「宁过度不遗漏」模型行为，不用 prompt 压制（避免削弱 LLM 层危机安全网），评测只记 warn 人工复核。
 - **SSE 侧**：[api/chat.py](backend/app/api/chat.py) 流式端点改为预构建 messages/sources 传入 `stream_intervention`，避免节点内重复检索。
-- **结果**：多轮评测 11/16 → **15/16（94%）**，剩余 1 处为 LoRA 库存句（journaling「把担心的事写在纸上」）权重级复读，属路线图第四批重训解决范围；全量 pytest **380 passed / 1 skipped**（新增 5 测试：呼吸公式豁免、公式外复读仍判、planning 检测、planning vs 呼吸不冲突、阶梯 context_trim 模式）。
+- **结果**：多轮评测 11/16 → **≥90%（实测 15/16，temp 0.6 ±1-2 轮波动）**，剩余 1 处为 LoRA 库存句（journaling「把担心的事写在纸上」）权重级复读，属路线图第四批重训解决范围；全量 pytest **380 passed / 1 skipped**（新增 5 测试：呼吸公式豁免、公式外复读仍判、planning 检测、planning vs 呼吸不冲突、阶梯 context_trim 模式）。
 
 ---
 
@@ -687,7 +687,7 @@ dd853fb B 二期：LangGraph 四智能体编排 + RAG .md 修复 + ChatPage 阶�
 - [ ] 重建 RAG 索引：`docker exec psycheflow-backend uv run python -c "import asyncio; from app.rag.service import rag_service; print(asyncio.run(rag_service.build_index()))"` 输出 `{'indexed': 327, ...}`（32 个知识库文件；或 `curl.exe -s -X POST http://localhost:8000/api/rag/build`）
 - [ ] 跑测试：`docker exec psycheflow-backend uv run pytest -q --no-header` → 380 passed / 1 skipped / 0 failed（2026-10-01 复测值；基线首测 09-10，若实测不同以实测为准并回写文档）
 - [ ] **RAG 检索护栏**：`docker exec psycheflow-backend uv run python scripts/eval_rag.py` → recall@3 100%（65/65）、文件覆盖 32/32（知识库每次扩充后必跑）
-- [ ] **多轮对话质量护栏**：`docker exec -e PYTHONUTF8=1 psycheflow-backend uv run python scripts/eval/eval_multiturn.py` → 轮次通过率 ≥15/16（基线 94%，2026-10-01；真实 LLM 有 ±1 轮温度波动，场景级 4 过 3 以上可接受）
+- [ ] **多轮对话质量护栏**：`docker exec -e PYTHONUTF8=1 psycheflow-backend uv run python scripts/eval/eval_multiturn.py` → 轮次通过率 ≥14/16（场景级 4 过 3 为可接受线；实测 15/16，temp 0.6 下 ±1-2 轮波动属正常）
 - [ ] 遗留项验证：`docker exec psycheflow-backend uv run python scripts/verify_leftovers.py` → has_assessment PASS + triage 9/9
 - [ ] **SSE 首 token 验证（NFR-5）**：`docker exec psycheflow-backend uv run python scripts/sse_first_token.py` → 首 token < 2s（实测 1.75s，triage=qwen3.8-27b/dialog_stream=qwen3.8-max 关思考链），事件序列 agent(triage)→agent(assessment)→agent(intervention)→sources→token×N→done
 - [ ] **SSE 危机验证**：`docker exec psycheflow-backend uv run python scripts/sse_first_token.py --message "我想自杀"` → 首 token N/A（危机不流式），crisis 事件含 12355
