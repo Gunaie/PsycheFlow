@@ -3,6 +3,22 @@
 > 最后更新：2026-10-01
 > 阶段：D 五期全部完成 + 生产化加固（TLS/HSTS/CSP）+ SSE 首 token 优化（NFR-5 达标）+ Ollama 本地化（3.A 基座 / 3.B LoRA 微调 / D5 语音全离线）+ RAG 知识库 32 文件 327 片（eval_rag 护栏 recall@3=100%）+ 检索埋点落地 + 18.2 三任务数据备料（4232 条）+ 18.3 三 LoRA 重训部署 + 18.4 分诊全规则化与本地推理提速 + **18.5 多轮对话质量评测与三级质检重试阶梯（2026-10-01，已入库）**
 
+> 🆕 **2026-10-01：Grafana 监控看板 + K8s CD 流水线落地**
+>
+> - **Grafana 监控栈**（docker-compose 新增 prometheus + grafana 服务）：[monitoring/prometheus/prometheus.yml](monitoring/prometheus/prometheus.yml) 抓取 backend `/metrics`（15s 间隔，15d 留存）；[monitoring/prometheus/rules/psycheflow-alerts.yml](monitoring/prometheus/rules/psycheflow-alerts.yml) 7 条 Prometheus 告警（后端宕机/5xx>5%/P95>5s/LLM 错误>10%/LLM 兜底>20%/RAG 零命中>30%/危机命中即报）；[monitoring/grafana/dashboards/psycheflow.json](monitoring/grafana/dashboards/psycheflow.json) 12 面板看板（存活/请求速率/5xx/P95/对话轮次/危机计数/LLM 状态饼图/LLM 延迟/首 token 延迟/RAG 命中率/top1 距离/零命中）+ Grafana 内置告警 provisioning（uid=prometheus 数据源自动绑定）。访问 `http://localhost:3300`（admin/admin，匿名 Viewer；Windows 保留端口段 2932-3131 故用 3300）。
+> - **K8s CD 流水线**：[.github/workflows/deploy.yml](.github/workflows/deploy.yml)（main push / workflow_dispatch 触发）→ build-and-push job 推 GHCR（`ghcr.io/<owner>/psycheflow/{backend,frontend}`，branch + sha 双标签）→ deploy job 用 Kustomize `kubectl apply` 滚动更新（环境选择 dev/prod）；[k8s/kustomization.yaml](k8s/kustomization.yaml) 基础配置 + [k8s/overlays/dev](k8s/overlays/dev/kustomization.yaml)（1 副本 + dev 标签 + 删 HPA）+ [k8s/overlays/prod](k8s/overlays/prod/kustomization.yaml)（latest + imagePullPolicy: Always）。
+> - **验证**：dashboard JSON / 全部 YAML 语法通过 js-yaml 解析；dev overlay HPA 名称修正为 `*-hpa`（原误写 deployment 名）。
+> - **待配置**：仓库 Settings → Secrets 需添加 `KUBE_CONFIG`（base64 编码 kubeconfig）才能真实部署；无集群时 deploy job 会失败但 build-and-push 不受影响。
+
+> 🆕 **2026-10-01：并发雪崩修复 + 压测报告**
+>
+> - **根因**：`rag/service.py` `_rewrite_query` 在 local 模式下仍调 triage LoRA 做查询重写（单次 48s），叠加 dialog LoRA 46s，并发请求排队叠加导致 120s timeout 雪崩。
+> - **修复**：① `_rerank_candidates` 同步 `reranker.predict()` 改 `asyncio.to_thread` 扔线程池（防事件循环锁死）；② `_rewrite_query` 加 `is_local` 守卫，本地模式跳过 LLM 重写（性能优先）。
+> - **压测结果**（`scripts/loadtest/chat_load.py`，容器内运行）：`/api/health` 50VU×30s = 16900 请求 QPS 563 P95 102ms 0 错误；`/api/chat` 10VU×60s = 37 请求全成功 P50 10.2s P95 18.6s 0 错误（本地 LoRA 串行推理，含 RAG + 质检重试）。
+> - **已知边界**：20 VU 并发时 Ollama 单实例 GPU 串行排队超限，15+ 并发需加 `OLLAMA_NUM_PARALLEL` 或换 vLLM 多实例。
+> - **复盘文章**：[docs/复盘-FastAPI并发雪崩排查.md](docs/复盘-FastAPI并发雪崩排查.md)（现象/分步计时定位/修复/容量边界，可作博客与面试素材）。
+> - **压测脚本**：`backend/scripts/loadtest/chat_load.py`（容器内实跑版，报告落 `results/latest_load_report.json`）+ `chat_load.js`（k6 备选，本机未装 k6）。
+
 > 🆕 **2026-10-01：多轮对话质量评测落地，质检重试升级三级阶梯**
 >
 > - **新增多轮评测护栏** [eval_multiturn.py](backend/scripts/eval/eval_multiturn.py)：4 场景 × 4 轮走生产 `/api/chat` 全链路（倾诉多轮延续/情绪跟进/话题切换/求做法后追问），逐轮按生产 `check_reply_quality` 口径判定 + 跨轮复读/闭合问句/做法类别去重 + 求做法场景类别并集 ≥3；**实测 15/16（≥90%，temp 0.6 ±1-2 轮波动，修复前 11/16）**，快照 `scripts/eval/results/multiturn_eval_latest.json`。
@@ -10,10 +26,17 @@
 > - **两处 QC 语义修复**：RETRY_HINT 去除具体做法示例（7B 会照抄示例并补完库存句，实证为复读种子）；逐字重复检测剥离呼吸参数公式（4 吸 6 呼是硬约束标准口径，跨轮重现不算复读）；做法类别新增 planning（对齐 prompt 骨架的「任务拆解」示例）。非危机回复出现 12355 属安全底线保守升级，评测记 warn 不硬卡。
 > - **测试**：pytest **380 passed / 1 skipped**（+5 质检测试：呼吸公式豁免/公式外复读仍判/planning 类别/阶梯各模式）。
 
-> 🆕 **2026-10-01 P0-P2 工程化加固（代码已落地，待入库）**
+> 🆕 **2026-10-01：前端测试基建 + ChatPage 状态管理迁移落地**
+>
+> - **前端单测基建**：引入 vitest 2.x + @testing-library/react + jsdom（vite.config.ts 挂 `test` 配置，`npm test` = `vitest run`；tsconfig 排除测试文件不影响 `tsc -b` 构建）；Playwright e2e 保留在 `frontend/tests/` 与单测隔离。
+> - **ChatPage 迁移 Zustand**：[chatStore.ts](frontend/src/stores/chatStore.ts) 新增 `appendToLastAssistant` / `updateLastAssistantMeta` / `currentAgent` 字段；[ChatPage.tsx](frontend/src/pages/ChatPage.tsx) 的 turns/loading/streaming/crisis/personaId/currentAgent 全部走 store（SSE 回调内用 `useChatStore.getState()` 读最新状态，避免闭包过期），输入框/录音/病例面板等纯 UI 状态保留 useState；store persist 只落 sessionId+personaId。
+> - **单测 19 例全绿**：chatStore（7：初始化/追加/token 累加/meta 更新/清空/partialize 只持久化两字段）+ authStore（2）+ api 封装（5：token 读写/鉴权头/detail 错误/Pydantic 错误拼接/非 JSON 回退）+ streamChat SSE（4：`\n\n` 切分/跨 chunk 拼接/无 data 忽略/非 2xx 抛错）+ CrisisBanner（1：12355 热线渲染）。
+> - **验证**：`npm test` 19 passed；`tsc -b` 0 错误；`vite build` 通过。
+
+> 🆕 **2026-10-01 P0-P2 工程化加固（已入库，commit 4eee20a）**
 >
 > - **P0 数据库/监控**：[db.py](backend/app/db.py) 双驱动——`.env` 设 `DATABASE_URL=postgresql+asyncpg://...` 切 PostgreSQL 16（pool_pre_ping + pool_recycle=3600），空则回退 SQLite（0600 不变）；新增 [alembic/](backend/alembic/) 迁移（`alembic upgrade head` 建表）+ dev compose 加 `postgres:16-alpine` 服务（healthcheck pg_isready，backend depends_on service_healthy）。新增 [core/metrics.py](backend/app/core/metrics.py)：Prometheus 指标（HTTP 请求计数/延迟、chat 轮次、RAG 检索/距离/零命中、LLM 调用/延迟、危机命中共 10 类）+ ASGI 中间件，`GET /metrics` 端点（main.py 注册，跳过自引用）。
-> - **P1 RAG 进阶/对话记忆/前端状态**：[rag/service.py](backend/app/rag/service.py) 检索流程升级为 0.查询重写（`_rewrite_query` LLM 同义词扩展，失败静默回退原查询）→ 1.向量 → 2.BM25 → 3.融合 → 3.5 **bge-reranker 重排序**（`_rerank_candidates` CrossEncoder top10→top3，仅本地模式，sentence_transformers 缺失时守卫跳过）→ 4.过滤去重。[intervention.py](backend/app/agents/nodes/intervention.py) 历史管理改**滑动窗口+语义摘要**：RECENT_TURNS=4 保留原文，更早轮次 `_compress_history` LLM 压缩为摘要（≤80 字，作 system 消息注入「【前文摘要（保留核心情绪与建议）】」），替代硬截断 10 轮；state.py 加 `summary`/`summary_upto` 字段增量 merge。前端新增 [stores/chatStore.ts](frontend/src/stores/chatStore.ts)+[stores/authStore.ts](frontend/src/stores/authStore.ts)（Zustand persist）与 [lib/queryClient.ts](frontend/src/lib/queryClient.ts)（React Query），App.tsx 挂 QueryClientProvider；ChatPage 暂保持 useState（流式逻辑复杂，后续迭代迁移）。
+> - **P1 RAG 进阶/对话记忆/前端状态**：[rag/service.py](backend/app/rag/service.py) 检索流程升级为 0.查询重写（`_rewrite_query` LLM 同义词扩展，失败静默回退原查询）→ 1.向量 → 2.BM25 → 3.融合 → 3.5 **bge-reranker 重排序**（`_rerank_candidates` CrossEncoder top10→top3，仅本地模式，sentence_transformers 缺失时守卫跳过）→ 4.过滤去重。[intervention.py](backend/app/agents/nodes/intervention.py) 历史管理改**滑动窗口+语义摘要**：RECENT_TURNS=4 保留原文，更早轮次 `_compress_history` LLM 压缩为摘要（≤80 字，作 system 消息注入「【前文摘要（保留核心情绪与建议）】」），替代硬截断 10 轮；state.py 加 `summary`/`summary_upto` 字段增量 merge。前端新增 [stores/chatStore.ts](frontend/src/stores/chatStore.ts)+[stores/authStore.ts](frontend/src/stores/authStore.ts)（Zustand persist）与 [lib/queryClient.ts](frontend/src/lib/queryClient.ts)（React Query），App.tsx 挂 QueryClientProvider；ChatPage 迁移已完成（见上方 2026-10-01 前端迁移条目）。
 > - **P2 K8s/A-B 测试**：新增 [k8s/](k8s/) 生产清单 9 文件（namespace/configmap/secret/backend+frontend Deployment/HPA CPU70%·mem80% min2-max10/Ingress/PVC/README）。新增 [core/abtest.py](backend/app/core/abtest.py)（MD5(user_id+experiment)%2 哈希分流，同用户同组）+ [api/feedback.py](backend/app/api/feedback.py)（POST /api/feedback 匿名 1-5 分；GET /api/feedback/stats 仅教师），chat 响应注入 `ab_test` 字段（非流式 return + 流式 done_payload）。
 > - **测试**：pytest **396 passed / 1 skipped**（P0-P2 净增 16 例）。
 

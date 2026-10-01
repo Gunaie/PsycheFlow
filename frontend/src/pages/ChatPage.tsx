@@ -3,15 +3,7 @@ import { apiDelete, apiGet, apiPost, apiPostBlob, apiPostForm, getChatSessionId,
 import { WavRecorder } from '../lib/recorder'
 import CrisisBanner from '../components/CrisisBanner'
 import FooterDisclaimer from '../components/FooterDisclaimer'
-// P1 前端重构：Zustand chatStore 已创建（stores/chatStore.ts），当前组件保持 useState 避免破坏流式逻辑
-// 后续迭代可将 turns/loading/sessionId 等状态逐步迁移到 store
-
-interface ChatTurn {
-  role: 'user' | 'assistant'
-  content: string
-  agent?: string  // 当前回复来自哪个 Agent（triage/assessment/intervention/escalation/case）
-  sources?: SourceRef[]  // 该轮引用的知识来源（挂到对应轮次，刷新后从历史恢复）
-}
+import { useChatStore, type ChatTurn } from '../stores/chatStore'
 
 interface SourceRef {
   text: string
@@ -38,6 +30,7 @@ async function ensureChatSessionId(): Promise<string> {
   if (existing) return existing
   const session = await apiPost<{ session_id: string }>('/api/sessions', { label: '对话' })
   setChatSessionId(session.session_id)
+  useChatStore.getState().setSessionId(session.session_id)
   return session.session_id
 }
 
@@ -114,14 +107,23 @@ function TurnSources({ sources }: { sources: SourceRef[] }) {
 const MAX_INPUT = 2000
 
 export default function ChatPage() {
-  const [turns, setTurns] = useState<ChatTurn[]>([])
+  // 对话共享状态走 Zustand chatStore（turns/loading/crisis/persona/currentAgent）
+  const turns = useChatStore(s => s.turns)
+  const setTurns = useChatStore(s => s.setTurns)
+  const loading = useChatStore(s => s.loading)
+  const setLoading = useChatStore(s => s.setLoading)
+  const setStreaming = useChatStore(s => s.setStreaming)
+  const crisis = useChatStore(s => s.crisisHit)
+  const setCrisis = useChatStore(s => s.setCrisisHit)
+  const currentAgent = useChatStore(s => s.currentAgent)
+  const setCurrentAgent = useChatStore(s => s.setCurrentAgent)
+  const personaId = useChatStore(s => s.personaId)
+  const setPersonaId = useChatStore(s => s.setPersonaId)
+
+  // 纯本地 UI 状态（输入框/录音/病例面板等）保持 useState
   const [input, setInput] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [crisis, setCrisis] = useState(false)
-  const [currentAgent, setCurrentAgent] = useState<string | undefined>(undefined)
   const [error, setError] = useState<string | null>(null)
   const [personas, setPersonas] = useState<PersonaOption[]>([])
-  const [personaId, setPersonaId] = useState('default')
   const [recording, setRecording] = useState(false)
   const [transcribing, setTranscribing] = useState(false)
   const [speakingIdx, setSpeakingIdx] = useState<number | null>(null)
@@ -164,6 +166,7 @@ export default function ChatPage() {
   useEffect(() => {
     const sid = getChatSessionId()
     if (!sid) return
+    useChatStore.getState().setSessionId(sid)
     let cancelled = false
     apiGet<{ items: Array<{ role: string; content: string; sources: SourceRef[]; attachments: CaseAttachment[]; crisis_hit: boolean }> }>(
       `/api/chat/history?session_id=${encodeURIComponent(sid)}`,
@@ -192,14 +195,16 @@ export default function ChatPage() {
   const send = async (overrideMsg?: string) => {
     const msg = (overrideMsg ?? input).trim()
     if (!msg || loading) return
+    const store = useChatStore.getState()
     setInput('')
     setLoading(true)
+    setStreaming(true)
     setError(null)
     setCurrentAgent(undefined)
     setCrisis(false)
 
     // 先写 user turn + 空 assistant turn（占位，边收 token 边填）
-    const prevTurns = turns
+    const prevTurns = store.turns
     const newTurns: ChatTurn[] = [
       ...prevTurns,
       { role: 'user', content: msg },
@@ -222,80 +227,37 @@ export default function ChatPage() {
         },
         (evt) => {
           const { event, data } = evt
+          const st = useChatStore.getState()
           if (event === 'agent') {
             // 更新 stepper + 当前 assistant 气泡的 agent badge
-            setCurrentAgent(data.agent)
-            setTurns((prev) => {
-              const next = [...prev]
-              const last = next.length - 1
-              if (next[last]?.role === 'assistant') {
-                next[last] = { ...next[last], agent: data.agent }
-              }
-              return next
-            })
+            st.setCurrentAgent(data.agent)
+            st.updateLastAssistantMeta({ agent: data.agent })
           } else if (event === 'sources') {
             // 知识来源挂到当前 assistant 轮（历史轮次互不覆盖）
-            setTurns((prev) => {
-              const next = [...prev]
-              const last = next.length - 1
-              if (next[last]?.role === 'assistant') {
-                next[last] = { ...next[last], sources: data.sources || [] }
-              }
-              return next
-            })
+            st.updateLastAssistantMeta({ sources: data.sources || [] })
           } else if (event === 'token') {
             // 累加 token 到 assistant 气泡（边生成边显示）
-            setTurns((prev) => {
-              const next = [...prev]
-              const last = next.length - 1
-              if (next[last]?.role === 'assistant') {
-                next[last] = {
-                  ...next[last],
-                  content: next[last].content + data.token,
-                }
-              }
-              return next
-            })
+            st.appendToLastAssistant(data.token)
           } else if (event === 'crisis') {
             // 危机路径不流式，整段话术一次性推
-            setTurns((prev) => {
-              const next = [...prev]
-              const last = next.length - 1
-              if (next[last]?.role === 'assistant') {
-                next[last] = { ...next[last], content: data.reply, agent: 'escalation' }
-              }
-              return next
-            })
-            setCrisis(true)
-            setCurrentAgent('escalation')
+            st.updateLastAssistantMeta({ content: data.reply, agent: 'escalation' })
+            st.setCrisisHit(true)
+            st.setCurrentAgent('escalation')
           } else if (event === 'done') {
             // 兜底：若 token 累加缺失（如异常 fallback/停止时部分内容），用 done.reply 补全
-            setTurns((prev) => {
-              const next = [...prev]
-              const last = next.length - 1
-              if (next[last]?.role === 'assistant') {
-                const cur = next[last].content || ''
-                if (!cur.trim() && data.reply) {
-                  next[last] = {
-                    ...next[last],
-                    content: data.reply,
-                    agent: data.current_agent || next[last].agent,
-                    sources: data.sources?.length ? data.sources : next[last].sources,
-                  }
-                } else {
-                  next[last] = {
-                    ...next[last],
-                    agent: data.current_agent || next[last].agent,
-                    sources: next[last].sources || (data.sources?.length ? data.sources : undefined),
-                  }
-                }
-              }
-              return next
-            })
-            setCrisis(!!data.crisis)
-            setCurrentAgent(data.current_agent)
+            const last = st.turns[st.turns.length - 1]
+            if (last?.role === 'assistant') {
+              const cur = last.content || ''
+              st.updateLastAssistantMeta({
+                content: !cur.trim() && data.reply ? data.reply : cur,
+                agent: data.current_agent || last.agent,
+                sources: last.sources || (data.sources?.length ? data.sources : undefined),
+              })
+            }
+            st.setCrisisHit(!!data.crisis)
+            st.setCurrentAgent(data.current_agent)
             // 后端对未知人格回退 default 时，同步校正本地选择
-            if (data.persona_id) setPersonaId(data.persona_id)
+            if (data.persona_id) st.setPersonaId(data.persona_id)
           } else if (event === 'error') {
             setError(data.message || '流式异常')
           }
@@ -310,6 +272,7 @@ export default function ChatPage() {
     } finally {
       abortRef.current = null
       setLoading(false)
+      setStreaming(false)
     }
   }
 
@@ -326,10 +289,12 @@ export default function ChatPage() {
     try {
       const session = await apiPost<{ session_id: string }>('/api/sessions', { label: '对话' })
       setChatSessionId(session.session_id)
-      setTurns([])
+      const st = useChatStore.getState()
+      st.setSessionId(session.session_id)
+      st.clearTurns()
+      st.setCrisisHit(false)
+      st.setCurrentAgent(undefined)
       setError(null)
-      setCrisis(false)
-      setCurrentAgent(undefined)
       setCaseContext(null)
       setCaseSummary(null)
     } catch (e) {
@@ -348,10 +313,11 @@ export default function ChatPage() {
     setClearing(true)
     try {
       await apiDelete(`/api/chat/history?session_id=${encodeURIComponent(sid)}`)
-      setTurns([])
+      const st = useChatStore.getState()
+      st.clearTurns()
+      st.setCrisisHit(false)
+      st.setCurrentAgent(undefined)
       setError(null)
-      setCrisis(false)
-      setCurrentAgent(undefined)
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -375,10 +341,9 @@ export default function ChatPage() {
 
     const fileName = caseFile?.name || '粘贴文本'
     const bubble = caseMode === 'pdf' ? `📎 病例文件：${fileName}` : '📝 粘贴的病例文本'
-    const prevTurns = turns
     // 乐观占位：user 描述轮 + 空 assistant 轮
     setTurns([
-      ...prevTurns,
+      ...useChatStore.getState().turns,
       { role: 'user', content: bubble },
       { role: 'assistant', content: '', agent: 'case' },
     ])
@@ -407,20 +372,12 @@ export default function ChatPage() {
       if (res.case_text) setCaseContext(res.case_text)
       if (res.case_summary) setCaseSummary(res.case_summary)
 
-      setTurns((prev) => {
-        const next = [...prev]
-        const last = next.length - 1
-        if (next[last]?.role === 'assistant') {
-          next[last] = {
-            ...next[last],
-            content: res.reply,
-            agent: res.current_agent || 'case',
-            sources: res.sources && res.sources.length ? res.sources : undefined,
-          }
-        }
-        return next
+      useChatStore.getState().updateLastAssistantMeta({
+        content: res.reply,
+        agent: res.current_agent || 'case',
+        sources: res.sources && res.sources.length ? res.sources : undefined,
       })
-      if (res.crisis) setCrisis(true)
+      if (res.crisis) useChatStore.getState().setCrisisHit(true)
       // 成功后收起面板并清空
       setCasePanel(false)
       setCaseFile(null)
@@ -428,7 +385,8 @@ export default function ChatPage() {
     } catch (e) {
       // 失败（扫描件/超限/422 等）：撤掉占位轮，保留用户输入以便调整后重试
       setError((e as Error).message)
-      setTurns(prev => prev.slice(0, Math.max(0, prev.length - 2)))
+      const st = useChatStore.getState()
+      st.setTurns(st.turns.slice(0, Math.max(0, st.turns.length - 2)))
     } finally {
       setAnalyzing(false)
     }

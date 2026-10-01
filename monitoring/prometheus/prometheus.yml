@@ -1,0 +1,28 @@
+# Prometheus 抓取配置：PsycheFlow 后端 /metrics 端点
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    project: psycheflow
+
+rule_files:
+  - "rules/*.yml"
+
+scrape_configs:
+  - job_name: psycheflow-backend
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - backend:8000   # docker-compose 服务名（同网络内）
+        labels:
+          service: backend
+          env: dev
+
+  # Grafana 自监控（可选）
+  - job_name: grafana
+    static_configs:
+      - targets:
+          - grafana:3000
+        labels:
+          service: grafana
+          env: dev

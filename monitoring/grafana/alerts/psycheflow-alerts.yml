@@ -1,0 +1,260 @@
+﻿# Grafana 内置告警规则（provisioned，与 Prometheus 规则互补）
+# 挂载到 /etc/grafana/provisioning/alerting/
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: psycheflow-backend
+    folder: PsycheFlow
+    interval: 30s
+    rules:
+      - uid: psycheflow-backend-down
+        title: PsycheFlow 后端宕机
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: up{job="psycheflow-backend"}
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params: [1]
+                    type: lt
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: math
+        noDataState: NoData
+        execErrState: Error
+        for: 1m
+        annotations:
+          description: Prometheus 无法抓取 /metrics 已持续 1 分钟，实例可能宕机。
+          summary: PsycheFlow 后端不可达
+        labels:
+          severity: critical
+          team: backend
+
+      - uid: psycheflow-5xx-rate-high
+        title: 后端 5xx 错误率过高
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m]))
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params: [0.05]
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: math
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        annotations:
+          description: 5xx 比例超过 5%，检查应用日志与下游依赖。
+          summary: 后端错误率超过阈值
+        labels:
+          severity: warning
+          team: backend
+
+      - uid: psycheflow-crisis-hit
+        title: 检测到危机信号
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: increase(crisis_hits_total[5m])
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params: [0]
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: math
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        annotations:
+          description: 最近 5 分钟有危机关键词命中，请立即查看审计日志与对话记录。
+          summary: 用户危机预警
+        labels:
+          severity: critical
+          team: backend
+
+      - uid: psycheflow-llm-error-high
+        title: LLM 调用错误率过高
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: sum(rate(llm_calls_total{status="error"}[5m])) / sum(rate(llm_calls_total[5m]))
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params: [0.1]
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: math
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        annotations:
+          description: LLM 错误率超过 10%，检查模型服务与 API Key 配额。
+          summary: LLM 调用异常
+        labels:
+          severity: warning
+          team: backend
+
+      - uid: psycheflow-rag-zero-hit-high
+        title: RAG 零命中率过高
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: sum(rate(rag_zero_hits_total[15m])) / sum(rate(rag_search_total[15m]))
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params: [0.3]
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: math
+        noDataState: NoData
+        execErrState: Error
+        for: 15m
+        annotations:
+          description: 知识库召回质量下降，检查嵌入模型与切片配置。
+          summary: RAG 检索零命中率超过 30%
+        labels:
+          severity: warning
+          team: backend
+

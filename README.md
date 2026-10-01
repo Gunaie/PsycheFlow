@@ -39,10 +39,14 @@
 | | 多轮对话质量（2026-10-01，4 场景×4 轮真实 LLM：逐轮生产质检口径 + 跨轮复读/闭合问句/做法类别去重） | **≥90%**（实测 15/16；temp 0.6 下 ±1-2 轮波动，场景级 4 过 3 为可接受线；余 1 处库存句复读留待重训） |
 | **性能（NFR）** | 本地模式单轮耗时（RTX 4060 8GB，2026-09-30 实测）：寒暄/求助静态话术、首轮（预热后）、后续轮 | **0.0–0.1s / 6.4s / 3.7s** |
 | | SSE 对话首 token 延迟（关思考链模型 + 寒暄/危机零 LLM 硬编码前置） | **寒暄 < 0.5s / 对话 ~1.2s** |
-| | `/api/health` 50 并发 | QPS 361，P95 128ms |
+| | `/api/health` 50 并发 | QPS 563，P95 102ms，0 错误 |
+| | `/api/chat` 10 并发（本地 LoRA 串行推理，含 RAG + 质检重试） | **P50 10.2s，P95 18.6s，0 错误**（37 请求全成功） |
 | **测试** | 后端 pytest | **396 passed / 1 skipped** |
+| | 前端 vitest（stores/api/组件） | **19 passed** |
 | | 端到端验收（登录→对话→危机→报告→审计） | **7/7 PASS** |
 | **CI** | GitHub Actions（pytest + 前端构建 + 镜像构建） | ![CI](https://github.com/Gunaie/PsycheFlow/actions/workflows/ci.yml/badge.svg) |
+| **CD** | GitHub Actions（GHCR 推送 + Kustomize 滚动更新 K8s） | `deploy.yml` |
+| **监控** | Prometheus + Grafana（12 面板看板 + 7 条告警规则） | `docker-compose up prometheus grafana` → `http://localhost:3300` |
 
 ## 系统架构
 
@@ -91,6 +95,54 @@ flowchart TB
     API --> DB
     CRISIS --> AUDIT
 ```
+
+## 请求生命周期（对话链路）
+
+一次用户消息从浏览器到流式回复的完整路径——含每一层的职责与降级策略：
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as 浏览器 (ChatPage)
+    participant API as FastAPI (/api/chat/stream)
+    participant TR as Triage 节点
+    participant RAG as RAG 检索层
+    participant IV as Intervention 节点
+    participant QC as 质检重试
+    participant DB as SQLite/PG + 审计
+
+    U->>API: POST /api/chat/stream (message + history)
+    API->>API: IP 限流 (10 req/min)
+    API->>TR: 分诊（零 LLM 规则路由）
+    TR->>TR: 危机词表短路（硬编码）
+    alt 危机命中
+        TR-->>U: SSE: 一次性推 12355 话术
+        TR->>DB: 危机双写（crisis_*.json + AuditLog）
+    else 寒暄/求助渠道
+        TR-->>U: SSE: 静态话术直出（<0.5s）
+    else 倾诉/咨询
+        TR->>RAG: 查询改写 → 向量+BM25 融合 → reranker
+        RAG-->>IV: top3 知识片段（阈值过滤）
+        IV->>IV: 滑动窗口(4轮) + 更早轮次语义摘要
+        IV->>IV: LoRA 生成（temp 0.6）
+        IV->>QC: check_reply_quality（长度/闭合问句/复读/类别）
+        alt 质检不合格
+            QC->>IV: 重试阶梯①hint ②换 RAG 片 ③剔历史
+        end
+        IV-->>U: SSE: token 逐字流式推送
+        IV->>DB: ConversationTurn 双写
+    end
+```
+
+要点：分诊零 LLM（危机/寒暄/求助全硬编码，安全不依赖模型）；RAG 仅作干预参考；质检不合格走三级重试阶梯，全失败回退首次回复。
+
+## 监控看板
+
+![Grafana 监控看板](docs/screenshots/grafana-dashboard.png)
+
+12 面板实时监控：后端存活、请求速率、5xx 错误率、P95 延迟、对话轮次（按意图）、危机命中、LLM 调用状态/延迟、首 token 延迟、RAG 命中率/top1 距离/零命中。数据来自 Prometheus（15s 抓取间隔），7 条告警规则（宕机/5xx/P95/LLM 错误/兜底/RAG 零命中/危机命中）。
+
+> 📝 [一次 FastAPI 并发雪崩排查：当 7B LoRA 遇上 asyncio 事件循环](./docs/复盘-FastAPI并发雪崩排查.md)——压测发现"health 563 QPS 但 chat 2 并发全超时"，定位到 reranker 同步推理阻塞事件循环 + 本地模式 LLM 查询重写触发双 4.4GB 模型反复换载，修复后 10 并发 0 错误（P95 18.6s），并测得 20 并发容量边界。
 
 ## 界面速览
 

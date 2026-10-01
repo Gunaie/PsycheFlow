@@ -1,0 +1,43 @@
+# 开发环境覆盖：单副本、latest 标签
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: psycheflow-dev
+
+resources:
+  - ../../
+
+images:
+  - name: ghcr.io/gunaie/psycheflow/backend
+    newTag: dev
+  - name: ghcr.io/gunaie/psycheflow/frontend
+    newTag: dev
+
+patches:
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: psycheflow-backend
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: psycheflow-frontend
+  # dev 环境删除 HPA（固定 1 副本）：$patch: delete 用资源标识本身，不能带 target
+  - patch: |-
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: psycheflow-backend-hpa
+      $patch: delete
+  - patch: |-
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: psycheflow-frontend-hpa
+      $patch: delete

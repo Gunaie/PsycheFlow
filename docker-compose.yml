@@ -94,3 +94,41 @@ services:
     environment:
       - VITE_PROXY_TARGET=http://backend:8000
     command: npm run dev -- --host 0.0.0.0
+
+  # ---------- 监控栈 ----------
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: psycheflow-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=15d'
+    depends_on:
+      - backend
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: psycheflow-grafana
+    restart: unless-stopped
+    ports:
+      - "3300:3000"   # 宿主机 2932-3131 属 Windows 保留段，改 3300
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+      - ./monitoring/grafana/alerts:/etc/grafana/provisioning/alerting
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    depends_on:
+      - prometheus
+
+volumes:
+  grafana-data:

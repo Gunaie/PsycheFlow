@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-interface ChatTurn {
+export interface ChatTurn {
   role: 'user' | 'assistant'
   content: string
   agent?: string
@@ -14,6 +14,8 @@ interface ChatState {
   setTurns: (turns: ChatTurn[]) => void
   appendTurn: (turn: ChatTurn) => void
   updateLastAssistant: (content: string) => void
+  appendToLastAssistant: (delta: string) => void
+  updateLastAssistantMeta: (meta: Partial<Pick<ChatTurn, 'agent' | 'sources' | 'content'>>) => void
   clearTurns: () => void
 
   // 会话标识
@@ -33,6 +35,10 @@ interface ChatState {
   // 危机横幅
   crisisHit: boolean
   setCrisisHit: (hit: boolean) => void
+
+  // 当前 Agent（UI 徽标）
+  currentAgent: string | undefined
+  setCurrentAgent: (agent: string | undefined) => void
 }
 
 export const useChatStore = create<ChatState>()(
@@ -46,6 +52,23 @@ export const useChatStore = create<ChatState>()(
           const turns = [...s.turns]
           if (turns.length && turns[turns.length - 1].role === 'assistant') {
             turns[turns.length - 1] = { ...turns[turns.length - 1], content }
+          }
+          return { turns }
+        }),
+      appendToLastAssistant: (delta) =>
+        set((s) => {
+          const turns = [...s.turns]
+          if (turns.length && turns[turns.length - 1].role === 'assistant') {
+            const last = turns[turns.length - 1]
+            turns[turns.length - 1] = { ...last, content: last.content + delta }
+          }
+          return { turns }
+        }),
+      updateLastAssistantMeta: (meta) =>
+        set((s) => {
+          const turns = [...s.turns]
+          if (turns.length && turns[turns.length - 1].role === 'assistant') {
+            turns[turns.length - 1] = { ...turns[turns.length - 1], ...meta }
           }
           return { turns }
         }),
@@ -64,6 +87,9 @@ export const useChatStore = create<ChatState>()(
 
       crisisHit: false,
       setCrisisHit: (hit) => set({ crisisHit: hit }),
+
+      currentAgent: undefined,
+      setCurrentAgent: (agent) => set({ currentAgent: agent }),
     }),
     {
       name: 'psycheflow-chat',

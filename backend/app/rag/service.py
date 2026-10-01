@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import re
+import asyncio
 
 import jieba
 from rank_bm25 import BM25Okapi
@@ -261,18 +262,20 @@ class RAGService:
                 return None
         return self._reranker
 
-    def _rerank_candidates(self, query: str, candidates: list[dict], top_k: int) -> list[dict]:
+    async def _rerank_candidates_async(self, query: str, candidates: list[dict], top_k: int) -> list[dict]:
         """用 CrossEncoder 对融合候选重排序，返回 top_k。
 
         仅当本地模式且 reranker 可用时生效；云端模式保持原排序（避免额外延迟）。
+        reranker.predict 是同步 transformers 推理，必须经 asyncio.to_thread 扔线程池，
+        否则会把 FastAPI 事件循环锁死导致并发雪崩。
         """
         if not getattr(self.llm, "is_local", False):
             return candidates[:top_k]
-        reranker = self._get_reranker()
+        reranker = await asyncio.to_thread(self._get_reranker)
         if not reranker or len(candidates) <= top_k:
             return candidates[:top_k]
         pairs = [[query, c["text"]] for c in candidates]
-        scores = reranker.predict(pairs)
+        scores = await asyncio.to_thread(reranker.predict, pairs)
         for c, s in zip(candidates, scores):
             c["rerank_score"] = float(s)
         candidates.sort(key=lambda x: x["rerank_score"], reverse=True)
@@ -284,8 +287,14 @@ class RAGService:
 
         示例："最近老失眠" → "睡眠障碍 入睡困难 失眠 睡眠卫生"
         失败时返回原查询，保证不阻断检索。
+
+        注意：本地模式下跳过 LLM 重写——triage LoRA 单次推理 ~48s，
+        重写收益不值得 48s 代价，且本地部署的性能优先级是单轮 latency。
         """
         if not query or len(query) > 50:
+            return query
+        # 本地模式：禁用 LLM 查询重写，避免 triage LoRA 冷加载/推理拖垮链路
+        if getattr(self.llm, "is_local", False):
             return query
         try:
             prompt = (
@@ -419,7 +428,9 @@ class RAGService:
         candidates.sort(key=lambda x: x["distance"])
 
         # 3.5 CrossEncoder 重排序（本地模式且 reranker 可用时，top-10 → top-3）
-        candidates = self._rerank_candidates(query, candidates, top_k * 3)
+        # 异步包装：reranker.predict 是同步 transformers 推理，必须经 asyncio.to_thread
+        # 扔线程池，否则会把 FastAPI 事件循环锁死导致并发雪崩
+        candidates = await self._rerank_candidates_async(query, candidates, top_k * 3)
 
         # 4. 过滤 + 去重
         # 危机 query 判定复用 safety.CRISIS_KEYWORDS 单一事实源

@@ -1,0 +1,10 @@
+apiVersion: 1
+providers:
+  - name: psycheflow
+    orgId: 1
+    folder: PsycheFlow
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards

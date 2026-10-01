@@ -1,0 +1,106 @@
+# PsycheFlow 告警规则（Prometheus rule_files 加载）
+groups:
+  - name: psycheflow-backend
+    interval: 30s
+    rules:
+      # ---------- 可用性 ----------
+      - alert: PsycheFlowBackendDown
+        expr: up{job="psycheflow-backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "PsycheFlow 后端实例不可达"
+          description: "Prometheus 无法抓取 /metrics 已持续 1 分钟以上，实例可能宕机或未启动。"
+
+      # ---------- HTTP 错误率 ----------
+      - alert: PsycheFlowHttp5xxRateHigh
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m]))
+          /
+          sum(rate(http_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "后端 5xx 错误率超过 5%"
+          description: "最近 5 分钟 5xx 比例 > 5%，检查应用日志与数据库/LLM 连接。"
+
+      # ---------- HTTP 延迟 ----------
+      - alert: PsycheFlowHttpLatencyP95High
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le)
+          ) > 5
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "后端 P95 延迟超过 5 秒"
+          description: "HTTP 请求 P95 延迟 > 5s，可能是 LLM 或数据库慢查询导致。"
+
+      # ---------- LLM 调用 ----------
+      - alert: PsycheFlowLlmErrorRateHigh
+        expr: |
+          sum(rate(llm_calls_total{status="error"}[5m]))
+          /
+          sum(rate(llm_calls_total[5m])) > 0.10
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "LLM 调用错误率超过 10%"
+          description: "最近 5 分钟 LLM 错误比例 > 10%，检查模型服务/密钥配额。"
+
+      - alert: PsycheFlowLlmFallbackRateHigh
+        expr: |
+          sum(rate(llm_calls_total{status="fallback"}[10m]))
+          /
+          sum(rate(llm_calls_total[10m])) > 0.20
+        for: 10m
+        labels:
+          severity: info
+          team: backend
+        annotations:
+          summary: "LLM 本地兜底比例超过 20%"
+          description: "云端主模型大量失败，正在降级到 Ollama 本地模型。"
+
+      # ---------- RAG 检索 ----------
+      - alert: PsycheFlowRagZeroHitRateHigh
+        expr: |
+          sum(rate(rag_zero_hits_total[15m]))
+          /
+          sum(rate(rag_search_total[15m])) > 0.30
+        for: 15m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "RAG 零命中率超过 30%"
+          description: "知识库召回质量下降，检查嵌入模型/切片/阈值配置。"
+
+      # ---------- 危机事件（立即通知，不等 for） ----------
+      - alert: PsycheFlowCrisisHit
+        expr: increase(crisis_hits_total[5m]) > 0
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "检测到用户危机信号"
+          description: "最近 5 分钟内有危机关键词命中，请立即查看审计日志与对话记录。"
+
+      # ---------- 对话量突降（可能服务异常） ----------
+      - alert: PsycheFlowChatTurnsDrop
+        expr: |
+          sum(rate(chat_turns_total[10m])) < 0.001
+        for: 30m
+        labels:
+          severity: info
+          team: backend
+        annotations:
+          summary: "对话轮次持续低于阈值"
+          description: "30 分钟内几乎没有对话请求，可能是入口故障或用户活跃度下降。"
