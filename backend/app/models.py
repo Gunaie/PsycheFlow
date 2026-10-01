@@ -55,7 +55,7 @@ class Session(Base):
         back_populates="session", cascade="all, delete-orphan", order_by="AssessmentRecord.created_at"
     )
     conversation_turns: Mapped[list["ConversationTurn"]] = relationship(
-        back_populates="session"
+        back_populates="session", cascade="all, delete-orphan"
     )
 
 

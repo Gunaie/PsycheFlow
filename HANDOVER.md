@@ -10,6 +10,13 @@
 > - **两处 QC 语义修复**：RETRY_HINT 去除具体做法示例（7B 会照抄示例并补完库存句，实证为复读种子）；逐字重复检测剥离呼吸参数公式（4 吸 6 呼是硬约束标准口径，跨轮重现不算复读）；做法类别新增 planning（对齐 prompt 骨架的「任务拆解」示例）。非危机回复出现 12355 属安全底线保守升级，评测记 warn 不硬卡。
 > - **测试**：pytest **380 passed / 1 skipped**（+5 质检测试：呼吸公式豁免/公式外复读仍判/planning 类别/阶梯各模式）。
 
+> 🆕 **2026-10-01 P0-P2 工程化加固（代码已落地，待入库）**
+>
+> - **P0 数据库/监控**：[db.py](backend/app/db.py) 双驱动——`.env` 设 `DATABASE_URL=postgresql+asyncpg://...` 切 PostgreSQL 16（pool_pre_ping + pool_recycle=3600），空则回退 SQLite（0600 不变）；新增 [alembic/](backend/alembic/) 迁移（`alembic upgrade head` 建表）+ dev compose 加 `postgres:16-alpine` 服务（healthcheck pg_isready，backend depends_on service_healthy）。新增 [core/metrics.py](backend/app/core/metrics.py)：Prometheus 指标（HTTP 请求计数/延迟、chat 轮次、RAG 检索/距离/零命中、LLM 调用/延迟、危机命中共 10 类）+ ASGI 中间件，`GET /metrics` 端点（main.py 注册，跳过自引用）。
+> - **P1 RAG 进阶/对话记忆/前端状态**：[rag/service.py](backend/app/rag/service.py) 检索流程升级为 0.查询重写（`_rewrite_query` LLM 同义词扩展，失败静默回退原查询）→ 1.向量 → 2.BM25 → 3.融合 → 3.5 **bge-reranker 重排序**（`_rerank_candidates` CrossEncoder top10→top3，仅本地模式，sentence_transformers 缺失时守卫跳过）→ 4.过滤去重。[intervention.py](backend/app/agents/nodes/intervention.py) 历史管理改**滑动窗口+语义摘要**：RECENT_TURNS=4 保留原文，更早轮次 `_compress_history` LLM 压缩为摘要（≤80 字，作 system 消息注入「【前文摘要（保留核心情绪与建议）】」），替代硬截断 10 轮；state.py 加 `summary`/`summary_upto` 字段增量 merge。前端新增 [stores/chatStore.ts](frontend/src/stores/chatStore.ts)+[stores/authStore.ts](frontend/src/stores/authStore.ts)（Zustand persist）与 [lib/queryClient.ts](frontend/src/lib/queryClient.ts)（React Query），App.tsx 挂 QueryClientProvider；ChatPage 暂保持 useState（流式逻辑复杂，后续迭代迁移）。
+> - **P2 K8s/A-B 测试**：新增 [k8s/](k8s/) 生产清单 9 文件（namespace/configmap/secret/backend+frontend Deployment/HPA CPU70%·mem80% min2-max10/Ingress/PVC/README）。新增 [core/abtest.py](backend/app/core/abtest.py)（MD5(user_id+experiment)%2 哈希分流，同用户同组）+ [api/feedback.py](backend/app/api/feedback.py)（POST /api/feedback 匿名 1-5 分；GET /api/feedback/stats 仅教师），chat 响应注入 `ab_test` 字段（非流式 return + 流式 done_payload）。
+> - **测试**：pytest **396 passed / 1 skipped**（P0-P2 净增 16 例）。
+
 > 🆕 **2026-09-30 架构变更：分诊（triage）完全规则化，零 LLM；本地推理提速落地**
 >
 > - **triage_node 不再调用任何模型**，路由顺序：危机词表短路（安全不变）→ 寒暄静态话术 → 咨询规则（服务边界/方法问句/知识问句）→ 求助渠道静态话术 → 求助祈使（帮帮我）→ 默认倾诉。`qwen2.5:triage-lora` 资产保留但生产路径不再加载（`.env` 的 LOCAL_MODEL_TRIAGE 实际已无效，留作回退资产）。
@@ -57,7 +64,7 @@ docker exec psycheflow-backend uv run python -c "import asyncio; from app.rag.se
 
 # 4. 跑测试（验证全绿）
 docker exec psycheflow-backend uv run pytest -q --no-header
-# 期望：380 passed, 1 skipped, 0 failed（2026-10-01 复测值；基线首测 2026-09-10；若实测数不一致属正常，以实测为准并回写本文档）
+# 期望：396 passed, 1 skipped, 0 failed（2026-10-01 P0-P2 后实测值；基线首测 2026-09-10；若实测数不一致属正常，以实测为准并回写本文档）
 
 # 5. 浏览器打开
 # 前端：http://localhost:5174/（三态门户：未登录选学生端/教师端，已登录显示身份条一键进工作台/切端确认）
@@ -145,7 +152,7 @@ OLLAMA_MODEL=qwen2.5:7b
 | 启动/重启 | `docker compose up -d --build` | **重建 chroma 容器会清空向量索引**，之后必须 build_index() |
 | 重启单服务 | `docker restart psycheflow-backend` | 仅重启进程，**不会重新读 .env**。改 .env 必须用 `docker compose up -d backend` |
 | 看后端日志 | `docker logs psycheflow-backend --tail 50` | 或加 `--since 10m` 看最近 10 分钟 |
-| 跑 pytest | `docker exec psycheflow-backend uv run pytest -q --no-header` | 380 passed + 1 skipped（2026-10-01 复测值，基线首测 09-10，以实测为准） |
+| 跑 pytest | `docker exec psycheflow-backend uv run pytest -q --no-header` | 396 passed + 1 skipped（2026-10-01 P0-P2 后实测值，基线首测 09-10，以实测为准） |
 | 重建 RAG 索引 | `docker exec psycheflow-backend uv run python -c "import asyncio; from app.rag.service import rag_service; print(asyncio.run(rag_service.build_index()))"` | chroma 被重建后必跑；知识库新增/改动文件后也必跑 |
 | HTTP 重建索引 | `curl.exe -s -X POST http://localhost:8000/api/rag/build` | PowerShell 下必须用 `curl.exe`（裸 `curl` 是 Invoke-WebRequest 别名）；返回 indexed 片数 |
 | **RAG 检索护栏评测** | `docker exec psycheflow-backend uv run python scripts/eval_rag.py` | 65 条 query→期望文件：recall@3 应 100%、32/32 文件覆盖；结果写 `scripts/eval/results/rag_eval_latest.json` |
@@ -414,7 +421,7 @@ docker exec psycheflow-backend uv run python scripts/sse_first_token.py
 - **前端体验**：App.tsx 导航加「测评/历史」链接 + role 显隐管理后台（AuthResp 新增 role 字段）；HomePage 三步引导卡 + 动态 CTA；ChatPage 空状态推荐话题 + 全宽布局滚动；对话知识卡片默认折叠、LLM 不复述知识库原文；SCARED 每题选项框按本量表 optionKeys 渲染（修复错用 PHQ-A 4 选项导致空白）；SDQ/MHT 去重复标题（showHeader 参数）；MHT 26/28 题保持原表述
 - **PDF 下载交互分化**：ScalePage「生成 PDF 报告」= 新标签页预览（window.open('') + blob location.href，同步开空标签避弹窗拦截）；HistoryPage「下载 PDF」= **真实磁盘下载**（apiGetBlob + 动态 `<a download>` 程序化点击，2026-09-05 修复——blob 新标签页会被 Chrome 内置 PDF 查看器内联打开成"预览"，且带 `downloadingId` 生成中状态）
 - **测试修正**：[test_auth.py](backend/tests/test_auth.py) `test_bearer_token_links_session_to_account` 过期——list_sessions 已改为只返回有测评记录的 session（排除纯对话），测试补挂一条全 0 PHQ-A 后通过
-- **验证**：`tsc --noEmit` 0 错误；pytest **199 passed / 1 skipped / 0 failed**（2026-09-05 历史快照；当前最新 2026-10-01 实测 **393 passed / 1 skipped**）
+- **验证**：`tsc --noEmit` 0 错误；pytest **199 passed / 1 skipped / 0 failed**（2026-09-05 历史快照；当前最新 2026-10-01 P0-P2 后实测 **396 passed / 1 skipped**）
 
 ### 路由重构与双端门户批次 ✅（2026-09-05，commit `884e7fa` → `2cf193c`）
 
@@ -685,7 +692,7 @@ dd853fb B 二期：LangGraph 四智能体编排 + RAG .md 修复 + ChatPage 阶�
 
 - [ ] `docker ps` 显示 3 容器 Up（psycheflow-backend / psycheflow-frontend / psycheflow-chroma）
 - [ ] 重建 RAG 索引：`docker exec psycheflow-backend uv run python -c "import asyncio; from app.rag.service import rag_service; print(asyncio.run(rag_service.build_index()))"` 输出 `{'indexed': 327, ...}`（32 个知识库文件；或 `curl.exe -s -X POST http://localhost:8000/api/rag/build`）
-- [ ] 跑测试：`docker exec psycheflow-backend uv run pytest -q --no-header` → 380 passed / 1 skipped / 0 failed（2026-10-01 复测值；基线首测 09-10，若实测不同以实测为准并回写文档）
+- [ ] 跑测试：`docker exec psycheflow-backend uv run pytest -q --no-header` → 396 passed / 1 skipped / 0 failed（2026-10-01 P0-P2 后实测值；基线首测 09-10，若实测不同以实测为准并回写文档）
 - [ ] **RAG 检索护栏**：`docker exec psycheflow-backend uv run python scripts/eval_rag.py` → recall@3 100%（65/65）、文件覆盖 32/32（知识库每次扩充后必跑）
 - [ ] **多轮对话质量护栏**：`docker exec -e PYTHONUTF8=1 psycheflow-backend uv run python scripts/eval/eval_multiturn.py` → 轮次通过率 ≥14/16（场景级 4 过 3 为可接受线；实测 15/16，temp 0.6 下 ±1-2 轮波动属正常）
 - [ ] 遗留项验证：`docker exec psycheflow-backend uv run python scripts/verify_leftovers.py` → has_assessment PASS + triage 9/9

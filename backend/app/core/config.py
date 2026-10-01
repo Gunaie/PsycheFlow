@@ -38,7 +38,9 @@ class Settings(BaseSettings):
     chroma_host: str = "chroma"
     chroma_port: int = 8000
 
-    # SQLite
+    # 数据库：默认 SQLite（本地开发），生产通过 DATABASE_URL 切换 PostgreSQL
+    # 示例 PostgreSQL URL: postgresql+asyncpg://psycheflow:psycheflow@postgres:5432/psycheflow
+    database_url: str = ""  # 空则回退 SQLite
     sqlite_path: str = "/app/data/psycheflow.db"
 
     # FastAPI

@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: psycheflow-config
+  namespace: psycheflow
+data:
+  # 应用配置（非敏感）
+  APP_ENV: "production"
+  FRONTEND_ORIGIN: "https://psycheflow.example.com"
+  LOG_LEVEL: "INFO"
+  # LLM 配置
+  LLM_MODE: "cloud"  # cloud / local
+  MODEL_INTAKE: "qwen-turbo"
+  MODEL_DIALOG: "qwen-turbo"
+  MODEL_REPORT: "qwen-plus"
+  MODEL_EMBED: "text-embedding-v3"
+  # RAG 配置
+  RAG_BOOST_KEYWORDS: "压力,失眠,焦虑,难过,抑郁,放松,考试"
+  # 语音配置
+  VOICE_ENABLED: "true"
+  VOICE_ASR_MODEL: "iic/SenseVoiceSmall"
+  VOICE_TTS_MODEL: "iic/speech_sambert-hifigan_tts_zh-cn_16k"

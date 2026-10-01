@@ -35,3 +35,7 @@ class AgentState(TypedDict, total=False):
     agent_trace: list  # [str] 节点访问顺序审计
     node_decisions: dict  # {node_name: {decision, reason, ...}} 决策细节追踪
     crisis: bool  # 最终是否危机（同 is_crisis，给 API 返回用）
+
+    # P1 对话记忆：滑动窗口 + 语义摘要
+    summary: str  # 长对话历史压缩摘要（替代硬截断丢失上下文）
+    summary_upto: int  # 摘要已覆盖到 history 的索引（避免重复压缩）

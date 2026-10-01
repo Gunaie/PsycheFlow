@@ -349,15 +349,37 @@ async def build_intervention_messages(
         rag_context=rag_context,
         reply_skeleton=get_reply_skeleton(state.get("triage_intent", "倾诉")),
     )
-    # 只保留最近 10 轮（20 条），防长对话 token 膨胀（API 层 _clip_history 已截，双保险）
-    history = [
+
+    # P1 对话记忆：滑动窗口 + 语义摘要（替代硬截断 10 轮）
+    # 最近 RECENT_TURNS 轮保留原文，更早轮次压缩为摘要
+    raw_history = [
         {"role": h["role"], "content": h["content"]}
         for h in (state.get("history") or [])
         if h.get("role") in ("user", "assistant")
-    ][-20:]
+    ]
+    summary = state.get("summary", "")
+    summary_upto = state.get("summary_upto", 0)
+    total = len(raw_history)
+    keep_count = RECENT_TURNS * 2  # 每轮 user+assistant = 2 条
+    recent = raw_history[-keep_count:] if total > keep_count else raw_history
+    to_compress = raw_history[summary_upto:total - len(recent)]
+
+    if to_compress:
+        summary = await _compress_history(to_compress, summary)
+        summary_upto = total - len(recent)
+        logger.info("history compressed: %d turns → summary_upto=%d", len(to_compress), summary_upto)
+
+    history_messages: list[dict] = []
+    if summary:
+        history_messages.append({
+            "role": "system",
+            "content": f"【前文摘要（保留核心情绪与建议）】{summary}",
+        })
+    history_messages.extend(recent)
+
     messages = [
         {"role": "system", "content": system_prompt},
-        *history,
+        *history_messages,
         {"role": "user", "content": user_prompt},
     ]
 
@@ -371,7 +393,54 @@ async def build_intervention_messages(
         for s in rag_sources
     ]
 
+    # 返回 summary/summary_upto 供调用方更新 state（LangGraph 增量 merge）
+    decision["memory"] = {
+        "summary": summary,
+        "summary_upto": summary_upto,
+        "recent_turns": len(recent) // 2,
+        "compressed_turns": len(to_compress) // 2,
+    }
+
     return messages, formatted_sources, rag_sources, decision
+
+
+# 对话记忆：最近 4 轮保留原文，更早轮次压缩为摘要（防长对话 token 膨胀）
+RECENT_TURNS = 4   # 保留原文的最近轮数
+COMPRESS_BATCH = 6  # 每次压缩的轮数（3 user + 3 assistant）
+
+
+async def _compress_history(history: list[dict], existing_summary: str = "") -> str:
+    """LLM 压缩对话历史为摘要（摘要+历史 → 新摘要）。
+
+    保留情绪线索、关键事件、已给建议类型，丢弃礼貌用语与重复寒暄。
+    失败时返回 existing_summary，保证不阻断对话。
+    """
+    if not history:
+        return existing_summary
+    lines = []
+    for h in history:
+        role = "用户" if h.get("role") == "user" else "助手"
+        lines.append(f"{role}：{h.get('content', '')}")
+    transcript = "\n".join(lines)
+    prompt = (
+        "将以下对话历史压缩为一句话摘要（≤80字），保留情绪、核心诉求、已给建议。\n"
+        f"已有摘要：{existing_summary or '无'}\n"
+        f"新增对话：\n{transcript}\n"
+        "新摘要："
+    )
+    try:
+        summary = await provider.chat(
+            "triage",
+            [{"role": "user", "content": prompt}],
+            max_tokens=100,
+            temperature=0.0,
+        )
+        summary = (summary or "").strip()
+        if summary:
+            return summary
+    except Exception as e:
+        logger.warning("history compress failed: %s", e)
+    return existing_summary
 
 
 # 质检缓冲后的补推节奏（秒/字符）：token 缓冲期间瞬时到达，一次性 yield 前端会
@@ -415,12 +484,13 @@ async def stream_intervention(
         first_rag = list(prebuilt_rag_sources or [])
     else:
         messages, _, first_rag, _ = await build_intervention_messages(state)
-    # 质检用历史（与 build_intervention_messages 同口径：最近 20 条 user/assistant）
+    # 质检用历史（与 build_intervention_messages 同口径：最近 RECENT_TURNS 轮原文）
+    # 注意：质检需要真实 history 检测跨轮重复，摘要化后的 system 消息不参与
     history = [
         {"role": h["role"], "content": h["content"]}
         for h in (state.get("history") or [])
         if h.get("role") in ("user", "assistant")
-    ][-20:]
+    ][-RECENT_TURNS * 2:]
 
     async def _collect(msgs: list[dict], temperature: float = 0.6) -> tuple[list[str], bool]:
         """完整收集一次流式生成的全部 token；返回 (tokens, 是否异常)。"""
@@ -598,11 +668,17 @@ async def intervention_node(state: AgentState) -> dict:
 
     decisions["intervention"] = decision
 
-    return {
+    result: dict = {
         "final_reply": reply,
         "sources": formatted_sources,
         "rag_sources": rag_sources,
         "current_agent": "intervention",
         "agent_trace": trace,
-        "node_decisions": decisions
+        "node_decisions": decisions,
     }
+    # P1 对话记忆：返回摘要字段供 state 增量更新（LangGraph merge）
+    memory = decision.get("memory", {})
+    if memory.get("summary"):
+        result["summary"] = memory["summary"]
+        result["summary_upto"] = memory.get("summary_upto", 0)
+    return result

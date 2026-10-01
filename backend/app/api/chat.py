@@ -37,7 +37,9 @@ from app.core.case_parser import (
     extract_pdf_text,
     truncate_case_text,
 )
+from app.core.abtest import ABTestContext, track_feedback, track_response_time
 from app.core.llm import provider
+from app.core.metrics import track_chat_turn, track_crisis
 from app.core.safety import crisis_message
 from app.models import ConversationTurn, Session as SessionModel, User
 
@@ -160,6 +162,7 @@ async def chat(
     is_crisis = final_state.get("crisis", False)
     current_agent = final_state.get("current_agent", "")
     agent_trace = final_state.get("agent_trace", [])
+    triage_intent = final_state.get("triage_intent", "")
 
     # —— 步骤 3：写 assistant 轮 ConversationTurn ——
     _save_turn(
@@ -167,8 +170,13 @@ async def chat(
         "assistant", reply, sources, is_crisis
     )
 
+    # 埋点：对话轮次 + 危机
+    track_chat_turn("assistant", triage_intent, is_crisis)
+    if is_crisis:
+        track_crisis("intervention")
+
     # —— 4. 返回（旧字段 reply/sources/crisis 不变；新增 current_agent/agent_trace/persona_id）——
-    return {
+    result: dict = {
         "reply": reply,
         "sources": sources,
         "crisis": is_crisis,
@@ -177,6 +185,12 @@ async def chat(
         "node_decisions": final_state.get("node_decisions", {}),
         "persona_id": effective_persona_id,
     }
+    # A/B 测试：非流式也注入实验信息（供前端展示和后续反馈关联）
+    if req.message:  # 简单对话才走 A/B，病例上传不走
+        ab = ABTestContext(effective_account_id or "anonymous")
+        result["ab_test"] = ab.to_dict()
+        track_response_time(ab.experiment, ab.variant, ab.elapsed())
+    return result
 
 
 @router.post("/stream", dependencies=[Depends(rate_limit("chat", limit=10, window_sec=60))])
@@ -320,7 +334,7 @@ async def chat_stream(
             )
 
         # —— 6. done 信号（前端收到后结束读取；客户端已中断时此 yield 抛异常，无害）——
-        yield _sse("done", {
+        done_payload: dict = {
             "reply": final_reply,
             "current_agent": final_agent,
             "agent_trace": final_trace,
@@ -328,7 +342,13 @@ async def chat_stream(
             "persona_id": effective_persona_id,
             "crisis": is_crisis,
             "sources": final_sources,
-        })
+        }
+        # A/B 测试：流式结束也注入实验信息
+        if req.message:
+            ab = ABTestContext(effective_account_id or "anonymous")
+            done_payload["ab_test"] = ab.to_dict()
+            track_response_time(ab.experiment, ab.variant, ab.elapsed())
+        yield _sse("done", done_payload)
 
     return StreamingResponse(
         event_stream(),

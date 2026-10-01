@@ -13,8 +13,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from fastapi.responses import Response
+
 from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
+from app.api.feedback import router as feedback_router
 from app.api.llm import router as llm_router
 from app.api.rag import router as rag_router
 from app.api.scales import router as scales_router
@@ -24,6 +27,7 @@ from app.api.personas import router as personas_router
 from app.api.screening import router as screening_router
 from app.api.voice import router as voice_router
 from app.core.config import settings
+from app.core.metrics import PrometheusMiddleware, metrics_response, init_app_info
 from app.db import init_db
 
 logger = logging.getLogger("psycheflow.main")
@@ -100,6 +104,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(PrometheusMiddleware)
 
 app.include_router(auth_router)
 app.include_router(llm_router)
@@ -111,6 +116,14 @@ app.include_router(admin_router)
 app.include_router(personas_router)
 app.include_router(screening_router)
 app.include_router(voice_router)
+app.include_router(feedback_router)
+
+# Prometheus 指标端点（Grafana/Prometheus 抓取）
+@app.get("/metrics")
+async def metrics() -> Response:
+    """暴露 Prometheus 指标（HTTP 计数/延迟 + 对话/RAG/LLM/危机业务指标）。"""
+    body, content_type = metrics_response()
+    return Response(content=body, media_type=content_type)
 
 
 @app.get("/api/health")

@@ -14,6 +14,10 @@ dependencies = [
     "pydantic-settings>=2.5.0",
     # 数据库
     "sqlalchemy>=2.0.35",
+    "asyncpg>=0.29.0",  # PostgreSQL 异步驱动
+    "alembic>=1.13.0",  # 数据库迁移工具
+    # 监控
+    "prometheus-client>=0.20.0",
     # 百炼 LLM（OpenAI 兼容协议）
     "openai>=1.50.0",
     # Agent 编排

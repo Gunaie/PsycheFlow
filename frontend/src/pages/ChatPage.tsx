@@ -3,6 +3,8 @@ import { apiDelete, apiGet, apiPost, apiPostBlob, apiPostForm, getChatSessionId,
 import { WavRecorder } from '../lib/recorder'
 import CrisisBanner from '../components/CrisisBanner'
 import FooterDisclaimer from '../components/FooterDisclaimer'
+// P1 前端重构：Zustand chatStore 已创建（stores/chatStore.ts），当前组件保持 useState 避免破坏流式逻辑
+// 后续迭代可将 turns/loading/sessionId 等状态逐步迁移到 store
 
 interface ChatTurn {
   role: 'user' | 'assistant'
@@ -397,6 +399,8 @@ export default function ChatPage() {
         crisis: boolean
         current_agent: string
         attachment: CaseAttachment
+        case_text?: string
+        case_summary?: Record<string, string>
       }>('/api/chat/case-upload', form)
 
       // 保存原文供后续追问；保存摘要供卡片渲染

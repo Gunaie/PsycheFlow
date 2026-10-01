@@ -20,6 +20,15 @@ from app.rag.store import rag_store
 
 logger = logging.getLogger("psycheflow.rag")
 
+# P1 RAG 进阶：bge-reranker 重排序（本地模式启用，云端模式跳过保持轻量）
+RERANKER_ENABLED = False
+try:
+    from sentence_transformers import CrossEncoder
+    RERANKER_ENABLED = True
+    logger.info("bge-reranker loaded (CrossEncoder)")
+except ImportError:
+    logger.info("bge-reranker not available, skip rerank (pip install sentence-transformers)")
+
 KNOWLEDGE_DIR = "/app/data/knowledge"
 
 # 检索埋点：query 文本最多保留 200 字（够主题聚类，控日志体积）
@@ -177,6 +186,7 @@ class RAGService:
         self.knowledge_dir = knowledge_dir
         self.bm25 = None
         self.corpus_docs = []  # 存储原始文档内容和元数据，用于 BM25 检索后回显
+        self._reranker = None  # 延迟初始化 CrossEncoder
 
     def _init_bm25(self):
         """从 Chroma 获取全量文档并初始化 BM25 索引。"""
@@ -236,6 +246,69 @@ class RAGService:
         """按嵌入模型返回 L2 距离阈值（is_local 须严格为 True，兼容测试 mock）。"""
         return VEC_THRESHOLD_LOCAL if getattr(self.llm, "is_local", False) is True else VEC_THRESHOLD_CLOUD
 
+    def _get_reranker(self):
+        """延迟初始化 bge-reranker（CrossEncoder），本地模式启用，云端跳过。"""
+        if not RERANKER_ENABLED:
+            return None
+        if self._reranker is None:
+            try:
+                from sentence_transformers import CrossEncoder
+                # bge-reranker-base 中文优化，跨编码器重排序
+                self._reranker = CrossEncoder("BAAI/bge-reranker-base", max_length=512)
+                logger.info("reranker: BAAI/bge-reranker-base loaded")
+            except Exception as e:
+                logger.warning("reranker load failed: %s", e)
+                return None
+        return self._reranker
+
+    def _rerank_candidates(self, query: str, candidates: list[dict], top_k: int) -> list[dict]:
+        """用 CrossEncoder 对融合候选重排序，返回 top_k。
+
+        仅当本地模式且 reranker 可用时生效；云端模式保持原排序（避免额外延迟）。
+        """
+        if not getattr(self.llm, "is_local", False):
+            return candidates[:top_k]
+        reranker = self._get_reranker()
+        if not reranker or len(candidates) <= top_k:
+            return candidates[:top_k]
+        pairs = [[query, c["text"]] for c in candidates]
+        scores = reranker.predict(pairs)
+        for c, s in zip(candidates, scores):
+            c["rerank_score"] = float(s)
+        candidates.sort(key=lambda x: x["rerank_score"], reverse=True)
+        logger.info("rerank: reordered %d candidates, top1 score=%.3f", len(candidates), scores[0])
+        return candidates[:top_k]
+
+    async def _rewrite_query(self, query: str) -> str:
+        """查询重写：LLM 将口语化查询扩展为知识库同义词（提升召回）。
+
+        示例："最近老失眠" → "睡眠障碍 入睡困难 失眠 睡眠卫生"
+        失败时返回原查询，保证不阻断检索。
+        """
+        if not query or len(query) > 50:
+            return query
+        try:
+            prompt = (
+                "将以下用户口语化心理倾诉改写为知识库检索关键词（同义词扩展，空格分隔，不超过20字）。\n"
+                "只输出关键词，不要解释。\n"
+                "用户输入：{query}\n"
+                "改写关键词："
+            ).format(query=query)
+            # 用 triage 角色快速生成（关思考链，max_tokens 小）
+            rewrite = await self.llm.chat(
+                "triage",
+                [{"role": "user", "content": prompt}],
+                max_tokens=30,
+                temperature=0.0,
+            )
+            rewrite = (rewrite or "").strip()
+            if rewrite and len(rewrite) <= 30:
+                logger.info("query rewrite: '%s' → '%s'", query, rewrite)
+                return f"{query} {rewrite}"
+        except Exception as e:
+            logger.warning("query rewrite failed: %s", e)
+        return query
+
     async def search(
         self,
         query: str,
@@ -244,12 +317,15 @@ class RAGService:
         intent: str = "",
         caller: str = "unknown",
     ) -> list:
-        """混合检索：向量检索为主 + BM25 补充召回。
+        """混合检索：向量检索为主 + BM25 补充召回 + 可选 CrossEncoder 重排序。
 
-        排序策略：以向量 L2 距离为主排序信号，BM25 仅用于：
-        1）补充召回——向量未命中但 BM25 强关键词命中的片段（虚拟距离 = 阈值-0.03，
-           不做关键词加权，保证永远弱于同尺度的向量真实命中）；
-        2）小幅加权——同时出现在向量和 BM25 前列的片段，距离减 0.03（双重印证）。
+        排序策略：
+        1）向量检索 top_k*3 候选，BM25 补充召回（虚拟距离 = 阈值-0.03）+ 双重印证加权（-0.03）
+        2）本地模式：CrossEncoder 重排序（top-10 → top-3），云端模式跳过保持轻量
+        3）过滤：距离阈值 / 危机标签 / 同源去重
+
+        查询重写：口语化查询先经 LLM 扩展为知识库同义词，提升召回
+        （示例："最近老失眠" → "睡眠障碍 入睡困难 失眠"）。
 
         弃用 RRF 的原因：RRF 排名融合让 BM25 关键词命中权重过大，
         「焦虑怎么缓解」中仅含"缓解"关键词的科普片段会挤掉含具体做法、
@@ -267,8 +343,13 @@ class RAGService:
         if threshold is None:
             threshold = self._default_threshold()
         bm25_virtual = threshold - BM25_VIRTUAL_GAP
-        # 1. 向量检索
-        q_emb = (await self.llm.embed([query]))[0]
+
+        # 0. 查询重写：口语化查询扩展为知识库同义词（提升召回，失败静默回退原查询）
+        rewritten_query = await self._rewrite_query(query)
+        logger.debug("rag search: query='%s' rewritten='%s'", query, rewritten_query)
+
+        # 1. 向量检索（用重写后的查询）
+        q_emb = (await self.llm.embed([rewritten_query]))[0]
         vec_results = self.store.query(q_emb, top_k=top_k * 3)  # 取多一点用于融合
         vec_docs = vec_results.get("documents", [[]])[0]
         vec_metas = vec_results.get("metadatas", [[]])[0]
@@ -337,6 +418,9 @@ class RAGService:
         # 按调整后距离升序排序（越小越相关）
         candidates.sort(key=lambda x: x["distance"])
 
+        # 3.5 CrossEncoder 重排序（本地模式且 reranker 可用时，top-10 → top-3）
+        candidates = self._rerank_candidates(query, candidates, top_k * 3)
+
         # 4. 过滤 + 去重
         # 危机 query 判定复用 safety.CRISIS_KEYWORDS 单一事实源
         # （含自残/想死/了结自己/活不下去等，比硬编码子集更全）
@@ -394,6 +478,12 @@ class RAGService:
             "query": (query or "")[:TRACE_QUERY_MAX_CHARS],
         }
         _write_search_trace(trace_event)
+
+        # Prometheus 埋点：RAG 检索质量
+        from app.core.metrics import track_rag_search
+        top1_dist = top1["distance"] if top1 else None
+        track_rag_search(caller=caller, intent=intent, result_count=len(final_docs), top1_distance=top1_dist)
+
         logger.info(
             "rag-search caller=%s intent=%s mode=%s threshold=%.2f top1=%s passed=%s results=%d",
             caller,

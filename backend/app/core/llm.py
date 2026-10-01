@@ -27,6 +27,7 @@ from typing import Optional
 from openai import AsyncOpenAI
 
 from app.core.config import settings
+from app.core.metrics import track_llm_call
 
 logger = logging.getLogger("psycheflow.llm")
 
@@ -189,16 +190,20 @@ class LLMProvider:
         cloud 模式：cloud 异常或空回复时，若启用 Ollama 则转本地模型兜底；
         cloud 异常且 Ollama 未启用时异常上抛（由节点级硬编码话术兜底）。
         """
+        import time
         temp = self.temp_for(role) if temperature is None else temperature
+        t0 = time.monotonic()
         if self.is_local:
             client, model, extra = self._primary_for(role)
             try:
                 content = await self._chat_once(client, model, messages, temp, max_tokens, extra)
                 if content:
+                    track_llm_call(role, model, "success", time.monotonic() - t0)
                     return content
                 logger.warning("local Ollama chat 返回空内容（role=%s, model=%s）", role, model)
             except Exception as e:
                 logger.warning("local Ollama chat 失败（role=%s）: %s", role, e)
+            track_llm_call(role, model, "error", time.monotonic() - t0)
             return ""
         cloud_extra = self._extra_body_for(role)
         try:
@@ -211,6 +216,7 @@ class LLMProvider:
             logger.warning("cloud chat 失败，转 Ollama 兜底: %s", e)
             content = ""
         if content:
+            track_llm_call(role, self.model_for(role), "success", time.monotonic() - t0)
             return content
         # cloud 空回复（quota/思考链耗尽）或异常 → Ollama 兜底
         if self.ollama_enabled:
@@ -220,9 +226,11 @@ class LLMProvider:
                     messages, temp, max_tokens, {},
                 )
                 if content:
+                    track_llm_call(role, self._settings.ollama_model, "fallback", time.monotonic() - t0)
                     return content
             except Exception as e:
                 logger.warning("Ollama 兜底也失败: %s", e)
+        track_llm_call(role, self.model_for(role), "error", time.monotonic() - t0)
         return ""
 
     async def _stream_once(self, client, model, messages, temp, max_tokens, extra_body):

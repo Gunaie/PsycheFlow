@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react'
 import { Link, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom'
+import { QueryClientProvider } from '@tanstack/react-query'
+import { queryClient } from './lib/queryClient'
 import { getRole, getToken } from './api'
 import HomePage from './pages/HomePage'
 import PortalPage from './pages/PortalPage'
@@ -132,11 +134,13 @@ function AdminPages() {
 
 export default function App() {
   return (
-    <Routes>
-      <Route path="/admin/*" element={<AdminPages />} />
-      {/* 系统门户：未登录选身份，已登录按角色自动跳转（独立布局，不套学生 Shell） */}
-      <Route path="/" element={<PortalPage />} />
-      <Route path="*" element={<Shell><StudentPages /></Shell>} />
-    </Routes>
+    <QueryClientProvider client={queryClient}>
+      <Routes>
+        <Route path="/admin/*" element={<AdminPages />} />
+        {/* 系统门户：未登录选身份，已登录按角色自动跳转（独立布局，不套学生 Shell） */}
+        <Route path="/" element={<PortalPage />} />
+        <Route path="*" element={<Shell><StudentPages /></Shell>} />
+      </Routes>
+    </QueryClientProvider>
   )
 }

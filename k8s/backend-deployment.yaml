@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: psycheflow-backend
+  namespace: psycheflow
+  labels:
+    app: psycheflow-backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: psycheflow-backend
+  template:
+    metadata:
+      labels:
+        app: psycheflow-backend
+    spec:
+      containers:
+      - name: backend
+        image: psycheflow-backend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+        envFrom:
+        - configMapRef:
+            name: psycheflow-config
+        - secretRef:
+            name: psycheflow-secrets
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        volumeMounts:
+        - name: data
+          mountPath: /app/data
+        - name: logs
+          mountPath: /app/logs
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: psycheflow-data
+      - name: logs
+        persistentVolumeClaim:
+          claimName: psycheflow-logs
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: psycheflow-backend
+  namespace: psycheflow
+spec:
+  selector:
+    app: psycheflow-backend
+  ports:
+  - port: 8000
+    targetPort: 8000
+    protocol: TCP
+  type: ClusterIP

@@ -1,4 +1,23 @@
 services:
+  # ---------- 数据库 ----------
+  postgres:
+    image: postgres:16-alpine
+    container_name: psycheflow-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=psycheflow
+      - POSTGRES_PASSWORD=psycheflow
+      - POSTGRES_DB=psycheflow
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U psycheflow -d psycheflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   # ---------- 向量库 ----------
   chroma:
     image: chromadb/chroma:latest
@@ -45,7 +64,10 @@ services:
     env_file:
       - .env
     depends_on:
-      - chroma
+      chroma:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     command: uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   # ---------- Ollama 本地兜底（整机共享，不在本项目 compose 内） ----------

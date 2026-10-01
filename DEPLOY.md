@@ -30,6 +30,12 @@ cp .env.example .env
 | `BACKUP_PASSPHRASE` | SQLite 备份加密口令（AES-256-CBC）；空则 `scripts/backup_db.py` 拒绝备份 |
 | `FRONTEND_ORIGIN` | 前端真实地址（CORS），生产改 `https://你的域名` |
 
+**生产可选（数据库）**：
+
+| 变量 | 说明 |
+|---|---|
+| `DATABASE_URL` | 空=默认 SQLite 单文件；填 `postgresql+asyncpg://user:pass@host:5432/dbname` 切 PostgreSQL（推荐生产；dev compose 已含 postgres:16 服务）。切换后首次启动跑 `docker exec psycheflow-backend uv run alembic upgrade head` 建表 |
+
 **可选**（Ollama 本地兜底，灾备用）：
 
 | 变量 | 说明 |
@@ -77,6 +83,11 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 生产访问：
 - 前端：`https://你的域名`（443，nginx 提供 TLS + HSTS + CSP）
 - 后端 API：`http://你的域名:8000`（建议生产再加一层 nginx 反代到 443）
+- 监控指标：`http://你的域名:8000/metrics`（Prometheus 格式，建议仅内网/Prometheus 抓取，勿暴露公网）
+
+### Kubernetes 部署（可选）
+
+大规模部署可用 `k8s/` 清单（namespace / configmap / secret / backend+frontend Deployment / HPA（CPU 70%、内存 80%，min2/max10）/ Ingress / PVC），步骤与调优见 [k8s/README.md](k8s/README.md)。K8s 模式建议配合外部 PostgreSQL（`DATABASE_URL` 指向托管实例）而非容器内 SQLite。
 
 ## 四、（可选）启用 Ollama 本地兜底
 
@@ -119,7 +130,11 @@ docker exec -e PYTHONUTF8=1 psycheflow-backend uv run python scripts/e2e_accepta
 # 3. 确认 RAG 已建并验证精度
 curl http://localhost:8000/api/rag/search -X POST \
   -H "Content-Type: application/json" -d '{"query":"抑郁","k":3}'
-# 期望返回相关性得分较高的结果（阈值已收紧至 0.70）
+# 期望返回相关性得分较高的结果（阈值随嵌入模型自适应：云端 text-embedding-v3=0.75 / 本地 bge-m3=0.95）
+
+# 4. 监控指标就绪
+curl -s http://localhost:8000/metrics | head -20
+# 期望看到 http_requests_total / rag_search_total / llm_calls_total 等指标
 ```
 
 ## 六、日常运维

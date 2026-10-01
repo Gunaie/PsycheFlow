@@ -242,8 +242,13 @@ class TestChatGuardrails:
         r = client.post("/api/chat", json={"message": "压" * 2001})
         assert r.status_code == 422
 
-    def test_history_clipped_to_20_messages(self, client):
-        """上送 25 条 history → intervention 只收到最近 20 条（system+20+user=22）。"""
+    def test_history_clipped_to_recent_turns(self, client):
+        """上送 25 条 history → 最近 RECENT_TURNS*2 条保留原文 + 摘要（system+summary+recent+user）。
+
+        P1 滑动窗口 + 语义摘要替代硬截断 10 轮（20 条）：
+        - RECENT_TURNS=4 → 保留最近 8 条原文
+        - 更早的 17 条压缩为摘要（mock 后摘要为空，但 system 消息槽位存在）
+        """
         with patch("app.agents.nodes.intervention.provider") as ip, \
              patch("app.agents.nodes.intervention.rag_service") as rag:
             ip.chat = AsyncMock(return_value=_OK_REPLY)
@@ -255,11 +260,14 @@ class TestChatGuardrails:
             r = client.post("/api/chat", json={"message": "继续", "history": history, "session_id": "clip-sid"})
             assert r.status_code == 200
             messages = ip.chat.call_args.kwargs["messages"]
-            assert len(messages) == 22  # system + 20 history + 当前 user
-            assert messages[0]["role"] == "system"
-            assert messages[-1]["role"] == "user"
-            # 保留的是最后 20 条（m5..m24）
-            assert messages[1]["content"] == "m5"
+            # system + 摘要(可能为空时跳过) + 最近 8 条原文 + 当前 user
+            # 摘要为空时 messages = system + 8 + 1 = 10；摘要非空时 = system + 1 + 8 + 1 = 11
+            assert 10 <= len(messages) <= 11
+            # 最旧保留 m17（25 条 - 最近 8 条 = 17 条进压缩/摘要）
+            # 摘要内容以 "【前文摘要" 开头（_compress_history 实际生成内容）
+            second = messages[1]["content"]
+            assert second == "m17" or second.startswith("【前文摘要（保留核心情绪与建议）】")
+            assert messages[-2]["content"] == "m24"  # 最新保留到第 24 条
 
 
 class TestAssessmentAccountFallback:

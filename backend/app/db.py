@@ -1,7 +1,8 @@
-"""SQLite + SQLAlchemy 引擎与 session 工厂。
+"""SQLAlchemy 引擎与 session 工厂（SQLite 本地开发 / PostgreSQL 生产双驱动）。
 
-幂等建表（create_all），MVP 不引入 alembic 迁移。
-数据目录由 docker compose 的 ./data:/app/data 卷持久化。
+- 默认 SQLite（本地开发零配置，数据目录由 docker compose 的 ./data:/app/data 卷持久化）
+- 生产通过 DATABASE_URL 切换 PostgreSQL（docker-compose 内置 postgres:16-alpine 服务）
+- PostgreSQL 模式引入 alembic 做 schema 迁移；SQLite 模式保留幂等 create_all + 最小化 ALTER TABLE
 """
 import os
 
@@ -10,15 +11,24 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.core.config import settings
 
-# 确保数据目录存在（容器内 /app/data 已由卷挂载，此处兜底）
-_db_dir = os.path.dirname(settings.sqlite_path)
-if _db_dir:
-    os.makedirs(_db_dir, exist_ok=True)
+# 数据库 URL 解析：优先 DATABASE_URL（PostgreSQL），回退 SQLite
+if settings.database_url:
+    # PostgreSQL / MySQL 等外部数据库
+    engine = create_engine(
+        settings.database_url,
+        pool_pre_ping=True,   # 连接前 ping，防断连
+        pool_recycle=3600,    # 1h 回收连接，防 MySQL 8h 断连
+    )
+else:
+    # SQLite 本地开发
+    _db_dir = os.path.dirname(settings.sqlite_path)
+    if _db_dir:
+        os.makedirs(_db_dir, exist_ok=True)
+    engine = create_engine(
+        f"sqlite:///{settings.sqlite_path}",
+        connect_args={"check_same_thread": False},
+    )
 
-engine = create_engine(
-    f"sqlite:///{settings.sqlite_path}",
-    connect_args={"check_same_thread": False},
-)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
@@ -28,14 +38,16 @@ class Base(DeclarativeBase):
 
 def init_db() -> None:
     """幂等建表：导入模型以注册到 metadata，再 create_all。
-    另外：对 SQLite 旧库做最小化 ALTER TABLE 迁移（MVP 不引入 alembic）：
-      - sessions 表补 account_id VARCHAR(32) NULLABLE FK 列（Task 1 新增字段）
+
+    PostgreSQL 模式：create_all 仅用于首次建表，后续 schema 变更走 alembic 迁移。
+    SQLite 模式：保留最小化 ALTER TABLE 迁移（列不存在才加，幂等）。
     """
     from app import models  # noqa: F401  仅为注册表
     Base.metadata.create_all(engine)
 
-    # —— SQLite 列迁移：pragma 表结构无列则 ALTER TABLE ADD（列不存在才加，幂等）
-    _migrate_sqlite_columns(engine)
+    if not settings.database_url:
+        # —— SQLite 专属：列迁移（pragma 表结构无列则 ALTER TABLE ADD，幂等）
+        _migrate_sqlite_columns(engine)
 
     # —— 合规：SQLite 文件权限收紧为 0600（Linux 生产生效，Windows no-op）
     restrict_db_file_perms()
