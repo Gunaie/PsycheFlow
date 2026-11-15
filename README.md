@@ -28,7 +28,7 @@
 
 ## 质量与性能指标
 
-> 由 `backend/scripts/eval_triage.py` / `eval_report.py` / `eval/eval_multiturn.py` / `perf_bench.py` / `e2e_acceptance.py` 实测产出，基线快照见 `backend/scripts/eval/results/`。
+> 由 `backend/scripts/eval_triage.py` / `eval_report.py` / `eval_rag.py` / `eval/eval_multiturn.py` / `perf_bench.py` / `e2e_acceptance.py` 实测产出，基线快照见 `backend/scripts/eval/results/`。
 
 | 维度 | 指标 | 数值 |
 |---|---|---|
@@ -37,6 +37,7 @@
 | | └ 历史基线：本地 triage-lora 43 条 | 93.0%（40/43，模型已退出生产路由） |
 | | 报告结构合规率（5 场景共 76 项断言：15/15/15/15/16，云端 flash / 本地 report-lora 均通过） | **100%**（76/76） |
 | | 多轮对话质量（2026-10-01，4 场景×4 轮真实 LLM：逐轮生产质检口径 + 跨轮复读/闭合问句/做法类别去重） | **≥90%**（实测 15/16；temp 0.6 下 ±1-2 轮波动，场景级 4 过 3 为可接受线；余 1 处库存句复读留待重训） |
+| **RAG 检索** | 自建 65 条标注 query 集，覆盖 32 文件/327 片全量（`eval_rag.py`，2026-09-26 快照） | hit@1 76.9% / **recall@3 100%** / MRR 0.874（0 miss） |
 | **性能（NFR）** | 本地模式单轮耗时（RTX 4060 8GB，2026-09-30 实测）：寒暄/求助静态话术、首轮（预热后）、后续轮 | **0.0–0.1s / 6.4s / 3.7s** |
 | | SSE 对话首 token 延迟（关思考链模型 + 寒暄/危机零 LLM 硬编码前置） | **寒暄 < 0.5s / 对话 ~1.2s** |
 | | `/api/health` 50 并发 | QPS 563，P95 102ms，0 错误 |
